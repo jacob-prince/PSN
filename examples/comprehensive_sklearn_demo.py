@@ -82,7 +82,11 @@ def main():
     )
     denoiser_mag.fit(data)
     denoised_mag = denoiser_mag.transform(trial_avg)
-    print(f"   Retained {len(denoiser_mag.fitted_results_['dimsretained'])} dimensions")
+    dims_retained = denoiser_mag.fitted_results_['dimsretained']
+    if isinstance(dims_retained, int):
+        print(f"   Retained {dims_retained} dimensions")
+    else:
+        print(f"   Retained {len(dims_retained)} dimensions")
     
     # Example 4: Custom basis matrix
     print("\n2d. Custom orthonormal basis:")
@@ -154,7 +158,11 @@ def main():
         denoiser_test.fit(data)
         
         if cv_strategy is None:
-            n_dims = len(denoiser_test.fitted_results_['dimsretained'])
+            dims_retained = denoiser_test.fitted_results_['dimsretained']
+            if isinstance(dims_retained, int):
+                n_dims = dims_retained
+            else:
+                n_dims = len(dims_retained)
             strategy_name = "magnitude"
         else:
             if np.isscalar(denoiser_test.best_threshold_):
