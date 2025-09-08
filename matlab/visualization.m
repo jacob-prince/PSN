@@ -197,68 +197,114 @@ function visualization(data, results, test_data)
         
         % Plot 3: Eigenspectrum (top middle)
         subplot(3, 4, 3);
-        plot(S, 'LineWidth', 1, 'Color', 'blue');
+        
+        % Get eigenvalues from results - try multiple sources
+        S_local = [];
+        if isfield(results, 'mags') && ~isempty(results.mags)
+            S_local = results.mags(:);  % Primary source: magnitude thresholding mode
+        elseif exist('S', 'var') && ~isempty(S)
+            S_local = S(:);  % Secondary source: from the computation above
+        else
+            % Try to compute eigenvalues from available data
+            % This might happen in cross-validation mode where mags is not set
+            if isfield(results, 'fullbasis') && ~isempty(results.fullbasis)
+                % We have the basis but not the eigenvalues
+                % Show a placeholder message
+                text(0.5, 0.5, sprintf('Eigenspectrum not available\nin cross-validation mode'), ...
+                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+                     'Units', 'normalized');
+                S_local = [];  % Mark as unavailable
+            else
+                text(0.5, 0.5, sprintf('Eigenspectrum not available\n(no basis data)'), ...
+                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+                     'Units', 'normalized');
+                S_local = [];  % Mark as unavailable
+            end
+        end
+        
+        % Plot eigenspectrum if data is available
+        if ~isempty(S_local)
+            % Clear any previous plots and plot the eigenspectrum with thicker line
+            cla;
+            h_eigen = plot(1:length(S_local), S_local, 'LineWidth', 3, 'Color', 'blue', 'Marker', 'o', 'MarkerSize', 4);
+            
+            % Set axis limits immediately after main plot
+            if length(S_local) > 1
+                xlim([0.5, length(S_local) + 0.5]);
+            else
+                xlim([0.5, 1.5]);
+            end
+            
+            if max(S_local) > min(S_local)
+                y_range = max(S_local) - min(S_local);
+                ylim([min(S_local) - 0.1*y_range, max(S_local) + 0.1*y_range]);
+            end
+        end
+        
         hold on;
         
-        % Calculate and plot threshold indicators based on mode
+        % Add threshold indicators based on mode
+        cv_mode = 0;  % default
         if isfield(opt, 'cv_mode')
             cv_mode = opt.cv_mode;
-        else
-            cv_mode = 0;
         end
         
+        cv_threshold_per = 'unit';  % default
         if isfield(opt, 'cv_threshold_per')
             cv_threshold_per = opt.cv_threshold_per;
-        else
-            cv_threshold_per = 'unit';
         end
-        
-        if isfield(opt, 'mag_type')
-            mag_type = opt.mag_type;
-        else
-            mag_type = 0;
-        end
-        
+            
+        % Add threshold indicators based on mode
         if cv_mode >= 0  % Cross-validation mode
             if strcmp(cv_threshold_per, 'population')
                 % Single line for population threshold
                 if isnumeric(best_threshold) && length(best_threshold) > 1
                     best_threshold = best_threshold(1);  % Take first value if array
                 end
-                xline(best_threshold, 'r--', 'LineWidth', 1, ...
-                      'DisplayName', sprintf('Population threshold: %d dims', best_threshold));
+                if isnumeric(best_threshold) && best_threshold > 0
+                    xline(best_threshold, 'r--', 'LineWidth', 1);
+                end
             else  % Unit mode
-                % Mean line and asterisks for unit-specific thresholds
+                % Mean line for unit-specific thresholds
                 if isnumeric(best_threshold) && length(best_threshold) > 1
                     mean_threshold = mean(best_threshold);
-                    xline(mean_threshold, 'r--', 'LineWidth', 1, ...
-                          'DisplayName', sprintf('Mean threshold: %.1f dims', mean_threshold));
+                    xline(mean_threshold, 'r--', 'LineWidth', 1);
                     % Add asterisks at the top for each unit's threshold
                     unique_thresholds = unique(best_threshold);
-                    ylims = ylim;
+                    y_max = max(S);
                     for i = 1:length(unique_thresholds)
                         thresh = unique_thresholds(i);
-                        plot(thresh, ylims(2), 'r*', 'MarkerSize', 5);
+                        if thresh <= length(S)
+                            plot(thresh, y_max, 'r*', 'MarkerSize', 5);
+                        end
                     end
                 end
             end
         else  % Magnitude thresholding mode - show included dimensions
+            mag_type = 0;  % default
+            if isfield(opt, 'mag_type')
+                mag_type = opt.mag_type;
+            end
+            
             if isnumeric(best_threshold) && length(best_threshold) > 0
                 % Add circles for included dimensions 
-                plot(best_threshold, S(best_threshold), 'ro', 'MarkerSize', 4, ...
-                     'DisplayName', 'Included dimensions');
+                valid_indices = best_threshold(best_threshold <= length(S));
+                if ~isempty(valid_indices)
+                    plot(valid_indices, S(valid_indices), 'ro', 'MarkerSize', 4);
+                end
                 % Show vertical line for number of dimensions retained
                 threshold_len = length(best_threshold);
-                xline(threshold_len, 'r--', 'LineWidth', 1, ...
-                      'DisplayName', sprintf('Dims retained: %d', threshold_len));
+                if threshold_len <= length(S)
+                    xline(threshold_len, 'r--', 'LineWidth', 1);
+                end
             end
         end
         
+        % Set labels
         xlabel('Dimension');
         ylabel('Eigenvalue');
         title(sprintf('Denoising Basis\nEigenspectrum'));
         grid on;
-        legend;
 
         % Plot 4: Signal and noise variances with NCSNR (top right)
         subplot(3, 4, 4);
@@ -378,13 +424,14 @@ function visualization(data, results, test_data)
                             % Find threshold index with maximum score
                             [~, max_thresh_idx] = max(unit_cv_scores);
                             
-                            % Position at center of that threshold's cell (MATCH PYTHON: add 0.5)
-                            threshold_positions(end+1) = max_thresh_idx - 0.5;  % Convert to 0-based + 0.5
+                            % Position at center of that threshold's cell
+                            threshold_positions(end+1) = max_thresh_idx;
                         end
                     end
                     
                     hold on;
-                    plot(threshold_positions, unit_indices, 'r.', 'MarkerSize', 4);
+                    % In MATLAB, imagesc displays matrix elements centered at integer coordinates
+                    plot(threshold_positions, unit_indices, 'r.', 'MarkerSize', 8);
                 end
             end
         else
@@ -574,7 +621,6 @@ function visualization(data, results, test_data)
         ylabel('R²');
         title(sprintf('Impact of denoising on R² (%d units)', nunits));
         grid on;
-        legend;
         xlim([0.5, 2.5]);
         ylim([-1, 1]);
         yline(0, 'k-', 'LineWidth', 2);

@@ -487,6 +487,7 @@ function [results] = psn(data, V, opt, wantfig)
         results.best_threshold = best_threshold;
         results.denoiseddata = denoiseddata;
         results.fullbasis = fullbasis_out;
+        results.mags = stored_mags;  % Add eigenvalues for visualization
 
         if strcmp(opt.cv_threshold_per, 'population')
             results.signalsubspace = signalsubspace;
