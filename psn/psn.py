@@ -1,10 +1,16 @@
 import numpy as np
-from scipy import stats
-import matplotlib.pyplot as plt
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
-from .utils import compute_noise_ceiling, make_orthonormal, negative_mse_columns, perform_gsn, r2_score_columns, split_half_reliability, split_half_reliability_3d
+
+from .utils import (
+    make_orthonormal,
+    negative_mse_columns,
+    perform_gsn,
+    r2_score_columns,
+    split_half_reliability_3d,
+)
 from .visualization import plot_diagnostic_figures
+
 
 def psn(data, V=None, opt=None, wantfig=True):
     """
@@ -254,7 +260,7 @@ def psn(data, V=None, opt=None, wantfig=True):
     # 4) Prepare default opts
     if opt is None:
         opt = {}
-        
+
     # Validate cv_threshold_per before setting defaults
     if 'cv_threshold_per' in opt:
         if opt['cv_threshold_per'] not in ['unit', 'population']:
@@ -270,8 +276,8 @@ def psn(data, V=None, opt=None, wantfig=True):
         'signalsubspace': None,
         'dimreduce': None,
         'dimsretained': None,
-        'opt': opt, 
-        'V': V 
+        'opt': opt,
+        'V': V
     }
 
     # Check if basis vectors are unit length and normalize if not
@@ -292,18 +298,18 @@ def psn(data, V=None, opt=None, wantfig=True):
     opt.setdefault('cv_scoring_fn', negative_mse_columns)
     opt.setdefault('cv_mode', 0)
     opt.setdefault('cv_threshold_per', 'unit')
-    
+
     opt.setdefault('mag_type', 0)
     opt.setdefault('mag_frac', 0.95)
     opt.setdefault('denoisingtype', 0)  # Default to trial-averaged denoising
-    
+
     # Set default unit_groups based on cv_threshold_per
     if 'unit_groups' not in opt:
         if opt['cv_threshold_per'] == 'population':
             opt['unit_groups'] = np.zeros(nunits, dtype=int)  # All units in group 0
         else:  # 'unit'
             opt['unit_groups'] = np.arange(nunits, dtype=int)  # Each unit gets its own group
-    
+
     # Validate unit_groups
     unit_groups = np.array(opt['unit_groups'], dtype=int)
     if len(unit_groups) != nunits:
@@ -312,10 +318,10 @@ def psn(data, V=None, opt=None, wantfig=True):
         raise ValueError("unit_groups must contain only non-negative integers")
     if opt['cv_threshold_per'] == 'population' and not np.all(unit_groups == 0):
         raise ValueError("When cv_threshold_per='population', all unit_groups must be 0")
-    
+
     # Store validated unit_groups back in opt
     opt['unit_groups'] = unit_groups
-    
+
     # compute the unit means since they are removed during denoising and will be added back
     trial_avg = np.mean(data, axis=2)
     results['unit_means'] = np.mean(trial_avg, axis=1)
@@ -324,7 +330,7 @@ def psn(data, V=None, opt=None, wantfig=True):
     if isinstance(V, int):
         if V not in [0, 1, 2, 3, 4]:
             raise ValueError("V must be in [0..4] (int) or a 2D numpy array.")
-            
+
         gsn_results = perform_gsn(data, {'wantverbose': False, 'random_seed': 42})
 
         cSb = gsn_results['cSb']
@@ -333,16 +339,16 @@ def psn(data, V=None, opt=None, wantfig=True):
         # Helper for pseudo-inversion (in case cNb is singular)
         def inv_or_pinv(mat):
             return np.linalg.pinv(mat)
-        
+
         def standardize_eigenvector_signs(evecs):
             """Standardize eigenvector signs by making the mean of each eigenvector positive."""
             standardized_evecs = evecs.copy()
-            
+
             # For each eigenvector, flip sign if mean is negative
             for i in range(evecs.shape[1]):
                 if np.mean(evecs[:, i]) < 0:
                     standardized_evecs[:, i] = -evecs[:, i]
-            
+
             return standardized_evecs
 
         if V == 0:
@@ -411,28 +417,28 @@ def psn(data, V=None, opt=None, wantfig=True):
             # Only keep first nunits columns to match eigenvector basis dimensions
             basis = basis[:, :nunits]
             magnitudes = np.ones(nunits)  # No meaningful magnitudes for random basis
-            results['basis_source'] = None  # No meaningful source matrix for random basis        
+            results['basis_source'] = None  # No meaningful source matrix for random basis
     else:
         # If V not int => must be a numpy array
         if not isinstance(V, np.ndarray):
             raise ValueError("If V is not int, it must be a numpy array.")
-        
+
         # Check orthonormality of user-supplied basis
         if V.shape[0] != nunits:
             raise ValueError(f"Basis must have {nunits} rows, got {V.shape[0]}")
         if V.shape[1] < 1:
             raise ValueError("Basis must have at least 1 column")
-            
+
         # Check unit-length columns
         norms = np.linalg.norm(V, axis=0)
         if not np.allclose(norms, 1):
             raise ValueError("Basis columns must be unit length")
-            
+
         # Check orthogonality
         gram = V.T @ V
         if not np.allclose(gram, np.eye(V.shape[1])):
             raise ValueError("Basis columns must be orthogonal")
-            
+
         basis = V.copy()
         # For user-supplied basis, compute magnitudes based on variance in basis
         trial_avg = np.mean(data, axis=2)  # shape (nunits, nconds)
@@ -440,7 +446,7 @@ def psn(data, V=None, opt=None, wantfig=True):
         proj_data = trial_avg_reshaped @ basis  # shape (ncond, basis_dim)
         magnitudes = np.var(proj_data, axis=0, ddof=1)  # variance along conditions for each basis dimension
         results['basis_source'] = None
-        
+
     # Store the full basis and magnitudes for return
     fullbasis = basis.copy()
 
@@ -465,7 +471,7 @@ def psn(data, V=None, opt=None, wantfig=True):
     # We'll treat negative cv_mode as "do magnitude thresholding."
     if opt['cv_mode'] >= 0:
         denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsubspace, dimreduce = perform_cross_validation(data, basis, opt, results=results)
-        
+
         # Update results dictionary
         results.update({
             'denoiser': denoiser,
@@ -475,7 +481,7 @@ def psn(data, V=None, opt=None, wantfig=True):
             'fullbasis': fullbasis,
             'mags': magnitudes
         })
-        
+
         # Add population-specific returns if applicable
         if opt['cv_threshold_per'] == 'population':
             results.update({
@@ -484,7 +490,7 @@ def psn(data, V=None, opt=None, wantfig=True):
             })
     else:
         denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsubspace, dimreduce, mags, dimsretained = perform_magnitude_thresholding(data, basis, opt, results)
-        
+
         # Update results dictionary with all magnitude thresholding returns
         results.update({
             'denoiser': denoiser,
@@ -501,7 +507,7 @@ def psn(data, V=None, opt=None, wantfig=True):
     # Store the input data and parameters in results for later visualization
     results['input_data'] = data.copy()
     results['V'] = V
-    
+
     # Add a function handle to regenerate the visualization
     def regenerate_visualization(test_data=None):
         """
@@ -514,7 +520,7 @@ def psn(data, V=None, opt=None, wantfig=True):
             If None, will use leave-one-out cross-validation on the training data.
         """
         plot_diagnostic_figures(results['input_data'], results, test_data)
-    
+
     results['plot'] = regenerate_visualization
 
     if wantfig:
@@ -580,7 +586,7 @@ def perform_cross_validation(data, basis, opt, results=None):
     threshold_per = opt['cv_threshold_per']
     scoring_fn = opt['cv_scoring_fn']
     denoisingtype = opt['denoisingtype']
-    
+
     # Initialize cv_scores
     cv_scores = np.zeros((len(thresholds), ntrials, nunits))
 
@@ -591,32 +597,32 @@ def perform_cross_validation(data, basis, opt, results=None):
             train_trials = np.setdiff1d(np.arange(ntrials), tr)
             train_avg = np.mean(data[:, :, train_trials], axis=2)  # Average n-1 trials
             test_data = data[:, :, tr]  # Single held-out trial
-            
+
             for tt, threshold in enumerate(thresholds):
                 safe_thr = min(threshold, basis.shape[1])
                 denoising_fn = np.concatenate([np.ones(safe_thr), np.zeros(basis.shape[1] - safe_thr)])
                 denoiser = basis @ np.diag(denoising_fn) @ basis.T
-                
+
                 # Demean training average before denoising
                 train_avg_demeaned = train_avg - results['unit_means'][:, np.newaxis]
                 train_denoised = (train_avg_demeaned.T @ denoiser).T
                 cv_scores[tt, tr] = scoring_fn(test_data.T, train_denoised.T)
-                  
+
         elif cv_mode == 1:
             # Denoise single trial, test against average of n-1 trials
             dataA = data[:, :, tr].T  # Single trial (nconds x nunits)
             dataB = np.mean(data[:, :, np.setdiff1d(np.arange(ntrials), tr)], axis=2).T  # Mean of other trials
-            
+
             for tt, threshold in enumerate(thresholds):
                 safe_thr = min(threshold, basis.shape[1])
                 denoising_fn = np.concatenate([np.ones(safe_thr), np.zeros(basis.shape[1] - safe_thr)])
                 denoiser = basis @ np.diag(denoising_fn) @ basis.T
-                
+
                 # Demean single trial before denoising
                 dataA_demeaned = dataA - results['unit_means']
                 dataA_denoised = dataA_demeaned @ denoiser
                 cv_scores[tt, tr] = scoring_fn(dataB, dataA_denoised)
-                
+
     # Decide best threshold
     if threshold_per == 'population':
         # Average over trials and units for population threshold
@@ -630,24 +636,24 @@ def perform_cross_validation(data, basis, opt, results=None):
         avg_scores = np.mean(cv_scores, axis=1)  # (len(thresholds), nunits)
         unit_groups = opt['unit_groups']
         unique_groups = np.unique(unit_groups)
-        
+
         best_thresh_unitwise = np.zeros(nunits, dtype=int)
-        
+
         # For each group, find the best threshold by averaging CV scores within the group
         for group_id in unique_groups:
             group_mask = unit_groups == group_id
             group_units = np.where(group_mask)[0]
-            
+
             # Average CV scores across units in this group
             group_avg_scores = np.mean(avg_scores[:, group_mask], axis=1)  # (len(thresholds),)
             best_idx = np.argmax(group_avg_scores)
             best_thresh_for_group = thresholds[best_idx]
-            
+
             # Assign this threshold to all units in the group
             best_thresh_unitwise[group_mask] = best_thresh_for_group
-            
+
         best_threshold = best_thresh_unitwise  # Return 1D array for unit-wise mode
-                
+
         # Construct unit-wise denoiser
         denoiser = np.zeros((nunits, nunits))
         for unit_i in range(nunits):
@@ -671,7 +677,7 @@ def perform_cross_validation(data, basis, opt, results=None):
             # Demean each trial before denoising
             data_demeaned = data[:, :, t] - results['unit_means'][:, np.newaxis]
             denoiseddata[:, :, t] = (data_demeaned.T @ denoiser).T
-            
+
     if results is not None and 'unit_means' in results:
         if denoiseddata.ndim == 3:  # Single-trial case
             denoiseddata = denoiseddata + results['unit_means'][:, np.newaxis, np.newaxis]
@@ -682,7 +688,7 @@ def perform_cross_validation(data, basis, opt, results=None):
     fullbasis = basis.copy()
     if threshold_per == 'population':
         signalsubspace = basis[:, :safe_thr]
-        
+
         # Project data onto signal subspace
         if denoisingtype == 0:
             trial_avg = np.mean(data, axis=2)
@@ -751,7 +757,7 @@ def perform_magnitude_thresholding(data, basis, opt, results=None):
     denoisingtype = opt['denoisingtype']
 
     cv_scores = np.array([])  # Not used in magnitude thresholding
-    
+
     # Get magnitudes based on mag_type
     if mag_type == 1:
         # Use pre-computed magnitudes from results
@@ -774,24 +780,24 @@ def perform_magnitude_thresholding(data, basis, opt, results=None):
             sigvars.append(float(signalvar))
 
         magnitudes = np.array(sigvars)
-    
+
     # Sort dimensions by magnitude in descending order to find cumulative variance
     sorted_indices = np.argsort(magnitudes)[::-1]  # Descending order
     sorted_magnitudes = magnitudes[sorted_indices]
-    
+
     # Calculate cumulative variance explained
     total_variance = np.sum(sorted_magnitudes)
     cumulative_variance = np.cumsum(sorted_magnitudes)
     cumulative_fraction = cumulative_variance / total_variance
-    
+
     # Find how many dimensions we need to reach mag_frac of total variance
     dims_needed = np.sum(cumulative_fraction < mag_frac) + 1  # +1 to include the dimension that crosses threshold
     dims_needed = min(dims_needed, len(sorted_magnitudes))  # Don't exceed total dimensions
-    
+
     # Get the original indices of the selected dimensions (unsorted)
     best_threshold_indices = sorted_indices[:dims_needed]  # 0-indexed for Python
     dimsretained = len(best_threshold_indices)
-    
+
     if dimsretained == 0:
         # If no dimensions selected, return zero matrices
         denoiser = np.zeros((nunits, nunits))
@@ -820,7 +826,7 @@ def perform_magnitude_thresholding(data, basis, opt, results=None):
             # Demean each trial before denoising
             data_demeaned = data[:, :, t] - results['unit_means'][:, np.newaxis]
             denoiseddata[:, :, t] = (data_demeaned.T @ denoiser).T
-            
+
     # add back the means
     if results is not None and 'unit_means' in results:
         if denoiseddata.ndim == 3:  # Single-trial case
@@ -950,8 +956,8 @@ class PSN(BaseEstimator, TransformerMixin):
     >>> denoiser.fit(data)
     >>> denoised_data = denoiser.transform(data)
     """
-    
-    def __init__(self, basis='signal', cv='unit', scoring='mse', mag_threshold=0.95, 
+
+    def __init__(self, basis='signal', cv='unit', scoring='mse', mag_threshold=0.95,
                  unit_groups=None, verbose=False, wantfig=True, gsn_kwargs=None):
         self.basis = basis
         self.cv = cv
@@ -961,7 +967,7 @@ class PSN(BaseEstimator, TransformerMixin):
         self.verbose = verbose
         self.wantfig = wantfig
         self.gsn_kwargs = gsn_kwargs
-        
+
     def _validate_params(self):
         """Validate input parameters."""
         # Validate basis
@@ -971,11 +977,11 @@ class PSN(BaseEstimator, TransformerMixin):
                 raise ValueError(f"basis must be one of {valid_basis_strings} or an ndarray")
         elif not isinstance(self.basis, np.ndarray):
             raise ValueError(f"basis must be one of {valid_basis_strings} or an ndarray")
-            
+
         # Validate cv
         if self.cv not in ['unit', 'population', None]:
             raise ValueError("cv must be 'unit', 'population', or None")
-            
+
         # Validate scoring
         valid_scoring_strings = ['split_half', 'mse', 'r2']
         if isinstance(self.scoring, str):
@@ -983,17 +989,17 @@ class PSN(BaseEstimator, TransformerMixin):
                 raise ValueError(f"scoring must be one of {valid_scoring_strings} or a callable")
         elif not callable(self.scoring):
             raise ValueError(f"scoring must be one of {valid_scoring_strings} or a callable")
-            
+
         # Validate mag_threshold
         if not isinstance(self.mag_threshold, (int, float)) or not 0 < self.mag_threshold <= 1:
             raise ValueError("mag_threshold must be a number between 0 and 1")
-            
+
     def _convert_params_to_functional(self, data):
         """Convert sklearn-style parameters to functional PSN parameters."""
         self._validate_params()
-        
+
         nunits = data.shape[0]
-        
+
         # Convert basis parameter
         if isinstance(self.basis, str):
             if self.basis == 'signal':
@@ -1008,7 +1014,7 @@ class PSN(BaseEstimator, TransformerMixin):
                 V = 4
         else:  # numpy array
             V = self.basis
-            
+
         # Convert cv and scoring parameters
         if self.cv is None:
             cv_mode = -1
@@ -1016,7 +1022,7 @@ class PSN(BaseEstimator, TransformerMixin):
         else:
             cv_mode = 0  # Use leave-one-out cross-validation
             cv_threshold_per = self.cv
-            
+
         # Convert scoring function
         if self.cv is not None:  # Only matters for cross-validation
             if self.scoring == 'mse':
@@ -1027,7 +1033,7 @@ class PSN(BaseEstimator, TransformerMixin):
                 cv_scoring_fn = self.scoring
         else:
             cv_scoring_fn = negative_mse_columns  # Default, not used
-            
+
         # Build options dictionary
         opt = {
             'cv_mode': cv_mode,
@@ -1036,17 +1042,17 @@ class PSN(BaseEstimator, TransformerMixin):
             'mag_frac': self.mag_threshold,
             'denoisingtype': 0,  # Always use trial-averaged for fitting
         }
-        
+
         # Add unit_groups if provided
         if self.unit_groups is not None:
             opt['unit_groups'] = np.asarray(self.unit_groups, dtype=int)
-        
+
         # Add GSN kwargs if provided
         if self.gsn_kwargs is not None:
             opt.update(self.gsn_kwargs)
-            
+
         return V, opt
-        
+
     def fit(self, X, y=None):
         """
         Fit the PSN denoiser to the data.
@@ -1075,16 +1081,16 @@ class PSN(BaseEstimator, TransformerMixin):
             raise ValueError("Data must have at least 2 trials")
         if X.shape[1] < 2:
             raise ValueError("Data must have at least 2 conditions")
-            
+
         # Convert parameters and fit
         V, opt = self._convert_params_to_functional(X)
-        
+
         if self.verbose:
             print("Fitting PSN denoiser...")
-            
+
         # Call functional PSN
         results = psn(X, V=V, opt=opt, wantfig=self.wantfig)
-        
+
         # Store fitted attributes
         self.denoiser_ = results['denoiser']
         self.best_threshold_ = results['best_threshold']
@@ -1093,7 +1099,7 @@ class PSN(BaseEstimator, TransformerMixin):
         self.unit_means_ = results['unit_means']
         self.cv_scores_ = results.get('cv_scores')
         self.fitted_results_ = results
-        
+
         if self.verbose:
             print("PSN fitting completed")
             if hasattr(self, 'best_threshold_'):
@@ -1102,9 +1108,9 @@ class PSN(BaseEstimator, TransformerMixin):
                 else:
                     print(f"Selected dimensions per unit: min={np.min(self.best_threshold_)}, "
                           f"max={np.max(self.best_threshold_)}, mean={np.mean(self.best_threshold_):.1f}")
-                          
+
         return self
-        
+
     def transform(self, X):
         """
         Apply the fitted PSN denoiser to data.
@@ -1122,29 +1128,29 @@ class PSN(BaseEstimator, TransformerMixin):
             Denoised neural response data
         """
         check_is_fitted(self, 'denoiser_')
-        
+
         X = np.asarray(X)
-        
+
         if X.ndim == 2:
             # Trial-averaged data
             nunits, nconds = X.shape
             if nunits != self.denoiser_.shape[0]:
                 raise ValueError(f"Number of units ({nunits}) doesn't match fitted denoiser "
                                f"({self.denoiser_.shape[0]})")
-                               
+
             # Demean and denoise
             X_demeaned = X - self.unit_means_[:, np.newaxis]
             X_denoised = (X_demeaned.T @ self.denoiser_).T
             # Add back means
             X_denoised = X_denoised + self.unit_means_[:, np.newaxis]
-            
+
         elif X.ndim == 3:
             # Single-trial data
             nunits, nconds, ntrials = X.shape
             if nunits != self.denoiser_.shape[0]:
                 raise ValueError(f"Number of units ({nunits}) doesn't match fitted denoiser "
                                f"({self.denoiser_.shape[0]})")
-                               
+
             X_denoised = np.zeros_like(X)
             for t in range(ntrials):
                 # Demean and denoise each trial
@@ -1152,12 +1158,12 @@ class PSN(BaseEstimator, TransformerMixin):
                 X_denoised[:, :, t] = (X_trial_demeaned.T @ self.denoiser_).T
             # Add back means
             X_denoised = X_denoised + self.unit_means_[:, np.newaxis, np.newaxis]
-            
+
         else:
             raise ValueError("Input data must be 2D (nunits, nconds) or 3D (nunits, nconds, ntrials)")
-            
+
         return X_denoised
-        
+
     def fit_transform(self, X, y=None):
         """
         Fit the denoiser and transform the data in one step.
@@ -1179,7 +1185,7 @@ class PSN(BaseEstimator, TransformerMixin):
         # Return trial-averaged denoised data
         trial_avg = np.mean(X, axis=2)
         return self.transform(trial_avg)
-        
+
     def get_feature_names_out(self, input_features=None):
         """
         Get output feature names for transformation.
@@ -1195,9 +1201,9 @@ class PSN(BaseEstimator, TransformerMixin):
             Output feature names
         """
         check_is_fitted(self, 'denoiser_')
-        
+
         n_features_out = self.denoiser_.shape[0]
-        
+
         if input_features is None:
             return np.array([f"unit_{i}" for i in range(n_features_out)])
         else:
@@ -1206,7 +1212,7 @@ class PSN(BaseEstimator, TransformerMixin):
                 raise ValueError(f"input_features has {len(input_features)} elements, "
                                f"expected {n_features_out}")
             return input_features.copy()
-            
+
     def score(self, X, y=None):
         """
         Return the mean split-half reliability score on the given test data.
@@ -1228,20 +1234,19 @@ class PSN(BaseEstimator, TransformerMixin):
             Mean split-half reliability across all units
         """
         check_is_fitted(self, 'denoiser_')
-        
+
         X = np.asarray(X)
         if X.ndim != 3:
             raise ValueError("Input data must be 3-dimensional for scoring")
-            
+
         # Compute split-half reliability for original data
-        from .utils import split_half_reliability_3d        
         # Compute split-half reliability for denoised data
         X_denoised = self.transform(X)
         denoised_reliability = split_half_reliability_3d(X_denoised)
-        
+
         # Return mean improvement in reliability (could also return mean denoised reliability)
         return np.mean(denoised_reliability)
-        
+
     def plot_diagnostics(self, test_data=None):
         """
         Generate diagnostic plots for the fitted denoiser.
@@ -1253,14 +1258,14 @@ class PSN(BaseEstimator, TransformerMixin):
             If None, uses leave-one-out cross-validation on training data.
         """
         check_is_fitted(self, 'fitted_results_')
-        
+
         if hasattr(self.fitted_results_, 'plot'):
             self.fitted_results_['plot'](test_data)
         else:
             # Fallback to direct plotting
-            plot_diagnostic_figures(self.fitted_results_['input_data'], 
+            plot_diagnostic_figures(self.fitted_results_['input_data'],
                                   self.fitted_results_, test_data)
-                                  
+
     def get_params(self, deep=True):
         """
         Get parameters for this estimator.
@@ -1278,7 +1283,7 @@ class PSN(BaseEstimator, TransformerMixin):
         """
         return {
             'basis': self.basis,
-            'cv': self.cv, 
+            'cv': self.cv,
             'scoring': self.scoring,
             'mag_threshold': self.mag_threshold,
             'unit_groups': self.unit_groups,
@@ -1286,7 +1291,7 @@ class PSN(BaseEstimator, TransformerMixin):
             'wantfig': self.wantfig,
             'gsn_kwargs': self.gsn_kwargs
         }
-        
+
     def set_params(self, **params):
         """
         Set the parameters of this estimator.

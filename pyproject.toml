@@ -38,3 +38,42 @@ Documentation = "https://github.com/jacob-prince/PSN"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["psn*"]
+
+[tool.ruff]
+# Increase the maximum line length to 100 characters (more lenient than black's default 88)
+line-length = 100
+
+# Exclude common directories
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.egg-info",
+    ".venv",
+    ".pytest_cache",
+]
+
+[tool.ruff.lint]
+# Select a more lenient set of rules
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings  
+    "F",    # Pyflakes
+    "I",    # isort
+]
+
+# Ignore some common issues to be more lenient
+ignore = [
+    "E501",  # Line too long (handled by line-length setting)
+    "E203",  # Whitespace before ':'
+    "E402",  # Module level import not at top of file
+    "F841",  # Local variable assigned but never used
+    "W293",  # Blank line contains whitespace
+    "E741",  # Ambiguous variable name
+    "W291",  # Trailing whitespace
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Allow unused imports in __init__.py files
+"__init__.py" = ["F401"]

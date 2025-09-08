@@ -33,13 +33,13 @@ def perform_gsn(data, opt=None):
     """
     if not _GSN_AVAILABLE:
         raise ImportError("GSN package not installed. Please install with: pip install git+https://github.com/cvnlab/GSN.git")
-        
+
     if opt is None:
         opt = {}
-        
+
     # Call the external GSN package
     results = gsn_perform_gsn(data, opt)
-    
+
     return {
         'cSb': results['cSb'],
         'cNb': results['cNb']
@@ -125,21 +125,21 @@ def make_orthonormal(V):
     m, n = V.shape
     if m < n:
         raise ValueError('Input matrix must have at least as many rows as columns')
-    
+
     # Use SVD to find the nearest orthonormal matrix
     # SVD gives us V = U*S*Vh where U and Vh are orthogonal
     # The nearest orthonormal matrix is U*Vh
     U, _, Vh = np.linalg.svd(V, full_matrices=False)
-    
+
     # Take only the first n columns of U if m > n
     V_orthonormal = U[:,:n] @ Vh
-    
+
     # Double check that the result is orthonormal within numerical precision
     # This is mainly for debugging - the SVD method should guarantee this
     gram = V_orthonormal.T @ V_orthonormal
     if not np.allclose(gram, np.eye(n), rtol=0, atol=1e-10):
         print('Warning: Result may not be perfectly orthonormal due to numerical precision')
-    
+
     return V_orthonormal
 
 
@@ -220,19 +220,19 @@ def r2_score_columns(y_true, y_pred):
     """
     if y_true.shape[0] == 0 or y_pred.shape[0] == 0:
         return np.zeros(y_true.shape[1])  # Return zeros for empty arrays
-        
+
     r2_scores = []
     for i in range(y_true.shape[1]):
         ss_res = np.sum((y_true[:, i] - y_pred[:, i]) ** 2)
         ss_tot = np.sum((y_true[:, i] - np.mean(y_true[:, i])) ** 2)
-        
+
         if ss_tot == 0:
             # If total variance is zero, return 1.0 if residuals are also zero, else 0.0
             r2_scores.append(1.0 if ss_res == 0 else 0.0)
         else:
             r2 = 1 - (ss_res / ss_tot)
             r2_scores.append(r2)
-            
+
     return np.array(r2_scores)
 
 def split_half_reliability(data_orig, data_denoised):
@@ -275,22 +275,22 @@ def split_half_reliability(data_orig, data_denoised):
     """
     if data_orig.shape[0] == 0 or data_denoised.shape[0] == 0:
         return np.zeros(data_orig.shape[1])  # Return zeros for empty arrays
-    
+
     # For the cross-validation context, we compute correlation between the test data
     # and denoised predictions as a proxy for reliability
     # This is a simplified version - ideally we'd have access to the full trial structure
-    
+
     reliability_scores = []
     for i in range(data_orig.shape[1]):
         # Compute correlation between original and denoised tuning profiles
         corr_coef = np.corrcoef(data_orig[:, i], data_denoised[:, i])[0, 1]
-        
+
         # Handle NaN cases (e.g., when variance is zero)
         if np.isnan(corr_coef):
             reliability_scores.append(0.0)
         else:
             reliability_scores.append(corr_coef)
-            
+
     return np.array(reliability_scores)
 
 def split_half_reliability_3d(data_3d):
@@ -325,27 +325,27 @@ def split_half_reliability_3d(data_3d):
         print(f"Mean reliability: {np.mean(reliability):.3f}")
     """
     n_units, n_conditions, n_trials = data_3d.shape
-    
+
     if n_trials < 2:
         return np.zeros(n_units)
-    
+
     # Split trials into odd and even
     odd_trials = data_3d[:, :, 0::2]  # trials 0, 2, 4, ...
     even_trials = data_3d[:, :, 1::2]  # trials 1, 3, 5, ...
-    
+
     # Average across odd and even trials
     odd_avg = np.mean(odd_trials, axis=2)  # shape: (n_units, n_conditions)
     even_avg = np.mean(even_trials, axis=2)  # shape: (n_units, n_conditions)
-    
+
     reliability_scores = []
     for unit in range(n_units):
         # Compute correlation between odd and even averages across conditions
         corr_coef = np.corrcoef(odd_avg[unit, :], even_avg[unit, :])[0, 1]
-        
+
         # Handle NaN cases (e.g., when variance is zero)
         if np.isnan(corr_coef):
             reliability_scores.append(0.0)
         else:
             reliability_scores.append(corr_coef)
-    
+
     return np.array(reliability_scores)
