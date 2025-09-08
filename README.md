@@ -1,10 +1,4 @@
-<div align="center">
-    <img src="https://github.com/jacob-prince/psn/blob/main/docs/assets/banner.png?raw=True" width="50%" alt="psn logo" align="center" />
-</div>
-
-<br>
-
-**psn** is a compact library for Partitioning Signal and Noise.
+**psn** is a library for Partitioning Signal and Noise.
 
 # 🚀 Getting Started with PSN
 
