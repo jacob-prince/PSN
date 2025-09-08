@@ -6,6 +6,13 @@
 
 ### Install and Test
 
+Optionally create a conda environment:
+
+```bash
+conda create -n psn python=3.9
+conda activate psn
+```
+
 Clone the repository and install PSN:
 
 ```bash
