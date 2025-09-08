@@ -1,0 +1,3 @@
+[submodule "external/gsn"]
+	path = external/gsn
+	url = https://github.com/cvnlab/gsn.git

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "psn"
+version = "0.1.0"
+description = "Partitioning Signal and Noise"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Jacob S. Prince", email = "jacob.samuel.prince@gmail.com"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research", 
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.19.0",
+    "scipy>=1.7.0", 
+    "matplotlib>=3.3.0",
+    "scikit-learn",
+    "GSN @ git+https://github.com/cvnlab/GSN.git"
+]
+
+[project.urls]
+Homepage = "https://github.com/jacob-prince/PSN"
+Repository = "https://github.com/jacob-prince/PSN"
+Documentation = "https://github.com/jacob-prince/PSN"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["psn*"]

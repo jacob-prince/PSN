@@ -1,0 +1,7 @@
+numpy>=1.19.0
+scipy>=1.7.0
+matplotlib>=3.3.0
+scikit-learn
+pytest>=6.0.0
+git+https://github.com/cvnlab/GSN.git
+
