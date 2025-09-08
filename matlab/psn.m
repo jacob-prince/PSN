@@ -514,7 +514,7 @@ function [results] = psn(data, V, opt, wantfig)
     results.opt = opt;
     
     if wantfig
-        plot_diagnostic_figures(data, results);
+        visualization(data, results);
     end
 end
 

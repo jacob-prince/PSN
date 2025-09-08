@@ -4,10 +4,10 @@ rng(42);
 nunits = 10;
 nconds = 20;
 ntrials = 5;
-data = randn(nunits, nconds, ntrials);
+data = randn(nunits, nconds, ntrials) * 2 + randn(nunits, nconds, ntrials) - 0.5;
 
 % Test basic PSN call
-results = psn(data, 0, struct(), false);  % Don't show figure for now
+results = psn(data, 0, struct(), true);  
 
 % Check that we get the expected outputs
 fprintf('Test Results:\n');

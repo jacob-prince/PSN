@@ -504,5 +504,5 @@ def plot_diagnostic_figures(data, results, test_data=None):
         plt.xlim(0.5, 2.5)
         plt.ylim(-1, 1)
         plt.axhline(y=0, color='k', linewidth=2, zorder=1)
-
+    plt.show()
     

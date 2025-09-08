@@ -472,7 +472,8 @@ def psn(data, V=None, opt=None, wantfig=True):
             'cv_scores': cv_scores,
             'best_threshold': best_threshold,
             'denoiseddata': denoiseddata,
-            'fullbasis': fullbasis
+            'fullbasis': fullbasis,
+            'mags': magnitudes
         })
         
         # Add population-specific returns if applicable

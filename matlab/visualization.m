@@ -1,4 +1,4 @@
-function plot_diagnostic_figures(data, results, test_data)
+function visualization(data, results, test_data)
 % PLOT_DIAGNOSTIC_FIGURES Generate diagnostic figures for PSN denoising results.
 %
 % Generates comprehensive diagnostic plots showing the denoising process,
@@ -322,8 +322,8 @@ function plot_diagnostic_figures(data, results, test_data)
             thresholds = cv_thresholds(valid_mask);
             cv_data = cv_data(valid_mask, :);
             
-            % Z-score the data
-            cv_data = zscore(cv_data, 0, 1);  % Z-score along first dimension
+            % Z-score the data (MATCH PYTHON: axis=0 means along columns in MATLAB)
+            cv_data = zscore(cv_data, 1, 1);  % Z-score along columns (axis=0 in Python)
             
             imagesc(cv_data');
             colorbar;
@@ -378,8 +378,8 @@ function plot_diagnostic_figures(data, results, test_data)
                             % Find threshold index with maximum score
                             [~, max_thresh_idx] = max(unit_cv_scores);
                             
-                            % Position at center of that threshold's cell
-                            threshold_positions(end+1) = max_thresh_idx;
+                            % Position at center of that threshold's cell (MATCH PYTHON: add 0.5)
+                            threshold_positions(end+1) = max_thresh_idx - 0.5;  % Convert to 0-based + 0.5
                         end
                     end
                     
@@ -541,13 +541,13 @@ function plot_diagnostic_figures(data, results, test_data)
         
         % Plot baseline generalization
         subplot(3, 4, 10);
-        plot_bottom_histogram(raw_r2_mean, raw_corr_mean, 'blue', 'lightblue', ...
+        plot_bottom_histogram(raw_r2_mean, raw_corr_mean, 'blue', 'cyan', ...
                               sprintf('Baseline Generalization\nTrial-avg Train (%d trials) vs\nTrial-avg Test (%d trials)', ...
                                       train_trials, test_trials));
 
         % Plot denoised generalization
         subplot(3, 4, 11);
-        plot_bottom_histogram(denoised_r2_mean, denoised_corr_mean, 'green', 'lightgreen', ...
+        plot_bottom_histogram(denoised_r2_mean, denoised_corr_mean, 'green', 'yellow', ...
                               sprintf('Denoised Generalization\nTrial-avg Train + denoised (%d trials) vs\nTrial-avg Test (%d trials)', ...
                                       train_trials, test_trials));
 
@@ -586,16 +586,16 @@ function plot_bottom_histogram(r2_mean, corr_mean, r2_color, corr_color, title_s
     hold on;
     xline(0, 'k-', 'LineWidth', 2);
     
-    % Calculate histogram bins
-    bins = linspace(-1, 1, 50);
+    % Calculate histogram bins (MATCH PYTHON: 50 bins from -1 to 1)
+    bins = linspace(-1, 1, 50);  % Creates 49 bin edges, like Python's np.linspace(-1, 1, 50)
     bin_width = bins(2) - bins(1);
     
-    % Plot R2 histogram
+    % Plot R2 histogram (MATCH PYTHON exactly)
     [r2_hist, ~] = histcounts(r2_mean, bins);
     bar(bins(1:end-1) + bin_width/2, r2_hist, bin_width, ...
         'FaceColor', r2_color, 'FaceAlpha', 0.6, 'DisplayName', sprintf('Mean R² = %.3f', mean(r2_mean)));
     
-    % Plot correlation histogram
+    % Plot correlation histogram (MATCH PYTHON exactly)
     [corr_hist, ~] = histcounts(corr_mean, bins);
     bar(bins(1:end-1) + bin_width/2, corr_hist, bin_width, ...
         'FaceColor', corr_color, 'FaceAlpha', 0.6, 'DisplayName', sprintf('Mean r = %.3f', mean(corr_mean)));
