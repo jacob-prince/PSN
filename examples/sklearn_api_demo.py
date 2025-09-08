@@ -84,7 +84,7 @@ def main():
     # 8. Sklearn compatibility features
     print("\n8. Sklearn compatibility:")
     print(f"   Feature names: {denoiser.get_feature_names_out()[:5]}...")
-    print(f"   Score (noise ceiling): {denoiser.score(data):.3f}")
+    print(f"   Score (reliability): {denoiser.score(data):.3f}")
     
     # 9. Compare with functional API
     print("\n9. Comparison with functional API:")

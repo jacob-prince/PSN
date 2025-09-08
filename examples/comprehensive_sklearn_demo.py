@@ -148,7 +148,7 @@ def main():
         denoiser_test.fit(data)
         score = denoiser_test.score(data)
         print(f"   {basis_type:15s}: {denoiser_test.best_threshold_:2d} dims, "
-              f"noise ceiling = {score:.3f}")
+              f"reliability = {score:.3f}")
     
     print("\n4b. Comparing CV strategies:")
     cv_strategies = ['unit', 'population', None]
@@ -173,7 +173,7 @@ def main():
         
         score = denoiser_test.score(data)
         print(f"   {strategy_name:12s}: {str(n_dims):>6s} dims, "
-              f"noise ceiling = {score:.3f}")
+              f"reliability = {score:.3f}")
     
     # =================================================================
     # USAGE RECOMMENDATIONS

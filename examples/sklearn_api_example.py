@@ -110,7 +110,7 @@ def demonstrate_sklearn_api():
     denoiser4 = PSN(basis='whitened-signal', cv='unit', scoring='r2', verbose=True, wantfig=False)
     denoiser4.fit(data)
     score = denoiser4.score(data)
-    print(f"   Mean noise ceiling score: {score:.3f}")
+    print(f"   Mean reliability score: {score:.3f}")
     
     # Example 5: Custom basis
     print("\n5. Using custom orthonormal basis:")

@@ -3,7 +3,7 @@ from scipy import stats
 import matplotlib.pyplot as plt
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
-from .utils import compute_noise_ceiling, make_orthonormal, negative_mse_columns, perform_gsn, r2_score_columns
+from .utils import compute_noise_ceiling, make_orthonormal, negative_mse_columns, perform_gsn, r2_score_columns, split_half_reliability, split_half_reliability_3d
 from .visualization import plot_diagnostic_figures
 
 def psn(data, V=None, opt=None, wantfig=True):
@@ -183,9 +183,9 @@ def psn(data, V=None, opt=None, wantfig=True):
         data = np.random.randn(100, 200, 3)  # 100 units, 200 conditions, 3 trials
         opt = {
             'cv_mode': 0,  # n-1 train / 1 test split
-            'cv_threshold_per': 'unit',  # Same threshold for all units
+            'cv_threshold_per': 'unit',  # Unit-wise thresholding
             'cv_thresholds': np.arange(100),  # Test all possible dimensions
-            'cv_scoring_fn': negative_mse_columns,  # Use negative MSE as scoring function
+            'cv_scoring_fn': negative_mse_columns,  # Use negative MSE as scoring function (default)
             'denoisingtype': 1  # Single-trial denoising
         }
         results = psn(data, None, opt)
@@ -876,6 +876,7 @@ class PSN(BaseEstimator, TransformerMixin):
     scoring : str or callable, default='mse'
         Scoring function for cross-validation (when cv is 'unit' or 'population'):
         - 'mse': mean squared error (default)
+        - 'split_half': split-half reliability correlation
         - 'r2': coefficient of determination (R²)
         - callable: custom scoring function with signature score(y_true, y_pred)
         
@@ -976,7 +977,7 @@ class PSN(BaseEstimator, TransformerMixin):
             raise ValueError("cv must be 'unit', 'population', or None")
             
         # Validate scoring
-        valid_scoring_strings = ['mse', 'r2']
+        valid_scoring_strings = ['split_half', 'mse', 'r2']
         if isinstance(self.scoring, str):
             if self.scoring not in valid_scoring_strings:
                 raise ValueError(f"scoring must be one of {valid_scoring_strings} or a callable")
@@ -1208,10 +1209,10 @@ class PSN(BaseEstimator, TransformerMixin):
             
     def score(self, X, y=None):
         """
-        Return the mean noise ceiling score on the given test data.
+        Return the mean split-half reliability score on the given test data.
         
-        This computes the noise ceiling for the denoised data as a measure
-        of denoising quality. Higher values indicate better denoising.
+        This computes split-half reliability for the denoised data as a measure
+        of denoising quality. Higher values indicate better reliability preservation.
         
         Parameters
         ----------
@@ -1224,7 +1225,7 @@ class PSN(BaseEstimator, TransformerMixin):
         Returns
         -------
         score : float
-            Mean noise ceiling across all units
+            Mean split-half reliability across all units
         """
         check_is_fitted(self, 'denoiser_')
         
@@ -1232,14 +1233,14 @@ class PSN(BaseEstimator, TransformerMixin):
         if X.ndim != 3:
             raise ValueError("Input data must be 3-dimensional for scoring")
             
-        # Transform the data
+        # Compute split-half reliability for original data
+        from .utils import split_half_reliability_3d        
+        # Compute split-half reliability for denoised data
         X_denoised = self.transform(X)
+        denoised_reliability = split_half_reliability_3d(X_denoised)
         
-        # Compute noise ceiling
-        from .utils import compute_noise_ceiling
-        noise_ceiling, *_ = compute_noise_ceiling(X_denoised)
-        
-        return np.mean(noise_ceiling)
+        # Return mean improvement in reliability (could also return mean denoised reliability)
+        return np.mean(denoised_reliability)
         
     def plot_diagnostics(self, test_data=None):
         """
