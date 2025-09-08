@@ -48,6 +48,7 @@ coverage.xml
 .pytest_cache/
 cover/
 debug_*.sh
+*.asv
 
 # Test data directories
 tests/psn_equivalence_test_data/
