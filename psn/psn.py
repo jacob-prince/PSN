@@ -452,7 +452,7 @@ def psn(data, V=None, opt=None, wantfig=True):
 
     # Update results with computed values
     results['fullbasis'] = fullbasis
-    # Only set mags for magnitude thresholding mode (will be set later if needed)
+    results['mags'] = magnitudes  # Store magnitudes for both CV and magnitude thresholding modes
 
     # 6) Default cross-validation thresholds if not provided
     if 'cv_thresholds' not in opt:
@@ -478,8 +478,7 @@ def psn(data, V=None, opt=None, wantfig=True):
             'cv_scores': cv_scores,
             'best_threshold': best_threshold,
             'denoiseddata': denoiseddata,
-            'fullbasis': fullbasis,
-            'mags': magnitudes
+            'fullbasis': fullbasis
         })
 
         # Add population-specific returns if applicable
