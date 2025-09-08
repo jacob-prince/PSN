@@ -10,28 +10,30 @@ import numpy as np
 import matplotlib.pyplot as plt
 from psn import psn, PSN
 from psn.utils import compute_noise_ceiling
+from psn.simulate import generate_data
 
 # Set random seed for reproducibility
 np.random.seed(42)
 
-def generate_sample_data(nunits=50, nconds=100, ntrials=5, noise_level=0.5):
-    """Generate synthetic neural data for demonstration."""
+def generate_sample_data(nunits=25, nconds=50, ntrials=3, noise_level=None):
+    """Generate synthetic neural data for demonstration using PSN's simulate module."""
     print(f"Generating sample data: {nunits} units, {nconds} conditions, {ntrials} trials")
     
-    # Create signal structure
-    signal_dims = min(10, nunits // 3)  # Use fewer signal dimensions
-    signal_basis = np.random.randn(nunits, signal_dims)
-    signal_basis, _ = np.linalg.qr(signal_basis)  # Orthonormalize
+    # Generate data using PSN's simulate.generate_data function
+    data, _, ground_truth = generate_data(
+        nvox=nunits,
+        ncond=nconds,
+        ntrial=ntrials,
+        noise_multiplier=3,
+        align_alpha=0.5,
+        align_k=10,
+        signal_decay=2,
+        noise_decay=1.25,
+        random_seed=42
+    )
     
-    # Create condition-specific signals
-    condition_weights = np.random.randn(signal_dims, nconds)
-    signal = signal_basis @ condition_weights  # (nunits, nconds)
-    
-    # Add noise
-    noise = noise_level * np.random.randn(nunits, nconds, ntrials)
-    
-    # Create data with signal + noise
-    data = signal[:, :, np.newaxis] + noise  # Broadcast signal across trials
+    # Extract true signal for compatibility
+    signal = ground_truth['signal'].T  # Transpose to match expected shape
     
     return data, signal
 

@@ -10,34 +10,31 @@ This example shows how to:
 import numpy as np
 import matplotlib.pyplot as plt
 import psn
+from psn.simulate import generate_data
 
 def main():
     # Set random seed for reproducibility
     np.random.seed(42)
     
-    # Generate synthetic neural data
-    nunits = 20  # Number of neural units
+    # Generate synthetic neural data using PSN's simulate module
+    nunits = 25  # Number of neural units
     nconds = 50  # Number of experimental conditions  
-    ntrials = 8  # Number of trials per condition
+    ntrials = 3  # Number of trials per condition
     
     print(f"Generating synthetic data: {nunits} units × {nconds} conditions × {ntrials} trials")
     
-    # Create data with signal + noise structure
-    # Signal: low-dimensional structure shared across trials
-    signal_dims = 5
-    signal_weights = np.random.randn(nunits, signal_dims)
-    signal_patterns = np.random.randn(signal_dims, nconds)
-    
-    # Generate data
-    data = np.zeros((nunits, nconds, ntrials))
-    for trial in range(ntrials):
-        # Signal component (consistent across trials)
-        signal = signal_weights @ signal_patterns
-        
-        # Noise component (varies across trials)
-        noise = np.random.randn(nunits, nconds) * 0.5
-        
-        data[:, :, trial] = signal + noise
+    # Generate data using PSN's simulate.generate_data function
+    data, _, ground_truth = generate_data(
+        nvox=nunits,
+        ncond=nconds,
+        ntrial=ntrials,
+        noise_multiplier=3,
+        align_alpha=0.5,
+        align_k=10,
+        signal_decay=2,
+        noise_decay=1.25,
+        random_seed=42
+    )
     
     print("\nApplying PSN denoising...")
     

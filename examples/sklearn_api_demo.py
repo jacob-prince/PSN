@@ -9,16 +9,25 @@ methods alongside the existing functional API.
 import numpy as np
 import matplotlib.pyplot as plt
 from psn import PSN, psn
+from psn.simulate import generate_data
 
 def main():
-    # Generate synthetic neural data
+    # Generate synthetic neural data using PSN's simulate module
     np.random.seed(42)
-    nunits, nconds, ntrials = 50, 100, 8
+    nunits, nconds, ntrials = 25, 50, 3
     
-    # Create data with some signal structure
-    signal = np.random.randn(nunits, nconds)
-    noise = np.random.randn(nunits, nconds, ntrials) * 0.5
-    data = signal[:, :, np.newaxis] + noise
+    # Generate data using PSN's simulate.generate_data function
+    data, _, ground_truth = generate_data(
+        nvox=nunits,
+        ncond=nconds,
+        ntrial=ntrials,
+        noise_multiplier=3,
+        align_alpha=0.5,
+        align_k=10,
+        signal_decay=2,
+        noise_decay=1.25,
+        random_seed=42
+    )
     
     print("PSN Sklearn API Demonstration")
     print("=" * 50)

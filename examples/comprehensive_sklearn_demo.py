@@ -9,6 +9,7 @@ demonstrating parameter options, API equivalence, and integration possibilities.
 import numpy as np
 import matplotlib.pyplot as plt
 from psn import PSN, psn
+from psn.simulate import generate_data
 
 def main():
     print("PSN Sklearn API Comprehensive Demo")
@@ -18,28 +19,23 @@ def main():
     print("\n1. Generating synthetic neural data...")
     np.random.seed(42)
     
-    # Create realistic neural-like data with signal and noise
-    nunits, nconds, ntrials = 50, 100, 5
-    
-    # Create some underlying signal structure
-    signal_dims = 10  # Number of true signal dimensions
-    signal_strength = 2.0
-    noise_strength = 1.0
-    
-    # Generate signal in reduced space
-    signal_space = np.random.randn(nunits, signal_dims)
-    signal_weights = np.random.randn(signal_dims, nconds) * signal_strength
-    
-    # Generate data with signal + noise
-    data = np.zeros((nunits, nconds, ntrials))
-    for trial in range(ntrials):
-        # Signal component (same across trials for each condition)
-        signal = signal_space @ signal_weights
-        # Noise component (different for each trial)
-        noise = np.random.randn(nunits, nconds) * noise_strength
-        data[:, :, trial] = signal + noise
+    # Generate realistic neural-like data using PSN's simulate module
+    nunits, nconds, ntrials = 25, 50, 3
     
     print(f"Generated data: {nunits} units, {nconds} conditions, {ntrials} trials")
+    
+    # Generate data using PSN's simulate.generate_data function
+    data, _, ground_truth = generate_data(
+        nvox=nunits,
+        ncond=nconds,
+        ntrial=ntrials,
+        noise_multiplier=3,
+        align_alpha=0.5,
+        align_k=10,
+        signal_decay=2,
+        noise_decay=1.25,
+        random_seed=42
+    )
     
     # =================================================================
     # SKLEARN-COMPATIBLE API EXAMPLES

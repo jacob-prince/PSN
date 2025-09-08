@@ -9,16 +9,25 @@ which units should share the same CV threshold.
 import numpy as np
 from psn import PSN
 from psn.utils import split_half_reliability_3d
+from psn.simulate import generate_data
 
 def main():
-    # Generate synthetic data
+    # Generate synthetic data using PSN's simulate module
     np.random.seed(42)
-    nunits, nconds, ntrials = 20, 50, 6
+    nunits, nconds, ntrials = 25, 50, 3
     
-    # Create data with some signal structure
-    signal = np.random.randn(nunits, nconds)
-    noise = 0.5 * np.random.randn(nunits, nconds, ntrials)
-    data = signal[:, :, np.newaxis] + noise
+    # Generate data using PSN's simulate.generate_data function
+    data, _, ground_truth = generate_data(
+        nvox=nunits,
+        ncond=nconds,
+        ntrial=ntrials,
+        noise_multiplier=3,
+        align_alpha=0.5,
+        align_k=10,
+        signal_decay=2,
+        noise_decay=1.25,
+        random_seed=42
+    )
     
     print("PSN Unit Groups Demonstration")
     print("=" * 40)
@@ -34,7 +43,7 @@ def main():
     
     # Example 2: Pairing units (every 2 units share the same threshold)
     print("\n2. Pairing units (every 2 units share threshold):")
-    unit_groups_pairs = np.repeat(np.arange(nunits // 2), 2)[:nunits]
+    unit_groups_pairs = np.repeat(np.arange((nunits + 1) // 2), 2)[:nunits]
     denoiser_pairs = PSN(basis='signal', cv='unit', unit_groups=unit_groups_pairs, verbose=False, wantfig=False)
     denoiser_pairs.fit(data)
     denoised_pairs = denoiser_pairs.transform(data)
@@ -42,9 +51,9 @@ def main():
     print(f"   Thresholds: {denoiser_pairs.best_threshold_}")
     print(f"   Unique thresholds: {len(np.unique(denoiser_pairs.best_threshold_))}")
     
-    # Example 3: Anatomical grouping (4 regions of 5 units each)
-    print("\n3. Anatomical grouping (4 regions of 5 units each):")
-    unit_groups_regions = np.repeat(np.arange(4), nunits // 4)[:nunits]
+    # Example 3: Anatomical grouping (5 regions of 5 units each)
+    print("\n3. Anatomical grouping (5 regions of 5 units each):")
+    unit_groups_regions = np.repeat(np.arange(5), 5)[:nunits]
     denoiser_regions = PSN(basis='signal', cv='unit', unit_groups=unit_groups_regions, verbose=False, wantfig=False)
     denoiser_regions.fit(data)
     denoised_regions = denoiser_regions.transform(data)
@@ -57,7 +66,8 @@ def main():
     unit_groups_mixed = np.arange(nunits)
     unit_groups_mixed[:3] = 0  # First 3 units share threshold
     unit_groups_mixed[6:8] = 4  # Units 6-7 share threshold  
-    unit_groups_mixed[12:14] = 9  # Units 12-13 share threshold
+    unit_groups_mixed[15:17] = 9  # Units 15-16 share threshold
+    unit_groups_mixed[20:23] = 12  # Units 20-22 share threshold
     denoiser_mixed = PSN(basis='signal', cv='unit', unit_groups=unit_groups_mixed, verbose=False, wantfig=False)
     denoiser_mixed.fit(data)
     print(f"   Unit groups: {unit_groups_mixed}")
