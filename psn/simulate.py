@@ -17,7 +17,7 @@ from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 
 def generate_data(nvox, ncond, ntrial, signal_decay=1.0, noise_decay=1.0,
                  noise_multiplier=1.0, align_alpha=0.0, align_k=0, random_seed=None,
-                 want_fig=False, signal_cov=None, true_signal=None, cluster_units=False, verbose=True):
+                 want_fig=False, signal_cov=None, true_signal=None, noise_cov=None, cluster_units=False, verbose=True):
     """
     Generate synthetic neural data with controlled signal and noise properties.
     
@@ -38,6 +38,8 @@ def generate_data(nvox, ncond, ntrial, signal_decay=1.0, noise_decay=1.0,
                                         If provided, overrides signal_cov and signal_decay.
                                         Note: When provided, signal_cov will be calculated
                                         as the sample covariance of this signal.
+        noise_cov (ndarray, optional): User-provided noise covariance matrix (nvox, nvox)
+                                       If provided, overrides noise_decay parameter
         cluster_units (bool): Whether to reorder units based on hierarchical clustering
                             of the signal covariance matrix. This is purely cosmetic
                             for visualization and does not affect data properties.
@@ -61,6 +63,11 @@ def generate_data(nvox, ncond, ntrial, signal_decay=1.0, noise_decay=1.0,
     else:
         rng = np.random.RandomState()
 
+    # Track what was user-provided before we potentially modify these variables
+    user_provided_signal_cov = signal_cov is not None
+    user_provided_true_signal = true_signal is not None
+    user_provided_noise_cov = noise_cov is not None
+
     # Check input dimensions if provided
     if signal_cov is not None:
         if signal_cov.shape != (nvox, nvox):
@@ -69,6 +76,10 @@ def generate_data(nvox, ncond, ntrial, signal_decay=1.0, noise_decay=1.0,
     if true_signal is not None:
         if true_signal.shape != (ncond, nvox):
             raise ValueError(f"Provided true_signal has shape {true_signal.shape}, expected ({ncond}, {nvox})")
+
+    if noise_cov is not None:
+        if noise_cov.shape != (nvox, nvox):
+            raise ValueError(f"Provided noise_cov has shape {noise_cov.shape}, expected ({nvox}, {nvox})")
 
     # Generate random orthonormal matrices for signal & noise
     U_noise, _, _ = np.linalg.svd(rng.randn(nvox, nvox), full_matrices=True)
@@ -86,16 +97,27 @@ def generate_data(nvox, ncond, ntrial, signal_decay=1.0, noise_decay=1.0,
         # Build signal covariance matrix
         signal_cov = U_signal @ np.diag(signal_eigs) @ U_signal.T
 
-    # Align noise PCs to signal PCs if requested
-    if align_k > 0:
-        U_noise = _adjust_alignment_gradient_descent(
-            U_signal, U_noise, align_alpha, align_k, verbose=verbose
-        )
+    # For noise, either use SVD of provided covariance or generate random
+    if user_provided_noise_cov:
+        # Use provided noise covariance
+        U_noise, noise_eigs, _ = np.linalg.svd(noise_cov)
+        noise_cov = np.copy(noise_cov)  # Ensure we have a copy to avoid modifying the input
+        
+        # Warn if alignment was requested but noise_cov is provided
+        if align_k > 0 and verbose:
+            print("Warning: align_k > 0 but noise_cov was provided. Using provided noise covariance without alignment.")
+    else:
+        # Generate noise covariance after potential alignment
+        # Align noise PCs to signal PCs if requested
+        if align_k > 0:
+            U_noise = _adjust_alignment_gradient_descent(
+                U_signal, U_noise, align_alpha, align_k, verbose=verbose
+            )
 
-    # Create diagonal eigenvalues for noise
-    noise_eigs = noise_multiplier / (np.arange(1, nvox+1) ** noise_decay)
-    # Build noise covariance matrix
-    noise_cov = U_noise @ np.diag(noise_eigs) @ U_noise.T
+        # Create diagonal eigenvalues for noise
+        noise_eigs = noise_multiplier / (np.arange(1, nvox+1) ** noise_decay)
+        # Build noise covariance matrix
+        noise_cov = U_noise @ np.diag(noise_eigs) @ U_noise.T
 
     # Generate the ground truth signal
     if true_signal is not None:
@@ -109,13 +131,16 @@ def generate_data(nvox, ncond, ntrial, signal_decay=1.0, noise_decay=1.0,
         # Recompute signal eigendecomposition for consistency
         U_signal, signal_eigs, _ = np.linalg.svd(signal_cov)
 
-        # Re-align noise after recalculating U_signal
-        if align_k > 0:
+        # Re-align noise after recalculating U_signal (only if noise_cov was not user-provided)
+        if align_k > 0 and not user_provided_noise_cov:
             U_noise = _adjust_alignment_gradient_descent(
                 U_signal, U_noise, align_alpha, align_k, verbose=verbose
             )
             # Rebuild noise covariance matrix with the realigned eigenvectors
             noise_cov = U_noise @ np.diag(noise_eigs) @ U_noise.T
+        elif align_k > 0 and user_provided_noise_cov:
+            if verbose:
+                print("Warning: align_k > 0 but noise_cov was provided. Skipping noise alignment.")
     else:
         # Generate from covariance
         true_signal = rng.multivariate_normal(
@@ -185,8 +210,9 @@ def generate_data(nvox, ncond, ntrial, signal_decay=1.0, noise_decay=1.0,
         'signal_eigs': signal_eigs,
         'noise_eigs':  noise_eigs,
         'user_provided': {
-            'signal_cov': signal_cov is not None,
-            'true_signal': true_signal is not None
+            'signal_cov': user_provided_signal_cov,
+            'true_signal': user_provided_true_signal,
+            'noise_cov': user_provided_noise_cov
         }
     }
 
