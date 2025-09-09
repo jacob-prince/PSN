@@ -144,6 +144,10 @@ def psn(data, V=None, opt=None, wantfig=True):
     Return in all cases:
         <denoiser> - shape (nunits, nunits). This is the denoising matrix.
         <fullbasis> - shape (nunits, dims). This is the full set of basis functions.
+        <gsn_result> - dict. Full results from the GSN algorithm (when V is 0, 1, or 2).
+          Contains 'cSb' (signal covariance) and 'cNb' (noise covariance) matrices,
+          plus any additional outputs from the GSN package. Will be None if V is 3, 4,
+          or a custom basis matrix.
 
     In the case that <denoisingtype> is 0, we return:
         <denoiseddata> - shape (nunits, nconds). This is the trial-averaged data
@@ -277,7 +281,8 @@ def psn(data, V=None, opt=None, wantfig=True):
         'dimreduce': None,
         'dimsretained': None,
         'opt': opt,
-        'V': V
+        'V': V,
+        'gsn_result': None
     }
 
     # Check if basis vectors are unit length and normalize if not
@@ -332,6 +337,9 @@ def psn(data, V=None, opt=None, wantfig=True):
             raise ValueError("V must be in [0..4] (int) or a 2D numpy array.")
 
         gsn_results = perform_gsn(data, {'wantverbose': False, 'random_seed': 42})
+        
+        # Store the full GSN results in the return dictionary
+        results['gsn_result'] = gsn_results
 
         cSb = gsn_results['cSb']
         cNb = gsn_results['cNb']
