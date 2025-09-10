@@ -45,17 +45,25 @@ def plot_diagnostic_figures(data, results, test_data=None):
 
     # Add cv_mode and magnitude thresholding info to title
     cv_mode = results.get('opt', {}).get('cv_mode', 0)
+    truncate = results.get('opt', {}).get('truncate', 0)
+    
     if cv_mode == -1:
         mag_type = results.get('opt', {}).get('mag_type', 0)
         mag_frac = results.get('opt', {}).get('mag_frac', 0.95)
         mag_frac_str = f"{mag_frac:.3f}".rstrip('0').rstrip('.')
         title_text = (f"Data shape: {nunits} units × {nconds} conditions × {ntrials} trials    |    "
                      f"V = {V_desc}    |    cv_mode = {cv_mode}    |    "
-                     f"mag_type = {mag_type}, mag_frac = {mag_frac_str}\n")
+                     f"mag_type = {mag_type}, mag_frac = {mag_frac_str}")
+        if truncate > 0:
+            title_text += f"    |    truncate = {truncate}"
+        title_text += "\n"
     else:
         threshold_per = results.get('opt', {}).get('cv_threshold_per', 'unit')
         title_text = (f"Data shape: {nunits} units × {nconds} conditions × {ntrials} trials    |    "
-                     f"V = {V_desc}    |    cv_mode = {cv_mode}    |    thresh = {threshold_per}\n")
+                     f"V = {V_desc}    |    cv_mode = {cv_mode}    |    thresh = {threshold_per}")
+        if truncate > 0:
+            title_text += f"    |    truncate = {truncate}"
+        title_text += "\n"
 
     if test_data is None:
         title_text += f"psn applied to all {ntrials} trials"
@@ -162,6 +170,14 @@ def plot_diagnostic_figures(data, results, test_data=None):
         ax3 = fig.add_subplot(gs[0, 2])
         ax3.plot(S, linewidth=1, color='blue', label='Eigenvalues')  # Made line thinner
 
+        # Show truncated dimensions if truncate > 0
+        truncate = results.get('opt', {}).get('truncate', 0)
+        if truncate > 0:
+            # Highlight truncated dimensions in red
+            truncate_range = min(truncate, len(S))
+            ax3.plot(range(truncate_range), S[:truncate_range], 'rx', markersize=6, 
+                    label=f'Truncated dims (first {truncate_range})')
+
         # Calculate and plot threshold indicators based on mode
         cv_mode = results.get('opt', {}).get('cv_mode', 0)
         cv_threshold_per = results.get('opt', {}).get('cv_threshold_per', 'unit')
@@ -207,6 +223,14 @@ def plot_diagnostic_figures(data, results, test_data=None):
         ax4 = fig.add_subplot(gs[0, 3])
         ax4.plot(sigvars, linewidth=1, label='Sig. var')
         ax4.plot(noisevars, linewidth=1, label='Noise var')
+
+        # Show truncated dimensions if truncate > 0
+        truncate = results.get('opt', {}).get('truncate', 0)
+        if truncate > 0:
+            # Highlight truncated dimensions in red
+            truncate_range = min(truncate, len(sigvars))
+            ax4.plot(range(truncate_range), sigvars[:truncate_range], 'rx', markersize=6, 
+                    label=f'Truncated dims (first {truncate_range})')
 
         # Handle thresholds based on mode
         cv_mode = results.get('opt', {}).get('cv_mode', 0)
@@ -280,7 +304,13 @@ def plot_diagnostic_figures(data, results, test_data=None):
             im5 = ax5.imshow(cv_data.T, aspect='auto', interpolation='none',
                     clim=(vmin, vmax), extent=extent)
             plt.colorbar(im5, ax=ax5)
-            ax5.set_xlabel('PC exclusion threshold')
+            
+            # Update xlabel based on whether truncation is used
+            truncate = results.get('opt', {}).get('truncate', 0)
+            if truncate > 0:
+                ax5.set_xlabel(f'PC threshold (starting from PC {truncate})')
+            else:
+                ax5.set_xlabel('PC exclusion threshold')
             ax5.set_ylabel('Units')
             ax5.set_title('Cross-validation scores (z)')
 

@@ -132,6 +132,10 @@ def psn(data, V=None, opt=None, wantfig=True):
           and if <cv_mode> is 1, you probably want <denoisingtype> to be 1, but
           the code is deliberately flexible for users to specify what they want.
           Default: 0.
+        <truncate> - scalar. Number of early PCs to remove from the retained dimensions.
+          If set to 1, the first PC will be excluded from denoising in addition to 
+          whatever later dimensions are deemed optimal to remove via cross validation.
+          Default: 0.
     <wantfig> - bool. Whether to generate diagnostic figures showing the denoising results.
         Default: True.
 
@@ -307,6 +311,7 @@ def psn(data, V=None, opt=None, wantfig=True):
     opt.setdefault('mag_type', 0)
     opt.setdefault('mag_frac', 0.95)
     opt.setdefault('denoisingtype', 0)  # Default to trial-averaged denoising
+    opt.setdefault('truncate', 0)  # Default to no truncation
 
     # Set default unit_groups based on cv_threshold_per
     if 'unit_groups' not in opt:
@@ -571,6 +576,8 @@ def perform_cross_validation(data, basis, opt, results=None):
         <denoisingtype> - scalar.
             0: trial-averaged denoising
             1: single-trial denoising
+        <truncate> - scalar.
+            Number of early PCs to remove from retained dimensions
 
     Returns:
     --------
@@ -593,6 +600,7 @@ def perform_cross_validation(data, basis, opt, results=None):
     threshold_per = opt['cv_threshold_per']
     scoring_fn = opt['cv_scoring_fn']
     denoisingtype = opt['denoisingtype']
+    truncate = opt.get('truncate', 0)
 
     # Initialize cv_scores
     cv_scores = np.zeros((len(thresholds), ntrials, nunits))
@@ -607,7 +615,13 @@ def perform_cross_validation(data, basis, opt, results=None):
 
             for tt, threshold in enumerate(thresholds):
                 safe_thr = min(threshold, basis.shape[1])
-                denoising_fn = np.concatenate([np.ones(safe_thr), np.zeros(basis.shape[1] - safe_thr)])
+                # Create denoising function with truncation
+                denoising_fn = np.zeros(basis.shape[1])
+                # Set retained dimensions to 1, but skip the first 'truncate' dimensions
+                start_idx = truncate
+                end_idx = min(start_idx + safe_thr, basis.shape[1])
+                if end_idx > start_idx:
+                    denoising_fn[start_idx:end_idx] = 1
                 denoiser = basis @ np.diag(denoising_fn) @ basis.T
 
                 # Demean training average before denoising
@@ -622,7 +636,13 @@ def perform_cross_validation(data, basis, opt, results=None):
 
             for tt, threshold in enumerate(thresholds):
                 safe_thr = min(threshold, basis.shape[1])
-                denoising_fn = np.concatenate([np.ones(safe_thr), np.zeros(basis.shape[1] - safe_thr)])
+                # Create denoising function with truncation
+                denoising_fn = np.zeros(basis.shape[1])
+                # Set retained dimensions to 1, but skip the first 'truncate' dimensions
+                start_idx = truncate
+                end_idx = min(start_idx + safe_thr, basis.shape[1])
+                if end_idx > start_idx:
+                    denoising_fn[start_idx:end_idx] = 1
                 denoiser = basis @ np.diag(denoising_fn) @ basis.T
 
                 # Demean single trial before denoising
@@ -637,7 +657,14 @@ def perform_cross_validation(data, basis, opt, results=None):
         best_ix = np.argmax(avg_scores)
         best_threshold = int(thresholds[best_ix])  # Return scalar for population mode
         safe_thr = min(best_threshold, basis.shape[1])
-        denoiser = basis[:, :safe_thr] @ basis[:, :safe_thr].T
+        
+        # Apply truncation: use dimensions from truncate to truncate+safe_thr
+        start_idx = truncate
+        end_idx = min(start_idx + safe_thr, basis.shape[1])
+        if end_idx > start_idx:
+            denoiser = basis[:, start_idx:end_idx] @ basis[:, start_idx:end_idx].T
+        else:
+            denoiser = np.zeros((basis.shape[0], basis.shape[0]))
     else:
         # unit-wise: average over trials only, then group by unit_groups
         avg_scores = np.mean(cv_scores, axis=1)  # (len(thresholds), nunits)
@@ -666,9 +693,15 @@ def perform_cross_validation(data, basis, opt, results=None):
         for unit_i in range(nunits):
             # For each unit, create its own denoising vector using its threshold
             safe_thr = min(int(best_threshold[unit_i]), basis.shape[1])
-            unit_denoiser = basis[:, :safe_thr] @ basis[:, :safe_thr].T
-            # Use the column corresponding to this unit
-            denoiser[:, unit_i] = unit_denoiser[:, unit_i]
+            
+            # Apply truncation: use dimensions from truncate to truncate+safe_thr
+            start_idx = truncate
+            end_idx = min(start_idx + safe_thr, basis.shape[1])
+            if end_idx > start_idx:
+                unit_denoiser = basis[:, start_idx:end_idx] @ basis[:, start_idx:end_idx].T
+                # Use the column corresponding to this unit
+                denoiser[:, unit_i] = unit_denoiser[:, unit_i]
+            # If end_idx <= start_idx, the column remains zero (already initialized)
 
     # Calculate denoiseddata based on denoisingtype
     if denoisingtype == 0:
@@ -694,16 +727,23 @@ def perform_cross_validation(data, basis, opt, results=None):
     # Calculate additional return values
     fullbasis = basis.copy()
     if threshold_per == 'population':
-        signalsubspace = basis[:, :safe_thr]
+        # Apply truncation to signalsubspace
+        start_idx = truncate
+        end_idx = min(start_idx + safe_thr, basis.shape[1])
+        if end_idx > start_idx:
+            signalsubspace = basis[:, start_idx:end_idx]
+        else:
+            signalsubspace = basis[:, :0]  # Empty but valid shape
 
         # Project data onto signal subspace
         if denoisingtype == 0:
             trial_avg = np.mean(data, axis=2)
             # Demean before projecting to signal subspace for consistency
             trial_avg_demeaned = (trial_avg.T - results['unit_means']).T
-            dimreduce = signalsubspace.T @ trial_avg_demeaned  # (safe_thr, nconds)
+            dimreduce = signalsubspace.T @ trial_avg_demeaned  # (effective_dims, nconds)
         else:
-            dimreduce = np.zeros((safe_thr, nconds, ntrials))
+            effective_dims = signalsubspace.shape[1]
+            dimreduce = np.zeros((effective_dims, nconds, ntrials))
             for t in range(ntrials):
                 # Demean before projecting to signal subspace for consistency
                 data_demeaned = (data[:, :, t].T - results['unit_means']).T
@@ -743,6 +783,7 @@ def perform_magnitude_thresholding(data, basis, opt, results=None):
         <denoisingtype> - scalar. Type of denoising:
             0: trial-averaged
             1: single-trial
+        <truncate> - scalar. Number of early PCs to remove from retained dimensions
     <results> - dict containing pre-computed magnitudes in results['mags'] if mag_type=1
 
     Returns:
@@ -762,6 +803,7 @@ def perform_magnitude_thresholding(data, basis, opt, results=None):
     mag_type = opt['mag_type']
     mag_frac = opt['mag_frac']
     denoisingtype = opt['denoisingtype']
+    truncate = opt.get('truncate', 0)
 
     cv_scores = np.array([])  # Not used in magnitude thresholding
 
@@ -801,8 +843,22 @@ def perform_magnitude_thresholding(data, basis, opt, results=None):
     dims_needed = np.sum(cumulative_fraction < mag_frac) + 1  # +1 to include the dimension that crosses threshold
     dims_needed = min(dims_needed, len(sorted_magnitudes))  # Don't exceed total dimensions
 
-    # Get the original indices of the selected dimensions (unsorted)
-    best_threshold_indices = sorted_indices[:dims_needed]  # 0-indexed for Python
+    # Get the original indices of the selected dimensions (unsorted), but exclude early dimensions
+    selected_indices = sorted_indices[:dims_needed]  # All selected indices
+    
+    # Remove indices that fall within the truncation range
+    filtered_indices = selected_indices[selected_indices >= truncate]
+    
+    # If we need more dimensions after truncation, add them from the remaining sorted list
+    if len(filtered_indices) < dims_needed:
+        # Find additional dimensions beyond the truncation range
+        remaining_indices = sorted_indices[dims_needed:]
+        remaining_valid = remaining_indices[remaining_indices >= truncate]
+        needed_additional = dims_needed - len(filtered_indices)
+        additional_indices = remaining_valid[:needed_additional]
+        filtered_indices = np.concatenate([filtered_indices, additional_indices])
+    
+    best_threshold_indices = filtered_indices  # 0-indexed for Python
     dimsretained = len(best_threshold_indices)
 
     if dimsretained == 0:
@@ -902,6 +958,11 @@ class PSN(BaseEstimator, TransformerMixin):
         get the same threshold. If None, each unit gets its own threshold (for 'unit' mode)
         or all units get the same threshold (for 'population' mode).
         
+    truncate : int, default=0
+        Number of early PCs to remove from the retained dimensions. If set to 1, the first
+        PC will be excluded from denoising in addition to whatever later dimensions are
+        deemed optimal to remove via cross validation or magnitude thresholding.
+        
     verbose : bool, default=False
         Whether to print progress messages during fitting
         
@@ -965,12 +1026,13 @@ class PSN(BaseEstimator, TransformerMixin):
     """
 
     def __init__(self, basis='signal', cv='unit', scoring='mse', mag_threshold=0.95,
-                 unit_groups=None, verbose=False, wantfig=True, gsn_kwargs=None):
+                 unit_groups=None, truncate=0, verbose=False, wantfig=True, gsn_kwargs=None):
         self.basis = basis
         self.cv = cv
         self.scoring = scoring
         self.mag_threshold = mag_threshold
         self.unit_groups = unit_groups
+        self.truncate = truncate
         self.verbose = verbose
         self.wantfig = wantfig
         self.gsn_kwargs = gsn_kwargs
@@ -1000,6 +1062,10 @@ class PSN(BaseEstimator, TransformerMixin):
         # Validate mag_threshold
         if not isinstance(self.mag_threshold, (int, float)) or not 0 < self.mag_threshold <= 1:
             raise ValueError("mag_threshold must be a number between 0 and 1")
+
+        # Validate truncate
+        if not isinstance(self.truncate, int) or self.truncate < 0:
+            raise ValueError("truncate must be a non-negative integer")
 
     def _convert_params_to_functional(self, data):
         """Convert sklearn-style parameters to functional PSN parameters."""
@@ -1048,6 +1114,7 @@ class PSN(BaseEstimator, TransformerMixin):
             'cv_scoring_fn': cv_scoring_fn,
             'mag_frac': self.mag_threshold,
             'denoisingtype': 0,  # Always use trial-averaged for fitting
+            'truncate': self.truncate,
         }
 
         # Add unit_groups if provided
@@ -1294,6 +1361,7 @@ class PSN(BaseEstimator, TransformerMixin):
             'scoring': self.scoring,
             'mag_threshold': self.mag_threshold,
             'unit_groups': self.unit_groups,
+            'truncate': self.truncate,
             'verbose': self.verbose,
             'wantfig': self.wantfig,
             'gsn_kwargs': self.gsn_kwargs
