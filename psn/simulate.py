@@ -15,15 +15,15 @@ import numpy as np
 from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 
 
-def generate_data(nvox, ncond, ntrial, signal_decay=1.0, noise_decay=1.0,
+def generate_data(nvox=None, ncond=None, ntrial=None, signal_decay=1.0, noise_decay=1.0,
                  noise_multiplier=1.0, align_alpha=0.0, align_k=0, random_seed=None,
                  want_fig=False, signal_cov=None, true_signal=None, noise_cov=None, cluster_units=False, verbose=True):
     """
     Generate synthetic neural data with controlled signal and noise properties.
     
     Args:
-        nvox (int):    Number of voxels/units
-        ncond (int):   Number of conditions
+        nvox (int, optional):    Number of voxels/units. If true_signal is provided, this will be inferred from true_signal.shape[1]
+        ncond (int, optional):   Number of conditions. If true_signal is provided, this will be inferred from true_signal.shape[0]
         ntrial (int):  Number of trials per condition
         signal_decay (float): Rate of eigenvalue decay for signal covariance
         noise_decay (float):  Rate of eigenvalue decay for noise covariance
@@ -34,8 +34,9 @@ def generate_data(nvox, ncond, ntrial, signal_decay=1.0, noise_decay=1.0,
         want_fig (bool): Whether to display a diagnostic figure of the generated data
         signal_cov (ndarray, optional): User-provided signal covariance matrix (nvox, nvox)
                                         If provided, overrides signal_decay parameter
-        true_signal (ndarray, optional): User-provided ground truth signal (ncond, nvox)
+        true_signal (ndarray, optional): User-provided ground truth signal (ncond, nvox) or (height, width, channels)
                                         If provided, overrides signal_cov and signal_decay.
+                                        For 3D arrays (like images), spatial dimensions are flattened: nvox = width * channels
                                         Note: When provided, signal_cov will be calculated
                                         as the sample covariance of this signal.
         noise_cov (ndarray, optional): User-provided noise covariance matrix (nvox, nvox)
@@ -62,6 +63,31 @@ def generate_data(nvox, ncond, ntrial, signal_decay=1.0, noise_decay=1.0,
         rng = np.random.RandomState(random_seed)
     else:
         rng = np.random.RandomState()
+
+    # Infer nvox and ncond from true_signal if provided and not explicitly set
+    if true_signal is not None:
+        if len(true_signal.shape) != 2:
+            raise ValueError(f"true_signal must be a 2D array with shape (ncond, nvox), got shape {true_signal.shape}")
+            
+        true_signal_ncond, true_signal_nvox = true_signal.shape
+        
+        if nvox is None:
+            nvox = true_signal_nvox
+        elif nvox != true_signal_nvox:
+            raise ValueError(f"Provided nvox={nvox} doesn't match true_signal shape[1]={true_signal_nvox}")
+            
+        if ncond is None:
+            ncond = true_signal_ncond
+        elif ncond != true_signal_ncond:
+            raise ValueError(f"Provided ncond={ncond} doesn't match true_signal shape[0]={true_signal_ncond}")
+    
+    # Check that required parameters are now available
+    if nvox is None:
+        raise ValueError("nvox must be provided either explicitly or via true_signal")
+    if ncond is None:
+        raise ValueError("ncond must be provided either explicitly or via true_signal")
+    if ntrial is None:
+        raise ValueError("ntrial must be provided")
 
     # Track what was user-provided before we potentially modify these variables
     user_provided_signal_cov = signal_cov is not None
