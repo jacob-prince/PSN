@@ -597,7 +597,7 @@ def plot_data_diagnostic(data, ground_truth, params):
     elif user_provided.get('signal_cov', False):
         title_suffix = ""
     else:
-        title_prefix = ""
+        title_suffix = ""
 
     ax3.set_title(f'Signal Covariance Matrix\n{title_suffix}')
     ax3.set_xlabel('Unit')
