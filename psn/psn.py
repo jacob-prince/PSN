@@ -1023,7 +1023,7 @@ class PSN(BaseEstimator, TransformerMixin):
     >>> denoised_data = denoiser.transform(data)
     """
 
-    def __init__(self, basis='signal', cv='unit', scoring='mse', mag_threshold=0.95,
+    def __init__(self, basis='signal', cv='unit', scoring='mse', mag_threshold=None,
                  unit_groups=None, truncate=0, verbose=False, wantfig=True, gsn_kwargs=None):
         self.basis = basis
         self.cv = cv
@@ -1058,8 +1058,9 @@ class PSN(BaseEstimator, TransformerMixin):
             raise ValueError(f"scoring must be one of {valid_scoring_strings} or a callable")
 
         # Validate mag_threshold
-        if not isinstance(self.mag_threshold, (int, float)) or not 0 < self.mag_threshold <= 1:
-            raise ValueError("mag_threshold must be a number between 0 and 1")
+        if self.mag_threshold is not None:
+            if not isinstance(self.mag_threshold, (int, float)) or not 0 < self.mag_threshold <= 1:
+                raise ValueError("mag_threshold must be a number between 0 and 1")
 
         # Validate truncate
         if not isinstance(self.truncate, int) or self.truncate < 0:
@@ -1087,15 +1088,17 @@ class PSN(BaseEstimator, TransformerMixin):
             V = self.basis
 
         # Convert cv and scoring parameters
-        if self.cv is None:
+        # If mag_threshold is provided, use magnitude thresholding (cv_mode=-1)
+        # Otherwise use cross-validation (cv_mode=0)
+        if self.mag_threshold is not None:
             cv_mode = -1
             cv_threshold_per = 'population'  # Not used in magnitude mode
         else:
             cv_mode = 0  # Use leave-one-out cross-validation
-            cv_threshold_per = self.cv
+            cv_threshold_per = self.cv if self.cv is not None else 'unit'
 
         # Convert scoring function
-        if self.cv is not None:  # Only matters for cross-validation
+        if self.mag_threshold is None:  # Only matters for cross-validation
             if self.scoring == 'mse':
                 cv_scoring_fn = negative_mse_columns
             elif self.scoring == 'r2':
@@ -1110,7 +1113,7 @@ class PSN(BaseEstimator, TransformerMixin):
             'cv_mode': cv_mode,
             'cv_threshold_per': cv_threshold_per,
             'cv_scoring_fn': cv_scoring_fn,
-            'mag_frac': self.mag_threshold,
+            'mag_frac': self.mag_threshold if self.mag_threshold is not None else 0.95,
             'denoisingtype': 0,  # Always use trial-averaged for fitting
             'truncate': self.truncate,
         }
