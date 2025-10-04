@@ -1,4 +1,6 @@
-**psn** is a library for Partitioning Signal and Noise.
+**psn** is a library for Partitioning Signal and Noise. 
+
+Note: as of Sept. 2025, PSN is still under development - the API and the algorithm are both subject to change.
 
 # 🚀 Getting Started with PSN
 
