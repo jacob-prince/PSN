@@ -198,7 +198,7 @@ def psn(data, V=None, opt=None, wantfig=True):
         opt = {
             'cv_mode': 0,  # n-1 train / 1 test split
             'cv_threshold_per': 'unit',  # Unit-wise thresholding
-            'cv_thresholds': np.arange(100),  # Test all possible dimensions
+            'cv_thresholds': np.arange(1,101),  # Test all possible dimensions
             'cv_scoring_fn': negative_mse_columns,  # Use negative MSE as scoring function (default)
             'denoisingtype': 1  # Single-trial denoising
         }
@@ -469,12 +469,10 @@ def psn(data, V=None, opt=None, wantfig=True):
 
     # 6) Default cross-validation thresholds if not provided
     if 'cv_thresholds' not in opt:
-        opt['cv_thresholds'] = np.arange(1, basis.shape[1] + 1)
+        opt['cv_thresholds'] = np.arange(0, basis.shape[1] + 1)
     else:
         # Validate cv_thresholds
         thresholds = np.array(opt['cv_thresholds'])
-        if not np.all(thresholds > 0):
-            raise ValueError("cv_thresholds must be positive integers")
         if not np.all(thresholds == thresholds.astype(int)):
             raise ValueError("cv_thresholds must be integers")
         if not np.all(np.diff(thresholds) > 0):
