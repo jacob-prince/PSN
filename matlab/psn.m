@@ -102,9 +102,9 @@ function [results] = psn(data, V, opt, wantfig)
 %     (each unit gets its own threshold).
 %   <cv_thresholds> - shape [1 x n_thresholds]. Vector of thresholds to evaluate in
 %     cross-validation. Matters only when <cv_mode> is 0 or 1.
-%     Each threshold is a positive integer indicating a potential 
-%     number of dimensions to retain. Should be in sorted order and 
-%     elements should be unique. Default: 1:D where D is the 
+%     Each threshold is a non-negative integer indicating a potential
+%     number of dimensions to retain. Should be in sorted order and
+%     elements should be unique. Default: 0:D where D is the
 %     maximum number of dimensions.
 %   <cv_scoring_fn> - function handle. For <cv_mode> 0 or 1 only.
 %     It is a function handle to compute denoiser performance.
@@ -181,7 +181,7 @@ function [results] = psn(data, V, opt, wantfig)
 %   data = randn(100, 200, 3);  % 100 voxels, 200 conditions, 3 trials
 %   opt.cv_mode = 0;  % n-1 train / 1 test split
 %   opt.cv_threshold_per = 'unit';  % Same threshold for all units
-%   opt.cv_thresholds = 1:100;  % Test all possible dimensions
+%   opt.cv_thresholds = 0:100;  % Test all possible dimensions (including 0)
 %   opt.cv_scoring_fn = @negative_mse_columns;  % Use negative MSE as scoring function
 %   opt.denoisingtype = 1;  % Single-trial denoising
 %   results = psn(data, [], opt);
@@ -451,12 +451,12 @@ function [results] = psn(data, V, opt, wantfig)
 
     % 6) Default cross-validation thresholds if not provided
     if ~isfield(opt, 'cv_thresholds')
-        opt.cv_thresholds = 1:size(basis, 2);
+        opt.cv_thresholds = 0:size(basis, 2);
     else
         thresholds = opt.cv_thresholds;
         % Validate
-        if any(thresholds <= 0)
-            error('cv_thresholds must be positive integers.');
+        if any(thresholds < 0)
+            error('cv_thresholds must be non-negative integers.');
         end
         if any(thresholds ~= round(thresholds))
             error('cv_thresholds must be integers.');
@@ -631,7 +631,11 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
         [~, best_ix] = max(avg_scores);
         best_threshold = thresholds(best_ix);
         safe_thr = min(best_threshold, size(basis,2));
-        denoiser = basis(:, 1:safe_thr) * basis(:, 1:safe_thr)';
+        if safe_thr > 0
+            denoiser = basis(:, 1:safe_thr) * basis(:, 1:safe_thr)';
+        else
+            denoiser = zeros(nunits, nunits);  % Zero denoiser when threshold is 0
+        end
     else
         % unit-wise: average over trials only, then group by unit_groups
         avg_scores = squeeze(mean(cv_scores, 2));  % shape: [length(thresholds), nunits]
@@ -665,9 +669,12 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
         for unit_i = 1:nunits
             % For each unit, create its own denoising vector using its threshold
             safe_thr = min(best_threshold(unit_i), size(basis,2));
-            unit_denoiser = basis(:, 1:safe_thr) * basis(:, 1:safe_thr)';
-            % Use the column corresponding to this unit
-            denoiser(:, unit_i) = unit_denoiser(:, unit_i);
+            if safe_thr > 0
+                unit_denoiser = basis(:, 1:safe_thr) * basis(:, 1:safe_thr)';
+                % Use the column corresponding to this unit
+                denoiser(:, unit_i) = unit_denoiser(:, unit_i);
+            end
+            % If safe_thr == 0, denoiser column remains zero (already initialized)
         end
     end
 
