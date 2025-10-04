@@ -67,17 +67,18 @@ class TestPSN:
         nconds = 10
         ntrials = 3
         data = np.random.randn(nunits, nconds, ntrials)
-        
+
         # Test with unit thresholding
         psn_model = PSN(cv='unit', wantfig=False)
         psn_model.fit(data)
         denoised = psn_model.transform(data)
-        
+
         assert psn_model.denoiser_.shape == (nunits, nunits)
         assert denoised.shape == data.shape  # Same shape as input
         assert psn_model.fullbasis_.shape == (nunits, nunits)  # Full basis should be square
         assert len(psn_model.best_threshold_) == nunits  # One threshold per unit
-        assert psn_model.fitted_results_['cv_scores'].shape[0] == nunits  # One score per unit
+        # cv_scores includes threshold=0 (no denoising), so shape is (nunits+1, ntrials, nunits)
+        assert psn_model.fitted_results_['cv_scores'].shape[0] == nunits + 1
 
     def test_magnitude_thresholding(self):
         """Test magnitude thresholding mode."""
