@@ -78,4 +78,36 @@ expected_zero_denoised = repmat(results_force_zero.unit_means, 1, nconds);
 assert(all(abs(results_force_zero.denoiseddata(:) - expected_zero_denoised(:)) < 1e-10), 'Denoised data should equal unit means when threshold=0');
 
 fprintf('\n=== All threshold=0 tests passed! ===\n');
+
+% Test truncate functionality
+fprintf('\n=== Testing truncate functionality ===\n');
+opt_truncate = struct();
+opt_truncate.cv_mode = 0;
+opt_truncate.cv_threshold_per = 'population';
+opt_truncate.truncate = 2;  % Remove first 2 PCs
+opt_truncate.denoisingtype = 0;
+results_truncate = psn(data, 0, opt_truncate, false);
+
+fprintf('Cross-validation with truncate=2\n');
+fprintf('Denoiser shape: [%d x %d]\n', size(results_truncate.denoiser, 1), size(results_truncate.denoiser, 2));
+fprintf('Best threshold: %d\n', results_truncate.best_threshold);
+fprintf('Denoiser is symmetric: %d\n', all(all(abs(results_truncate.denoiser - results_truncate.denoiser') < 1e-10)));
+
+% Test truncate with magnitude thresholding
+opt_truncate_mag = struct();
+opt_truncate_mag.cv_mode = -1;
+opt_truncate_mag.mag_frac = 0.9;
+opt_truncate_mag.truncate = 1;
+results_truncate_mag = psn(data, 0, opt_truncate_mag, false);
+
+fprintf('\nMagnitude thresholding with truncate=1\n');
+fprintf('Dimensions retained: %d\n', results_truncate_mag.dimsretained);
+fprintf('Best threshold indices: %s\n', mat2str(results_truncate_mag.best_threshold));
+fprintf('All retained dimensions > truncate: %d\n', all(results_truncate_mag.best_threshold > 1));
+
+% Validate truncate behavior
+assert(all(all(abs(results_truncate.denoiser - results_truncate.denoiser') < 1e-10)), 'Denoiser should be symmetric');
+assert(all(results_truncate_mag.best_threshold > 1), 'All retained dimensions should be > truncate value');
+
+fprintf('\n=== All truncate tests passed! ===\n');
 fprintf('\nTest completed successfully!\n');

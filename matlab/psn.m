@@ -126,6 +126,11 @@ function [results] = psn(data, V, opt, wantfig)
 %     and if <cv_mode> is 1, you probably want <denoisingtype> to be 1, but
 %     the code is deliberately flexible for users to specify what they want.
 %     Default: 0.
+%   <truncate> - scalar. Number of early PCs to remove from the retained dimensions.
+%     If set to 1, the first PC will be excluded from denoising in addition to
+%     whatever later dimensions are deemed optimal to remove via cross validation.
+%     This is useful for removing unwanted global signals or artifacts.
+%     Default: 0.
 % <wantfig> - bool. Whether to generate diagnostic figures showing the denoising results.
 %   Default: true.
 %
@@ -299,7 +304,10 @@ function [results] = psn(data, V, opt, wantfig)
     if ~isfield(opt, 'denoisingtype')
         opt.denoisingtype = 0;
     end
-    
+    if ~isfield(opt, 'truncate')
+        opt.truncate = 0;
+    end
+
     % Set default unit_groups based on cv_threshold_per
     if ~isfield(opt, 'unit_groups')
         if strcmp(opt.cv_threshold_per, 'population')
@@ -580,6 +588,7 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
     threshold_per = opt.cv_threshold_per;
     scoring_fn = opt.cv_scoring_fn;
     denoisingtype = opt.denoisingtype;
+    truncate = opt.truncate;
 
     % Initialize cv_scores
     cv_scores = zeros(length(thresholds), ntrials, nunits);
@@ -594,7 +603,14 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
             for tt = 1:length(thresholds)
                 threshold = thresholds(tt);
                 safe_thr = min(threshold, size(basis, 2));
-                denoising_fn = [ones(1, safe_thr), zeros(1, size(basis,2) - safe_thr)];
+                % Create denoising function with truncation
+                denoising_fn = zeros(1, size(basis, 2));
+                % Set retained dimensions to 1, but skip the first 'truncate' dimensions
+                start_idx = truncate + 1;  % MATLAB is 1-indexed
+                end_idx = min(start_idx + safe_thr - 1, size(basis, 2));
+                if end_idx >= start_idx
+                    denoising_fn(start_idx:end_idx) = 1;
+                end
                 D = diag(denoising_fn);
                 denoiser_tmp = basis * D * basis';
 
@@ -612,7 +628,14 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
             for tt = 1:length(thresholds)
                 threshold = thresholds(tt);
                 safe_thr = min(threshold, size(basis,2));
-                denoising_fn = [ones(1, safe_thr), zeros(1, size(basis,2) - safe_thr)];
+                % Create denoising function with truncation
+                denoising_fn = zeros(1, size(basis, 2));
+                % Set retained dimensions to 1, but skip the first 'truncate' dimensions
+                start_idx = truncate + 1;  % MATLAB is 1-indexed
+                end_idx = min(start_idx + safe_thr - 1, size(basis, 2));
+                if end_idx >= start_idx
+                    denoising_fn(start_idx:end_idx) = 1;
+                end
                 D = diag(denoising_fn);
                 denoiser_tmp = basis * D * basis';
 
@@ -631,10 +654,14 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
         [~, best_ix] = max(avg_scores);
         best_threshold = thresholds(best_ix);
         safe_thr = min(best_threshold, size(basis,2));
-        if safe_thr > 0
-            denoiser = basis(:, 1:safe_thr) * basis(:, 1:safe_thr)';
+
+        % Apply truncation: use dimensions from truncate+1 to truncate+safe_thr
+        start_idx = truncate + 1;  % MATLAB is 1-indexed
+        end_idx = min(start_idx + safe_thr - 1, size(basis, 2));
+        if end_idx >= start_idx
+            denoiser = basis(:, start_idx:end_idx) * basis(:, start_idx:end_idx)';
         else
-            denoiser = zeros(nunits, nunits);  % Zero denoiser when threshold is 0
+            denoiser = zeros(nunits, nunits);  % Zero denoiser when no dimensions retained
         end
     else
         % unit-wise: average over trials only, then group by unit_groups
@@ -669,12 +696,16 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
         for unit_i = 1:nunits
             % For each unit, create its own denoising vector using its threshold
             safe_thr = min(best_threshold(unit_i), size(basis,2));
-            if safe_thr > 0
-                unit_denoiser = basis(:, 1:safe_thr) * basis(:, 1:safe_thr)';
+
+            % Apply truncation: use dimensions from truncate+1 to truncate+safe_thr
+            start_idx = truncate + 1;  % MATLAB is 1-indexed
+            end_idx = min(start_idx + safe_thr - 1, size(basis, 2));
+            if end_idx >= start_idx
+                unit_denoiser = basis(:, start_idx:end_idx) * basis(:, start_idx:end_idx)';
                 % Use the column corresponding to this unit
                 denoiser(:, unit_i) = unit_denoiser(:, unit_i);
             end
-            % If safe_thr == 0, denoiser column remains zero (already initialized)
+            % If no dimensions retained, denoiser column remains zero (already initialized)
         end
     end
 
@@ -704,15 +735,23 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
 
     fullbasis = basis;
     if strcmp(threshold_per, 'population')
-        signalsubspace = basis(:, 1:safe_thr);
+        % Apply truncation to signalsubspace
+        start_idx = truncate + 1;
+        end_idx = min(start_idx + safe_thr - 1, size(basis, 2));
+        if end_idx >= start_idx
+            signalsubspace = basis(:, start_idx:end_idx);
+        else
+            signalsubspace = basis(:, 1:0);  % Empty but valid shape
+        end
+
         % Project data onto signal subspace
         if denoisingtype == 0
             trial_avg = mean(data, 3);
             % Demean before projecting to signal subspace for consistency
             trial_avg_demeaned = trial_avg - unit_means;
-            dimreduce = signalsubspace' * trial_avg_demeaned;  % [safe_thr x nconds]
+            dimreduce = signalsubspace' * trial_avg_demeaned;  % [dims_retained x nconds]
         else
-            dimreduce = zeros(safe_thr, nconds, ntrials);
+            dimreduce = zeros(size(signalsubspace, 2), nconds, ntrials);
             for t = 1:ntrials
                 % Demean before projecting to signal subspace for consistency
                 data_demeaned = data(:, :, t) - unit_means;
@@ -776,6 +815,7 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, basis, signalsubspa
     mag_type = opt.mag_type;
     mag_frac = opt.mag_frac;
     denoisingtype = opt.denoisingtype;
+    truncate = opt.truncate;
 
     cv_scores = [];  % Not used in magnitude thresholding
     
@@ -853,10 +893,25 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, basis, signalsubspa
     dims_needed = sum(cumulative_fraction < mag_frac) + 1;  % +1 to include the dimension that crosses threshold
     dims_needed = min(dims_needed, length(sorted_magnitudes));  % Don't exceed total dimensions
     
-    % Get the original indices of the selected dimensions (unsorted)
-    best_threshold = sorted_indices(1:dims_needed);
+    % Get the original indices of the selected dimensions (unsorted), but exclude early dimensions
+    selected_indices = sorted_indices(1:dims_needed);  % All selected indices
+
+    % Remove indices that fall within the truncation range (MATLAB is 1-indexed)
+    filtered_indices = selected_indices(selected_indices > truncate);
+
+    % If we need more dimensions after truncation, add them from the remaining sorted list
+    if length(filtered_indices) < dims_needed
+        % Find additional dimensions beyond the truncation range
+        remaining_indices = sorted_indices(dims_needed+1:end);
+        remaining_valid = remaining_indices(remaining_indices > truncate);
+        needed_additional = dims_needed - length(filtered_indices);
+        additional_indices = remaining_valid(1:min(needed_additional, length(remaining_valid)));
+        filtered_indices = [filtered_indices; additional_indices];
+    end
+
+    best_threshold = filtered_indices;  % 1-indexed for MATLAB
     dimsretained = length(best_threshold);
-    
+
     if dimsretained == 0
         % If no dimensions selected, return zero matrices
         denoiser = zeros(nunits, nunits);
