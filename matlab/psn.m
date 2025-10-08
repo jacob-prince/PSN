@@ -2,7 +2,7 @@ function [results] = psn(data, V, opt, wantfig)
 % PSN Denoise neural data using Partitioning Signal and Noise (PSN).
 %
 % This function requires the GSN toolbox. The GSN dependency is included as a
-% git submodule. If you encounter errors about missing 'performgsn', please ensure you 
+% git submodule. If you encounter errors about missing 'performgsn', please ensure you
 % have cloned with submodules:
 %   git clone --recurse-submodules <repository-url>
 % Or if already cloned:
@@ -26,7 +26,7 @@ function [results] = psn(data, V, opt, wantfig)
 %     - V=matrix: Uses user-supplied orthonormal basis
 %
 % 3. Dimension Selection:
-%     The algorithm must decide how many dimensions to retain and call "signal". 
+%     The algorithm must decide how many dimensions to retain and call "signal".
 %     This can be done in two ways:
 %
 %     a) Cross-validation (<cv_mode> = 0 or 1):
@@ -71,9 +71,9 @@ function [results] = psn(data, V, opt, wantfig)
 %   0 means perform GSN and use the eigenvectors of the
 %     signal covariance estimate (cSb)
 %   1 means perform GSN and use the eigenvectors of the
-%     signal covariance estimate, transformed by the inverse of 
+%     signal covariance estimate, transformed by the inverse of
 %     the noise covariance estimate (inv(cNb)*cSb)
-%   2 means perform GSN and use the eigenvectors of the 
+%   2 means perform GSN and use the eigenvectors of the
 %     noise covariance estimate (cNb)
 %   3 means naive PCA (i.e. eigenvectors of the covariance
 %     of the trial-averaged data)
@@ -90,15 +90,15 @@ function [results] = psn(data, V, opt, wantfig)
 %       based on when the magnitudes of components drop below
 %       a certain fraction (see <mag_frac>).
 %     Default: 0.
-%   <cv_threshold_per> - string. 'population' or 'unit', specifying 
+%   <cv_threshold_per> - string. 'population' or 'unit', specifying
 %     whether to use unit-wise thresholding (possibly different thresholds
 %     for different units) or population thresholding (one threshold for
 %     all units). Matters only when <cv_mode> is 0 or 1. Default: 'unit'.
-%   <unit_groups> - shape [nunits x 1]. Integer array specifying which units should 
-%     receive the same cv threshold. This is only applicable when <cv_threshold_per> 
-%     is 'unit'. Units with the same integer value get the same cv threshold 
-%     (computed by averaging scores for those groups of units). If <cv_threshold_per> 
-%     is 'population', all units should have unit_group = 0. Default: (0:nunits-1)' 
+%   <unit_groups> - shape [nunits x 1]. Integer array specifying which units should
+%     receive the same cv threshold. This is only applicable when <cv_threshold_per>
+%     is 'unit'. Units with the same integer value get the same cv threshold
+%     (computed by averaging scores for those groups of units). If <cv_threshold_per>
+%     is 'population', all units should have unit_group = 0. Default: (0:nunits-1)'
 %     (each unit gets its own threshold).
 %   <cv_thresholds> - shape [1 x n_thresholds]. Vector of thresholds to evaluate in
 %     cross-validation. Matters only when <cv_mode> is 0 or 1.
@@ -108,7 +108,7 @@ function [results] = psn(data, V, opt, wantfig)
 %     maximum number of dimensions.
 %   <cv_scoring_fn> - function handle. For <cv_mode> 0 or 1 only.
 %     It is a function handle to compute denoiser performance.
-%     Default: @negative_mse_columns. 
+%     Default: @negative_mse_columns.
 %   <mag_type> - scalar. Indicates how to obtain component magnitudes.
 %     Matters only when <cv_mode> is -1.
 %     0 means use signal variance computed from the data
@@ -147,7 +147,7 @@ function [results] = psn(data, V, opt, wantfig)
 %     after applying the denoiser.
 %
 % In the case that <denoisingtype> is 1, we return:
-%   <denoiseddata> - shape [nunits x nconds x ntrials]. This is the 
+%   <denoiseddata> - shape [nunits x nconds x ntrials]. This is the
 %     single-trial data after applying the denoiser.
 %
 % In the case that <cv_mode> is 0 or 1 (cross-validation):
@@ -185,7 +185,7 @@ function [results] = psn(data, V, opt, wantfig)
 %   % Basic usage with default options
 %   data = randn(100, 200, 3);  % 100 voxels, 200 conditions, 3 trials
 %   opt.cv_mode = 0;  % n-1 train / 1 test split
-%   opt.cv_threshold_per = 'unit';  % Same threshold for all units
+%   opt.cv_threshold_per = 'unit';  % Unit-wise thresholding
 %   opt.cv_thresholds = 0:100;  % Test all possible dimensions (including 0)
 %   opt.cv_scoring_fn = @negative_mse_columns;  % Use negative MSE as scoring function
 %   opt.denoisingtype = 1;  % Single-trial denoising
@@ -194,8 +194,8 @@ function [results] = psn(data, V, opt, wantfig)
 %   % Using magnitude thresholding
 %   opt = struct();
 %   opt.cv_mode = -1;  % Use magnitude thresholding
-%   opt.mag_frac = 0.1;  % Keep components > 10% of max
-%   opt.mag_mode = 0;  % Use contiguous dimensions
+%   opt.mag_frac = 0.95;  % Keep components that account for 95% of variance
+%   opt.mag_type = 0;  % Use signal variance
 %   results = psn(data, 0, opt);
 %
 %   % Single-trial denoising with population threshold
@@ -215,12 +215,12 @@ function [results] = psn(data, V, opt, wantfig)
 % -------------------------------------------------------------------------
 %
 %   - 2025/01/06 - Initial version.
+%   - 2025/01/07 - Refactored to match Python structure.
 
     % Setup GSN dependency path
     gsn_matlab_path = fullfile(fileparts(fileparts(mfilename('fullpath'))), 'external', 'gsn', 'matlab');
     if exist(gsn_matlab_path, 'dir')
         addpath(gsn_matlab_path);
-        % Also add utilities subdirectory
         gsn_utilities_path = fullfile(gsn_matlab_path, 'utilities');
         if exist(gsn_utilities_path, 'dir')
             addpath(gsn_utilities_path);
@@ -231,61 +231,299 @@ function [results] = psn(data, V, opt, wantfig)
                '  git submodule update --init --recursive'], gsn_matlab_path);
     end
 
-    % 1) Check for infinite or NaN data => error if found
+    % 1) Validate data
+    [nunits, nconds, ntrials] = validate_data(data);
+
+    % 2) Set defaults for optional inputs
+    if ~exist('V','var') || isempty(V)
+        V = 0;
+    end
+    if ~exist('wantfig','var') || isempty(wantfig)
+        wantfig = true;
+    end
+    if ~exist('opt','var') || isempty(opt)
+        opt = struct();
+    end
+
+    % 3) Validate and set default options
+    opt = validate_and_set_defaults(opt, nunits);
+
+    % 4) Compute unit means (removed during denoising, added back later)
+    trial_avg = mean(data, 3);
+    unit_means = mean(trial_avg, 2);
+    results.unit_means = unit_means;
+
+    % 5) Compute or validate basis
+    gsn_results = [];
+    if isnumeric(V) && isscalar(V)
+        [basis, mags, basis_source, gsn_results] = compute_basis_from_mode(data, V, unit_means);
+        results.basis_source = basis_source;
+    else
+        [basis, mags] = validate_and_normalize_custom_basis(V, data, nunits, unit_means);
+        results.basis_source = [];
+    end
+
+    stored_mags = mags;
+
+    % 6) Set default cross-validation thresholds if not provided
+    if ~isfield(opt, 'cv_thresholds')
+        opt.cv_thresholds = 0:size(basis, 2);
+    else
+        validate_cv_thresholds(opt.cv_thresholds);
+    end
+
+    % 7) Initialize return structure
+    results.denoiser = [];
+    results.cv_scores = [];
+    results.best_threshold = [];
+    results.denoiseddata = [];
+    results.fullbasis = basis;
+    results.signalsubspace = [];
+    results.dimreduce = [];
+    results.mags = [];
+    results.dimsretained = [];
+
+    % 8) Perform cross-validation or magnitude thresholding
+    if opt.cv_mode >= 0
+        [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis_out, signalsubspace, dimreduce] = ...
+            perform_cross_validation(data, basis, opt, unit_means);
+
+        results.denoiser = denoiser;
+        results.cv_scores = cv_scores;
+        results.best_threshold = best_threshold;
+        results.denoiseddata = denoiseddata;
+        results.fullbasis = fullbasis_out;
+        results.mags = stored_mags;
+
+        if strcmp(opt.cv_threshold_per, 'population')
+            results.signalsubspace = signalsubspace;
+            results.dimreduce = dimreduce;
+        end
+
+    else
+        [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis_out, signalsubspace, dimreduce, mags_out, dimsretained] = ...
+            perform_magnitude_thresholding(data, basis, gsn_results, opt, V, unit_means);
+
+        results.denoiser = denoiser;
+        results.cv_scores = cv_scores;
+        results.best_threshold = best_threshold;
+        results.denoiseddata = denoiseddata;
+        results.fullbasis = fullbasis_out;
+        results.mags = mags_out;
+        results.dimsretained = dimsretained;
+        results.signalsubspace = signalsubspace;
+        results.dimreduce = dimreduce;
+    end
+
+    % Store the input data and parameters in results for later visualization
+    results.input_data = data;
+    results.V = V;
+    results.opt = opt;
+
+    if wantfig
+        visualization(data, results);
+    end
+end
+
+
+% =========================================================================
+% Helper Functions
+% =========================================================================
+
+function [nunits, nconds, ntrials] = validate_data(data)
+    % VALIDATE_DATA Check data shape and values.
+
     if any(~isfinite(data(:)))
         error('Data contains infinite or NaN values.');
     end
 
     [nunits, nconds, ntrials] = size(data);
 
-    % 2) If we have fewer than 2 trials, raise an error
     if ntrials < 2
         error('Data must have at least 2 trials.');
     end
 
-    % 2b) Check for minimum number of conditions
     if nconds < 2
         error('Data must have at least 2 conditions to estimate covariance.');
     end
+end
 
-    % 3) If V is not provided => treat it as 0
-    if ~exist('V','var') || isempty(V)
-        V = 0;
+
+function [evecs_sorted, evals_sorted, matrix_sym] = compute_symmetric_eigen(matrix)
+    % COMPUTE_SYMMETRIC_EIGEN Compute eigendecomposition with consistent sorting and sign.
+    %
+    % Inputs:
+    %   <matrix> - square matrix to decompose
+    %
+    % Returns:
+    %   <evecs_sorted> - eigenvectors sorted by magnitude, with standardized signs
+    %   <evals_sorted> - eigenvalues sorted by magnitude
+    %   <matrix_sym> - symmetrized version of input matrix
+
+    % Force symmetry for numerical stability
+    matrix_sym = (matrix + matrix') / 2;
+
+    % Compute eigendecomposition
+    [evecs, evals] = eig(matrix_sym, 'vector');
+
+    % Sort by magnitude (descending)
+    [~, idx] = sort(abs(evals), 'descend');
+    evecs_sorted = evecs(:, idx);
+    evals_sorted = abs(evals(idx));
+
+    % Standardize eigenvector signs (make mean positive)
+    evecs_sorted = standardize_eigenvector_signs(evecs_sorted);
+end
+
+
+function evecs = standardize_eigenvector_signs(evecs)
+    % STANDARDIZE_EIGENVECTOR_SIGNS Make each eigenvector have positive mean.
+    %
+    % Inputs:
+    %   <evecs> - matrix of eigenvectors (one per column)
+    %
+    % Returns:
+    %   <evecs> - eigenvectors with standardized signs
+
+    for i = 1:size(evecs, 2)
+        if mean(evecs(:, i)) < 0
+            evecs(:, i) = -evecs(:, i);
+        end
+    end
+end
+
+
+function [basis, mags, basis_source, gsn_results] = compute_basis_from_mode(data, V, unit_means)
+    % COMPUTE_BASIS_FROM_MODE Compute denoising basis based on V mode.
+    %
+    % Inputs:
+    %   <data> - neural response data
+    %   <V> - integer mode (0-4)
+    %   <unit_means> - mean response for each unit
+    %
+    % Returns:
+    %   <basis> - orthonormal basis vectors
+    %   <mags> - component magnitudes
+    %   <basis_source> - source matrix used to compute basis
+    %   <gsn_results> - GSN computation results (if applicable)
+
+    if ~ismember(V, [0, 1, 2, 3, 4])
+        error('V must be in [0..4] (int) or a 2D numeric array.');
     end
 
-    % 4) If wantfig is not provided => treat it as true
-    if ~exist('wantfig','var') || isempty(wantfig)
-        wantfig = true;
+    gsn_results = [];
+    nunits = size(data, 1);
+
+    % Modes 0-2 require GSN
+    if ismember(V, [0, 1, 2])
+        gsn_opt = struct();
+        gsn_opt.wantverbose = 0;
+        gsn_opt.wantshrinkage = 1;
+        gsn_opt.random_seed = 42;
+        gsn_results = performgsn(data, gsn_opt);
+        cSb = gsn_results.cSb;
+        cNb = gsn_results.cNb;
     end
 
-    % 5) Prepare default opts
-    if ~exist('opt','var') || isempty(opt)
-        opt = struct();
+    if V == 0
+        % Signal covariance
+        [basis, mags, basis_source] = compute_symmetric_eigen(cSb);
+
+    elseif V == 1
+        % Whitened signal covariance
+        cNb_inv = pinv(cNb);
+        matM = cNb_inv * cSb;
+        [basis, mags, basis_source] = compute_symmetric_eigen(matM);
+
+    elseif V == 2
+        % Noise covariance
+        [basis, mags, basis_source] = compute_symmetric_eigen(cNb);
+
+    elseif V == 3
+        % PCA on trial-averaged data
+        trial_avg = mean(data, 3);
+        trial_avg_demeaned = trial_avg - unit_means;
+        cov_matrix = cov(trial_avg_demeaned.');
+        [basis, mags, basis_source] = compute_symmetric_eigen(cov_matrix);
+
+    else  % V == 4
+        % Random orthonormal basis
+        rng('default');
+        rng(42, 'twister');
+        rand_mat = randn(nunits);
+        [basis, ~] = qr(rand_mat, 0);
+        basis = basis(:, 1:nunits);
+        mags = ones(nunits, 1);
+        basis_source = [];
+    end
+end
+
+
+function [basis, mags] = validate_and_normalize_custom_basis(V, data, nunits, unit_means)
+    % VALIDATE_AND_NORMALIZE_CUSTOM_BASIS Validate and potentially normalize custom basis.
+    %
+    % Inputs:
+    %   <V> - custom basis matrix
+    %   <data> - neural response data
+    %   <nunits> - number of units
+    %   <unit_means> - mean response for each unit
+    %
+    % Returns:
+    %   <basis> - validated/normalized basis
+    %   <mags> - component magnitudes
+
+    if ~ismatrix(V)
+        error('If V is not int, it must be a numeric matrix.');
+    end
+    if size(V, 1) ~= nunits
+        error('Basis must have %d rows, got %d.', nunits, size(V, 1));
+    end
+    if size(V, 2) < 1
+        error('Basis must have at least 1 column.');
     end
 
+    % Check and normalize if needed
+    vector_norms = sqrt(sum(V.^2, 1));
+    if any(abs(vector_norms - 1) > 1e-10)
+        fprintf('Normalizing basis vectors to unit length...\n');
+        V = V ./ vector_norms;
+    end
+
+    % Check and enforce orthogonality if needed
+    gram = V' * V;
+    if ~all(abs(gram - eye(size(gram))) < 1e-10, 'all')
+        fprintf('Adjusting basis vectors to ensure orthogonality...\n');
+        V = make_orthonormal(V);
+    end
+
+    basis = V;
+
+    % Compute magnitudes based on variance in basis
+    trial_avg = mean(data, 3);
+    trial_avg_reshaped = trial_avg.';
+    proj_data = trial_avg_reshaped * basis;
+    mags = var(proj_data, 0, 1).';
+end
+
+
+function opt = validate_and_set_defaults(opt, nunits)
+    % VALIDATE_AND_SET_DEFAULTS Validate options and set defaults.
+    %
+    % Inputs:
+    %   <opt> - options struct
+    %   <nunits> - number of units
+    %
+    % Returns:
+    %   <opt> - validated options with defaults set
+
+    % Validate cv_threshold_per
     if isfield(opt, 'cv_threshold_per')
         if ~any(strcmp(opt.cv_threshold_per, {'unit','population'}))
             error('cv_threshold_per must be ''unit'' or ''population''');
         end
     end
 
-    % Check if basis vectors are unit length and normalize if not
-    if isnumeric(V) && ~isscalar(V)
-        % First check and fix unit length
-        vector_norms = sqrt(sum(V.^2, 1));
-        if any(abs(vector_norms - 1) > 1e-10)
-            fprintf('Normalizing basis vectors to unit length...\n');
-            V = V ./ vector_norms;
-        end
-
-        % Then check orthogonality
-        gram = V' * V;
-        if ~all(abs(gram - eye(size(gram))) < 1e-10, 'all')
-            fprintf('Adjusting basis vectors to ensure orthogonality...\n');
-            V = make_orthonormal(V);
-        end
-    end
-
+    % Set defaults
     if ~isfield(opt, 'cv_scoring_fn')
         opt.cv_scoring_fn = @negative_mse_columns;
     end
@@ -311,14 +549,14 @@ function [results] = psn(data, V, opt, wantfig)
     % Set default unit_groups based on cv_threshold_per
     if ~isfield(opt, 'unit_groups')
         if strcmp(opt.cv_threshold_per, 'population')
-            opt.unit_groups = zeros(nunits, 1);  % All units in group 0
-        else  % 'unit'
-            opt.unit_groups = (0:nunits-1)';  % Each unit gets its own group
+            opt.unit_groups = zeros(nunits, 1);
+        else
+            opt.unit_groups = (0:nunits-1)';
         end
     end
-    
+
     % Validate unit_groups
-    unit_groups = opt.unit_groups(:);  % Ensure column vector
+    unit_groups = opt.unit_groups(:);
     if length(unit_groups) ~= nunits
         error('unit_groups must have length %d, got %d', nunits, length(unit_groups));
     end
@@ -328,205 +566,77 @@ function [results] = psn(data, V, opt, wantfig)
     if strcmp(opt.cv_threshold_per, 'population') && any(unit_groups ~= 0)
         error('When cv_threshold_per=''population'', all unit_groups must be 0');
     end
-    
-    % Store validated unit_groups back in opt
+
     opt.unit_groups = unit_groups;
+end
 
-    % compute the unit means since they are removed during denoising and will be added back
-    trial_avg = mean(data, 3);
-    unit_means = mean(trial_avg, 2);
-    results.unit_means = unit_means;
 
-    gsn_results = [];
+function validate_cv_thresholds(thresholds)
+    % VALIDATE_CV_THRESHOLDS Check that CV thresholds are valid.
 
-    % 5) If V is an integer => glean basis from GSN results
-    if isnumeric(V) && isscalar(V)
-        if ~ismember(V, [0, 1, 2, 3, 4])
-            error('V must be in [0..4] (int) or a 2D numeric array.');
-        end
-
-        % We rely on a function "perform_gsn" here (not shown), which returns:
-        % gsn_results.cSb and gsn_results.cNb
-        gsn_opt = struct();
-        gsn_opt.wantverbose = 0;
-        gsn_opt.wantshrinkage = 1;
-        gsn_opt.random_seed = 42;  % Set random seed for reproducibility
-        gsn_results = performgsn(data, gsn_opt);
-        cSb = gsn_results.cSb;
-        cNb = gsn_results.cNb;
-
-        % Helper for pseudo-inversion
-        inv_or_pinv = @(mat) pinv(mat);
-        
-        % Helper for sign standardization - make mean of each eigenvector positive
-        standardize_signs = @(evecs) arrayfun(@(i) ...
-            evecs(:,i) * sign(mean(evecs(:,i)) + eps), ...
-            1:size(evecs,2), 'UniformOutput', false);
-        standardize_signs = @(evecs) cell2mat(standardize_signs(evecs));
-
-        if V == 0
-            % Just eigen-decompose cSb
-            % Force symmetry for consistency with Python's eigh
-            cSb_sym = (cSb + cSb') / 2;
-            [evecs, evals] = eig(cSb_sym, 'vector');  % Use vector output for eigenvalues
-            [~, idx] = sort(abs(evals), 'descend');  % Sort by magnitude
-            evecs_sorted = evecs(:, idx);
-            evecs_sorted = standardize_signs(evecs_sorted);  % Standardize signs
-            basis = evecs_sorted;
-            mags = abs(evals(idx));
-            results.basis_source = cSb_sym;
-        elseif V == 1
-            % inv(cNb)*cSb - ensure symmetric treatment
-            cNb_inv = pinv(cNb);
-            matM = cNb_inv * cSb;
-            % Use eig with 'vector' for eigenvalues and ensure proper sorting
-            [evecs, evals] = eig((matM + matM')/2, 'vector');  % Force symmetry
-            [~, idx] = sort(abs(evals), 'descend');  % Sort by magnitude
-            evecs_sorted = evecs(:, idx);
-            evecs_sorted = standardize_signs(evecs_sorted);  % Standardize signs
-            basis = evecs_sorted;
-            mags = abs(evals(idx));
-            results.basis_source = (matM + matM')/2;
-        elseif V == 2
-            % Force symmetry for consistency with Python's eigh
-            cNb_sym = (cNb + cNb') / 2;
-            [evecs, evals] = eig(cNb_sym, 'vector');  % Use vector output
-            [~, idx] = sort(abs(evals), 'descend');  % Sort by magnitude
-            evecs_sorted = evecs(:, idx);
-            evecs_sorted = standardize_signs(evecs_sorted);  % Standardize signs
-            basis = evecs_sorted;
-            mags = abs(evals(idx));
-            results.basis_source = cNb_sym;
-        elseif V == 3
-            trial_avg = mean(data, 3);  % shape [nunits x nconds]
-            % de-mean each row of trial_avg
-            trial_avg = trial_avg - unit_means;
-            cov_matrix = cov(trial_avg.');  % shape [nunits x nunits]
-            % Force symmetry for consistency with Python's eigh
-            cov_matrix_sym = (cov_matrix + cov_matrix') / 2;
-            [evecs, evals] = eig(cov_matrix_sym, 'vector');  % Use vector output
-            [~, idx] = sort(abs(evals), 'descend');  % Sort by magnitude
-            evecs_sorted = evecs(:, idx);
-            evecs_sorted = standardize_signs(evecs_sorted);  % Standardize signs
-            basis = evecs_sorted;
-            mags = abs(evals(idx));
-            results.basis_source = cov_matrix_sym;
-        else
-            % V == 4 => random orthonormal
-            rng('default');  % Reset to default generator
-            rng(42, 'twister');  % Set seed to match Python
-            rand_mat = randn(nunits);
-            [basis, ~] = qr(rand_mat, 0);  % Use economy QR
-            basis = basis(:, 1:nunits);
-            mags = ones(nunits, 1);
-            results.basis_source = [];
-        end
-
-    else
-        % If V not int => must be a numeric array
-        if ~ismatrix(V)
-            error('If V is not int, it must be a numeric matrix.');
-        end
-        if size(V, 1) ~= nunits
-            error('Basis must have %d rows, got %d.', nunits, size(V, 1));
-        end
-        if size(V, 2) < 1
-            error('Basis must have at least 1 column.');
-        end
-
-        % Check unit-length columns
-        norms = sqrt(sum(V.^2, 1));
-        if ~all(abs(norms - 1) < 1e-10)
-            error('Basis columns must be unit length.');
-        end
-        % Check orthogonality
-        gram = V' * V;
-        if ~all(all(abs(gram - eye(size(V,2))) < 1e-10))
-            error('Basis columns must be orthogonal.');
-        end
-
-        basis = V;
-        % For user-supplied basis, compute magnitudes based on variance in basis
-        trial_avg = mean(data, 3);      % shape [nunits x nconds]
-        trial_avg_reshaped = trial_avg.';  % shape [nconds x nunits]
-        proj_data = trial_avg_reshaped * basis; % shape [nconds x basis_dim]
-        mags = var(proj_data, 0, 1).';  % variance along conditions
-        results.basis_source = [];
+    if any(thresholds < 0)
+        error('cv_thresholds must be non-negative integers.');
     end
-
-    % Store the magnitudes
-    stored_mags = mags;
-
-    % 6) Default cross-validation thresholds if not provided
-    if ~isfield(opt, 'cv_thresholds')
-        opt.cv_thresholds = 0:size(basis, 2);
-    else
-        thresholds = opt.cv_thresholds;
-        % Validate
-        if any(thresholds < 0)
-            error('cv_thresholds must be non-negative integers.');
-        end
-        if any(thresholds ~= round(thresholds))
-            error('cv_thresholds must be integers.');
-        end
-        if any(diff(thresholds) <= 0)
-            error('cv_thresholds must be in sorted order with unique values.');
-        end
+    if any(thresholds ~= round(thresholds))
+        error('cv_thresholds must be integers.');
     end
-
-    % Initialize return structure
-    results.denoiser = [];
-    results.cv_scores = [];
-    results.best_threshold = [];
-    results.denoiseddata = [];
-    results.fullbasis = basis;
-    results.signalsubspace = [];
-    results.dimreduce = [];
-    results.mags = [];
-    results.dimsretained = [];
-
-    % 7) Decide cross-validation or magnitude-threshold
-    if opt.cv_mode >= 0
-        [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis_out, signalsubspace, dimreduce] = ...
-            perform_cross_validation(data, basis, opt, unit_means);
-
-        results.denoiser = denoiser;
-        results.cv_scores = cv_scores;
-        results.best_threshold = best_threshold;
-        results.denoiseddata = denoiseddata;
-        results.fullbasis = fullbasis_out;
-        results.mags = stored_mags;  % Add eigenvalues for visualization
-
-        if strcmp(opt.cv_threshold_per, 'population')
-            results.signalsubspace = signalsubspace;
-            results.dimreduce = dimreduce;
-        end
-
-    else
-        [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis_out, signalsubspace, dimreduce, mags_out, dimsretained] = ...
-            perform_magnitude_thresholding(data, basis, gsn_results, opt, V, unit_means);
-
-        results.denoiser = denoiser;
-        results.cv_scores = cv_scores;
-        results.best_threshold = best_threshold;
-        results.denoiseddata = denoiseddata;
-        results.fullbasis = fullbasis_out;
-        results.mags = mags_out;
-        results.dimsretained = dimsretained;
-        results.signalsubspace = signalsubspace;
-        results.dimreduce = dimreduce;
-    end
-    
-    % Store the input data and parameters in results for later visualization
-    results.input_data = data;
-    results.V = V;
-    results.opt = opt;
-    
-    if wantfig
-        visualization(data, results);
+    if any(diff(thresholds) <= 0)
+        error('cv_thresholds must be in sorted order with unique values.');
     end
 end
 
+
+function denoiser = create_denoiser_matrix(basis, retained_dims, truncate)
+    % CREATE_DENOISER_MATRIX Build denoising matrix from basis and retained dimensions.
+    %
+    % Inputs:
+    %   <basis> - orthonormal basis vectors
+    %   <retained_dims> - indices of dimensions to retain (1-indexed)
+    %   <truncate> - number of early PCs to exclude
+    %
+    % Returns:
+    %   <denoiser> - denoising projection matrix
+
+    denoising_fn = zeros(1, size(basis, 2));
+    denoising_fn(retained_dims) = 1;
+    D = diag(denoising_fn);
+    denoiser = basis * D * basis';
+end
+
+
+function denoiseddata = apply_denoiser(data, denoiser, unit_means, denoisingtype)
+    % APPLY_DENOISER Apply denoising matrix to data.
+    %
+    % Inputs:
+    %   <data> - neural response data
+    %   <denoiser> - denoising projection matrix
+    %   <unit_means> - mean response for each unit
+    %   <denoisingtype> - 0 for trial-averaged, 1 for single-trial
+    %
+    % Returns:
+    %   <denoiseddata> - denoised data
+
+    [nunits, nconds, ntrials] = size(data);
+
+    if denoisingtype == 0
+        % Trial-averaged denoising
+        trial_avg = mean(data, 3);
+        trial_avg_demeaned = trial_avg - unit_means;
+        denoiseddata = (trial_avg_demeaned' * denoiser)' + unit_means;
+    else
+        % Single-trial denoising
+        denoiseddata = zeros(size(data));
+        for t = 1:ntrials
+            data_demeaned = data(:, :, t) - unit_means;
+            denoiseddata(:, :, t) = (data_demeaned' * denoiser)' + unit_means;
+        end
+    end
+end
+
+
+% =========================================================================
+% Main Algorithm Functions
+% =========================================================================
 
 function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsubspace, dimreduce] = perform_cross_validation(data, basis, opt, unit_means)
 % PERFORM_CROSS_VALIDATION Perform cross-validation to determine optimal denoising dimensions.
@@ -546,7 +656,7 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
 %   <data> - shape [nunits x nconds x ntrials]. Neural response data to denoise.
 %   <basis> - shape [nunits x dims]. Orthonormal basis for denoising.
 %   <opt> - struct with fields:
-%     <cv_mode> - scalar. 
+%     <cv_mode> - scalar.
 %         0: n-1 train / 1 test split
 %         1: 1 train / n-1 test split
 %     <cv_threshold_per> - string.
@@ -560,8 +670,8 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
 %         0: trial-averaged denoising
 %         1: single-trial denoising
 %     <unit_groups> - shape [nunits x 1]. Integer array specifying which units
-%         should receive the same cv threshold. Only applicable when 
-%         cv_threshold_per='unit'. Units with the same integer value get 
+%         should receive the same cv threshold. Only applicable when
+%         cv_threshold_per='unit'. Units with the same integer value get
 %         the same cv threshold.
 %   <unit_means> - shape [nunits x 1]. Mean response for each unit.
 %
@@ -572,10 +682,10 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
 %   <denoiseddata> - shape [nunits x nconds] or [nunits x nconds x ntrials]. Denoised neural responses.
 %   <fullbasis> - shape [nunits x dims]. Complete basis used for denoising.
 %   <signalsubspace> - shape [nunits x best_threshold] or []. Final basis functions used for denoising.
-%   <dimreduce> - shape [best_threshold x nconds] or [best_threshold x nconds x ntrials] or []. 
+%   <dimreduce> - shape [best_threshold x nconds] or [best_threshold x nconds x ntrials] or [].
 %       Data projected onto signal subspace.
 
-    % Set random seed for reproducibility  
+    % Set random seed for reproducibility
     rng('default');
     rng(42, 'twister');
 
@@ -597,16 +707,15 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
         if cv_mode == 0
             % Denoise average of n-1 trials, test against held out trial
             train_trials = setdiff(1:ntrials, tr);
-            train_avg = mean(data(:, :, train_trials), 3);  % [nunits x nconds]
-            test_data = data(:, :, tr);                     % [nunits x nconds]
+            train_avg = mean(data(:, :, train_trials), 3);
+            test_data = data(:, :, tr);
 
             for tt = 1:length(thresholds)
                 threshold = thresholds(tt);
                 safe_thr = min(threshold, size(basis, 2));
                 % Create denoising function with truncation
                 denoising_fn = zeros(1, size(basis, 2));
-                % Set retained dimensions to 1, but skip the first 'truncate' dimensions
-                start_idx = truncate + 1;  % MATLAB is 1-indexed
+                start_idx = truncate + 1;
                 end_idx = min(start_idx + safe_thr - 1, size(basis, 2));
                 if end_idx >= start_idx
                     denoising_fn(start_idx:end_idx) = 1;
@@ -614,7 +723,6 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
                 D = diag(denoising_fn);
                 denoiser_tmp = basis * D * basis';
 
-                % Demean training average before denoising
                 train_avg_demeaned = train_avg - unit_means;
                 train_denoised = (train_avg_demeaned' * denoiser_tmp)';
                 cv_scores(tt, tr, :) = scoring_fn(test_data', train_denoised');
@@ -622,16 +730,14 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
 
         elseif cv_mode == 1
             % Denoise single trial, test against average of n-1 trials
-            dataA = data(:, :, tr)';  % [nconds x nunits]
-            dataB = mean(data(:, :, setdiff(1:ntrials, tr)), 3)';  % [nconds x nunits]
+            dataA = data(:, :, tr)';
+            dataB = mean(data(:, :, setdiff(1:ntrials, tr)), 3)';
 
             for tt = 1:length(thresholds)
                 threshold = thresholds(tt);
                 safe_thr = min(threshold, size(basis,2));
-                % Create denoising function with truncation
                 denoising_fn = zeros(1, size(basis, 2));
-                % Set retained dimensions to 1, but skip the first 'truncate' dimensions
-                start_idx = truncate + 1;  % MATLAB is 1-indexed
+                start_idx = truncate + 1;
                 end_idx = min(start_idx + safe_thr - 1, size(basis, 2));
                 if end_idx >= start_idx
                     denoising_fn(start_idx:end_idx) = 1;
@@ -639,7 +745,6 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
                 D = diag(denoising_fn);
                 denoiser_tmp = basis * D * basis';
 
-                % Demean single trial before denoising
                 dataA_demeaned = dataA - unit_means';
                 dataA_denoised = dataA_demeaned * denoiser_tmp;
                 cv_scores(tt, tr, :) = scoring_fn(dataB, dataA_denoised);
@@ -650,88 +755,56 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
     % Decide best threshold
     if strcmp(threshold_per, 'population')
         % Average over trials and units for population threshold
-        avg_scores = mean(mean(cv_scores, 3), 2);  % shape: [length(thresholds), 1]
+        avg_scores = mean(mean(cv_scores, 3), 2);
         [~, best_ix] = max(avg_scores);
         best_threshold = thresholds(best_ix);
         safe_thr = min(best_threshold, size(basis,2));
 
-        % Apply truncation: use dimensions from truncate+1 to truncate+safe_thr
-        start_idx = truncate + 1;  % MATLAB is 1-indexed
+        % Apply truncation
+        start_idx = truncate + 1;
         end_idx = min(start_idx + safe_thr - 1, size(basis, 2));
         if end_idx >= start_idx
             denoiser = basis(:, start_idx:end_idx) * basis(:, start_idx:end_idx)';
         else
-            denoiser = zeros(nunits, nunits);  % Zero denoiser when no dimensions retained
+            denoiser = zeros(nunits, nunits);
         end
     else
-        % unit-wise: average over trials only, then group by unit_groups
-        avg_scores = squeeze(mean(cv_scores, 2));  % shape: [length(thresholds), nunits]
+        % Unit-wise: average over trials only, then group by unit_groups
+        avg_scores = squeeze(mean(cv_scores, 2));
         if size(avg_scores, 2) == 1
-            avg_scores = avg_scores(:);  % Convert to column vector if only one unit
+            avg_scores = avg_scores(:);
         end
-        
+
         unit_groups = opt.unit_groups;
         unique_groups = unique(unit_groups);
-        
+
         best_thresh_unitwise = zeros(nunits, 1);
-        
-        % For each group, find the best threshold by averaging CV scores within the group
+
         for group_id = unique_groups'
             group_mask = unit_groups == group_id;
-            group_units = find(group_mask);
-            
-            % Average CV scores across units in this group
-            group_avg_scores = mean(avg_scores(:, group_mask), 2);  % shape: [length(thresholds), 1]
+            group_avg_scores = mean(avg_scores(:, group_mask), 2);
             [~, best_idx] = max(group_avg_scores);
             best_thresh_for_group = thresholds(best_idx);
-            
-            % Assign this threshold to all units in the group
             best_thresh_unitwise(group_mask) = best_thresh_for_group;
         end
-        
+
         best_threshold = best_thresh_unitwise';
 
         % Construct unit-wise denoiser
         denoiser = zeros(nunits, nunits);
         for unit_i = 1:nunits
-            % For each unit, create its own denoising vector using its threshold
             safe_thr = min(best_threshold(unit_i), size(basis,2));
-
-            % Apply truncation: use dimensions from truncate+1 to truncate+safe_thr
-            start_idx = truncate + 1;  % MATLAB is 1-indexed
+            start_idx = truncate + 1;
             end_idx = min(start_idx + safe_thr - 1, size(basis, 2));
             if end_idx >= start_idx
                 unit_denoiser = basis(:, start_idx:end_idx) * basis(:, start_idx:end_idx)';
-                % Use the column corresponding to this unit
                 denoiser(:, unit_i) = unit_denoiser(:, unit_i);
             end
-            % If no dimensions retained, denoiser column remains zero (already initialized)
         end
     end
 
-    % Calculate denoiseddata based on denoisingtype
-    if denoisingtype == 0
-        % Trial-averaged denoising
-        trial_avg = mean(data, 3);  % [nunits x nconds]
-        % Demean trial average before denoising
-        trial_avg_demeaned = trial_avg - unit_means;
-        denoiseddata = (trial_avg_demeaned' * denoiser)';
-    else
-        % Single-trial denoising
-        denoiseddata = zeros(size(data));
-        for t = 1:ntrials
-            % Demean each trial before denoising
-            data_demeaned = data(:, :, t) - unit_means;
-            denoiseddata(:, :, t) = (data_demeaned' * denoiser)';
-        end
-    end
-    
-    % Add back the means
-    if ndims(denoiseddata) == 3  % Single-trial case
-        denoiseddata = denoiseddata + unit_means;
-    else  % Trial-averaged case
-        denoiseddata = denoiseddata + unit_means;
-    end
+    % Apply denoiser
+    denoiseddata = apply_denoiser(data, denoiser, unit_means, denoisingtype);
 
     fullbasis = basis;
     if strcmp(threshold_per, 'population')
@@ -741,19 +814,17 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis, signalsu
         if end_idx >= start_idx
             signalsubspace = basis(:, start_idx:end_idx);
         else
-            signalsubspace = basis(:, 1:0);  % Empty but valid shape
+            signalsubspace = basis(:, 1:0);
         end
 
         % Project data onto signal subspace
         if denoisingtype == 0
             trial_avg = mean(data, 3);
-            % Demean before projecting to signal subspace for consistency
             trial_avg_demeaned = trial_avg - unit_means;
-            dimreduce = signalsubspace' * trial_avg_demeaned;  % [dims_retained x nconds]
+            dimreduce = signalsubspace' * trial_avg_demeaned;
         else
             dimreduce = zeros(size(signalsubspace, 2), nconds, ntrials);
             for t = 1:ntrials
-                % Demean before projecting to signal subspace for consistency
                 data_demeaned = data(:, :, t) - unit_means;
                 dimreduce(:, :, t) = signalsubspace' * data_demeaned;
             end
@@ -770,7 +841,7 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, basis, signalsubspa
 % PERFORM_MAGNITUDE_THRESHOLDING Select dimensions using magnitude thresholding.
 %
 % Implements the magnitude thresholding procedure for PSN denoising.
-% Selects dimensions based on cumulative variance explained rather than 
+% Selects dimensions based on cumulative variance explained rather than
 % using cross-validation.
 %
 % Algorithm Details:
@@ -778,7 +849,7 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, basis, signalsubspa
 %    - From signal variance of the data projected into the basis (mag_type=0)
 %    - Or precomputed basis eigenvalues (mag_type=1)
 % 2. Sort dimensions by magnitude in descending order
-% 3. Select the top dimensions that cumulatively account for mag_frac 
+% 3. Select the top dimensions that cumulatively account for mag_frac
 %    of the total variance
 % 4. Create denoising matrix using selected dimensions (in original order)
 %
@@ -806,7 +877,7 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, basis, signalsubspa
 %   <denoiseddata> - shape [nunits x nconds] or [nunits x nconds x ntrials]. Denoised neural responses.
 %   <basis> - shape [nunits x dims]. Complete basis used for denoising.
 %   <signalsubspace> - shape [nunits x n_retained]. Final basis functions used for denoising.
-%   <dimreduce> - shape [n_retained x nconds] or [n_retained x nconds x ntrials]. 
+%   <dimreduce> - shape [n_retained x nconds] or [n_retained x nconds x ntrials].
 %       Data projected onto signal subspace.
 %   <magnitudes> - shape [1 x dims]. Component magnitudes used for thresholding.
 %   <dimsretained> - scalar. Number of dimensions retained.
@@ -817,12 +888,95 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, basis, signalsubspa
     denoisingtype = opt.denoisingtype;
     truncate = opt.truncate;
 
-    cv_scores = [];  % Not used in magnitude thresholding
-    
-    % Get magnitudes based on mag_type
+    cv_scores = [];
+
+    % Get magnitudes
+    magnitudes = compute_magnitudes(data, basis, gsn_results, opt, V, unit_means);
+
+    % Sort dimensions by magnitude and compute cumulative variance
+    [sorted_magnitudes, sorted_indices] = sort(magnitudes, 'descend');
+
+    total_variance = sum(sorted_magnitudes);
+    cumulative_variance = cumsum(sorted_magnitudes);
+    cumulative_fraction = cumulative_variance / total_variance;
+
+    % Find how many dimensions we need
+    dims_needed = sum(cumulative_fraction < mag_frac) + 1;
+    dims_needed = min(dims_needed, length(sorted_magnitudes));
+
+    % Get selected indices and apply truncation
+    selected_indices = sorted_indices(1:dims_needed);
+    filtered_indices = selected_indices(selected_indices > truncate);
+
+    % If we need more dimensions after truncation, add them
+    if length(filtered_indices) < dims_needed
+        remaining_indices = sorted_indices(dims_needed+1:end);
+        remaining_valid = remaining_indices(remaining_indices > truncate);
+        needed_additional = dims_needed - length(filtered_indices);
+        additional_indices = remaining_valid(1:min(needed_additional, length(remaining_valid)));
+        filtered_indices = [filtered_indices; additional_indices];
+    end
+
+    best_threshold = filtered_indices;
+    dimsretained = length(best_threshold);
+
+    if dimsretained == 0
+        % No dimensions retained
+        denoiser = zeros(nunits, nunits);
+        if denoisingtype == 0
+            denoiseddata = zeros(nunits, nconds) + unit_means;
+        else
+            denoiseddata = zeros(nunits, nconds, ntrials) + unit_means;
+        end
+        signalsubspace = basis(:, 1:0);
+        if denoisingtype == 0
+            dimreduce = zeros(0, nconds);
+        else
+            dimreduce = zeros(0, nconds, ntrials);
+        end
+        best_threshold = [];
+        return
+    end
+
+    % Create denoiser and apply
+    denoiser = create_denoiser_matrix(basis, best_threshold, 0);
+    denoiseddata = apply_denoiser(data, denoiser, unit_means, denoisingtype);
+
+    % Calculate signal subspace and reduced dimensions
+    signalsubspace = basis(:, best_threshold);
+    if denoisingtype == 0
+        trial_avg = mean(data, 3);
+        trial_avg_demeaned = trial_avg - unit_means;
+        dimreduce = signalsubspace' * trial_avg_demeaned;
+    else
+        dimreduce = zeros(length(best_threshold), nconds, ntrials);
+        for t = 1:ntrials
+            data_demeaned = data(:, :, t) - unit_means;
+            dimreduce(:, :, t) = signalsubspace' * data_demeaned;
+        end
+    end
+end
+
+
+function magnitudes = compute_magnitudes(data, basis, gsn_results, opt, V, unit_means)
+    % COMPUTE_MAGNITUDES Calculate component magnitudes for thresholding.
+    %
+    % Inputs:
+    %   <data> - neural response data
+    %   <basis> - orthonormal basis
+    %   <gsn_results> - GSN computation results
+    %   <opt> - options struct
+    %   <V> - basis mode or custom basis
+    %   <unit_means> - mean response for each unit
+    %
+    % Returns:
+    %   <magnitudes> - component magnitudes
+
+    [~, nconds, ntrials] = size(data);
+    mag_type = opt.mag_type;
+
     if mag_type == 1
-        % Use pre-computed magnitudes from stored_mags - we need to access them
-        % This is a simplification - in practice, stored_mags should be passed in
+        % Use eigenvalues
         if isnumeric(V) && isscalar(V)
             if V == 0
                 evals = eig(gsn_results.cSb);
@@ -856,14 +1010,12 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, basis, signalsubspa
             magnitudes = abs(magnitudes(sort_idx));
         end
     else
-        % Variance-based threshold in user basis
-        % Initialize list to store signal variances
+        % Variance-based threshold
         sigvars = [];
+        data_reshaped = permute(data, [2, 3, 1]);
 
-        data_reshaped = permute(data, [2, 3, 1]);  % shape [nconds x ntrials x nunits]
-        % Compute signal variance for each basis dimension
         for i = 1:size(basis, 2)
-            this_eigv = basis(:, i);  % Select the i-th eigenvector
+            this_eigv = basis(:, i);
             proj_data = zeros(nconds, ntrials);
             for j = 1:nconds
                 for k = 1:ntrials
@@ -871,187 +1023,38 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, basis, signalsubspa
                 end
             end
 
-            % Compute signal variance (using same computation as in noise ceiling)
             noisevar = mean(std(proj_data, 0, 2) .^ 2);
             datavar = std(mean(proj_data, 2), 0, 1) ^ 2;
-            signalvar = max(datavar - noisevar / size(proj_data, 2), 0);  % Ensure non-negative variance
+            signalvar = max(datavar - noisevar / size(proj_data, 2), 0);
             sigvars(end+1) = signalvar;
         end
 
         magnitudes = sigvars(:);
     end
-    
-    % Sort dimensions by magnitude in descending order to find cumulative variance
-    [sorted_magnitudes, sorted_indices] = sort(magnitudes, 'descend');
-    
-    % Calculate cumulative variance explained
-    total_variance = sum(sorted_magnitudes);
-    cumulative_variance = cumsum(sorted_magnitudes);
-    cumulative_fraction = cumulative_variance / total_variance;
-    
-    % Find how many dimensions we need to reach mag_frac of total variance
-    dims_needed = sum(cumulative_fraction < mag_frac) + 1;  % +1 to include the dimension that crosses threshold
-    dims_needed = min(dims_needed, length(sorted_magnitudes));  % Don't exceed total dimensions
-    
-    % Get the original indices of the selected dimensions (unsorted), but exclude early dimensions
-    selected_indices = sorted_indices(1:dims_needed);  % All selected indices
-
-    % Remove indices that fall within the truncation range (MATLAB is 1-indexed)
-    filtered_indices = selected_indices(selected_indices > truncate);
-
-    % If we need more dimensions after truncation, add them from the remaining sorted list
-    if length(filtered_indices) < dims_needed
-        % Find additional dimensions beyond the truncation range
-        remaining_indices = sorted_indices(dims_needed+1:end);
-        remaining_valid = remaining_indices(remaining_indices > truncate);
-        needed_additional = dims_needed - length(filtered_indices);
-        additional_indices = remaining_valid(1:min(needed_additional, length(remaining_valid)));
-        filtered_indices = [filtered_indices; additional_indices];
-    end
-
-    best_threshold = filtered_indices;  % 1-indexed for MATLAB
-    dimsretained = length(best_threshold);
-
-    if dimsretained == 0
-        % If no dimensions selected, return zero matrices
-        denoiser = zeros(nunits, nunits);
-        if denoisingtype == 0
-            denoiseddata = zeros(nunits, nconds);
-        else
-            denoiseddata = zeros(nunits, nconds, ntrials);
-        end
-        signalsubspace = basis(:, 1:0);  % Empty but valid shape
-        if denoisingtype == 0
-            dimreduce = zeros(0, nconds);
-        else
-            dimreduce = zeros(0, nconds, ntrials);
-        end
-        best_threshold = [];
-        return
-    end
-
-    % Create denoising matrix using retained dimensions
-    denoising_fn = zeros(1, size(basis, 2));
-    denoising_fn(best_threshold) = 1;
-    D = diag(denoising_fn);
-    denoiser = basis * D * basis';
-
-    % Calculate denoised data
-    if denoisingtype == 0
-        % Trial-averaged denoising
-        trial_avg = mean(data, 3);
-        % Demean trial average before denoising
-        trial_avg_demeaned = trial_avg - unit_means;
-        denoiseddata = (trial_avg_demeaned' * denoiser)';
-    else
-        % Single-trial denoising
-        denoiseddata = zeros(size(data));
-        for t = 1:ntrials
-            % Demean each trial before denoising
-            data_demeaned = data(:, :, t) - unit_means;
-            denoiseddata(:, :, t) = (data_demeaned' * denoiser)';
-        end
-    end
-    
-    % Add back the means
-    if ndims(denoiseddata) == 3  % Single-trial case
-        denoiseddata = denoiseddata + unit_means;
-    else  % Trial-averaged case
-        denoiseddata = denoiseddata + unit_means;
-    end
-
-    % Calculate signal subspace and reduced dimensions
-    signalsubspace = basis(:, best_threshold);
-    if denoisingtype == 0
-        trial_avg = mean(data, 3);
-        % Demean before projecting to signal subspace for consistency
-        trial_avg_demeaned = trial_avg - unit_means;
-        dimreduce = signalsubspace' * trial_avg_demeaned;
-    else
-        dimreduce = zeros(length(best_threshold), nconds, ntrials);
-        for t = 1:ntrials
-            % Demean before projecting to signal subspace for consistency
-            data_demeaned = data(:, :, t) - unit_means;
-            dimreduce(:, :, t) = signalsubspace' * data_demeaned;
-        end
-    end
 end
 
+
+% =========================================================================
+% Utility Functions
+% =========================================================================
 
 function scores = negative_mse_columns(x, y)
     % NEGATIVE_MSE_COLUMNS Calculate negative mean squared error between columns.
-    %
-    % Inputs:
-    %   <x> - nconds x nunits. First matrix (usually test data).
-    %   <y> - nconds x nunits. Second matrix (usually predictions).
-    %       Must have same shape as <x>.
-    %
-    % Returns:
-    %   <scores> - 1 x nunits. Negative MSE for each column/unit.
-    %           0 indicates perfect prediction
-    %           More negative values indicate worse predictions
-    %           Each unit gets its own score
-    %
-    % Example:
-    %   x = [1 2; 3 4];  % 2 conditions, 2 units
-    %   y = [1.1 2.1; 2.9 3.9];  % Predictions
-    %   scores = negative_mse_columns(x, y);  % Close to 0
-    %
-    % Notes:
-    %   The function handles empty inputs gracefully by returning zeros, which is useful
-    %   when no data survives thresholding.
-
-    % Calculate negative mean squared error for each column
     scores = -mean((x - y).^2, 1);
 end
 
+
 function V_orthonormal = make_orthonormal(V)
     % MAKE_ORTHONORMAL Find the nearest matrix with orthonormal columns.
-    %
-    % Uses Singular Value Decomposition (SVD) to find the nearest orthonormal matrix:
-    % 1. Decompose <V> = <U>*<S>*<Vh> where <U> and <Vh> are orthogonal
-    % 2. The nearest orthonormal matrix is <U>*<Vh>
-    % 3. Take only the first n columns if m > n
-    % 4. Verify orthonormality within numerical precision
-    %
-    % Inputs:
-    %   <V> - m x n matrix where m >= n. Input matrix to be made orthonormal.
-    %       The number of rows (m) must be at least as large as the number of
-    %       columns (n).
-    %
-    % Returns:
-    %   <V_orthonormal> - m x n matrix with orthonormal columns.
-    %                   The resulting matrix will have:
-    %                   1. All columns unit length
-    %                   2. All columns pairwise orthogonal
-    %
-    % Example:
-    %   V = randn(5,3);  % Random 5x3 matrix
-    %   V_ortho = make_orthonormal(V);
-    %   % Check orthonormality
-    %   gram = V_ortho' * V_ortho;  % Should be very close to identity
-    %   disp(max(abs(gram - eye(size(gram))), [], 'all'));  % Should be ~1e-15
-    %
-    % Notes:
-    %   The SVD method guarantees orthonormality within numerical precision.
-    %   A warning is issued if the result is not perfectly orthonormal.
-    
-    % Check input dimensions
+
     [m, n] = size(V);
     if m < n
         error('Input matrix must have at least as many rows as columns');
     end
-    
-    % Use SVD to find the nearest orthonormal matrix
-    % SVD gives us V = U*S*Vh where U and Vh are orthogonal
-    % The nearest orthonormal matrix is U*Vh
+
     [U, ~, Vh] = svd(V, 'econ');
-    
-    % Take only the first n columns of U if m > n
     V_orthonormal = U(:,1:n) * Vh';
-    
-    % Double check that the result is orthonormal within numerical precision
-    % This is mainly for debugging - the SVD method should guarantee this
+
     gram = V_orthonormal' * V_orthonormal;
     if ~all(abs(gram - eye(n)) < 1e-10, 'all')
         warning('Result may not be perfectly orthonormal due to numerical precision');
