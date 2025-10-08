@@ -128,7 +128,7 @@ def generate_data(nvox=50, ncond=200, ntrial=5, signal_decay=2.0, noise_decay=1.
         # Use provided noise covariance
         U_noise, noise_eigs, _ = np.linalg.svd(noise_cov)
         noise_cov = np.copy(noise_cov)  # Ensure we have a copy to avoid modifying the input
-        
+
         # Warn if alignment was requested but noise_cov is provided
         if align_k > 0 and verbose:
             print("Warning: align_k > 0 but noise_cov was provided. Using provided noise covariance without alignment.")
@@ -136,8 +136,10 @@ def generate_data(nvox=50, ncond=200, ntrial=5, signal_decay=2.0, noise_decay=1.
         # Generate noise covariance after potential alignment
         # Align noise PCs to signal PCs if requested
         if align_k > 0:
+            # Cap align_k to not exceed available dimensions
+            effective_k = min(align_k, nvox)
             U_noise = _adjust_alignment_gradient_descent(
-                U_signal, U_noise, align_alpha, align_k, verbose=verbose
+                U_signal, U_noise, align_alpha, effective_k, verbose=verbose
             )
 
         # Create diagonal eigenvalues for noise
@@ -419,11 +421,15 @@ def _adjust_alignment_gradient_descent(U_signal, U_noise_init, alpha, k,
         if max_align_err < tol_align and orth_err < tol_orth:
             if verbose:
                 print(f"\t\tOptimization complete. Step {step}/{num_steps}: align_err={max_align_err:.2e}, orth_err={orth_err:.2e}")
+            # Ensure perfect orthonormality before returning
+            U, _ = np.linalg.qr(U)
             return U
 
     if verbose:
         print(f"Optimization did not converge. Step {step}/{num_steps}: align_err={max_align_err:.2e}, orth_err={orth_err:.2e}")
 
+    # Ensure orthonormality even if didn't fully converge
+    U, _ = np.linalg.qr(U)
     return U
 
 def _shortcut_alignment(U_signal, U_noise, k):
