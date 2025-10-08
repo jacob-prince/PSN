@@ -15,8 +15,8 @@ import numpy as np
 from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 
 
-def generate_data(nvox=None, ncond=None, ntrial=None, signal_decay=1.0, noise_decay=1.0,
-                 noise_multiplier=1.0, align_alpha=0.0, align_k=0, random_seed=None,
+def generate_data(nvox=50, ncond=200, ntrial=5, signal_decay=2.0, noise_decay=1.25,
+                 noise_multiplier=3.0, align_alpha=0.5, align_k=10, random_seed=42,
                  want_fig=False, signal_cov=None, true_signal=None, noise_cov=None, cluster_units=False, verbose=True):
     """
     Generate synthetic neural data with controlled signal and noise properties.

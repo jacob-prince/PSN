@@ -137,6 +137,8 @@ def psn(data, V=None, opt=None, wantfig=True):
           whatever later dimensions are deemed optimal to remove via cross validation.
           Default: 0.
     <wantfig> - bool. Whether to generate diagnostic figures showing the denoising results.
+        Can also be specified in the opt dictionary (see above). If specified in both 
+        locations, the value in opt takes precedence.
         Default: True.
 
     -------------------------------------------------------------------------
@@ -312,6 +314,10 @@ def psn(data, V=None, opt=None, wantfig=True):
     opt.setdefault('mag_frac', 0.95)
     opt.setdefault('denoisingtype', 0)  # Default to trial-averaged denoising
     opt.setdefault('truncate', 0)  # Default to no truncation
+
+    # Check if wantfig is in opt and override the parameter if present
+    if 'wantfig' in opt:
+        wantfig = opt['wantfig']
 
     # Set default unit_groups based on cv_threshold_per
     if 'unit_groups' not in opt:
