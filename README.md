@@ -29,9 +29,9 @@ Test your installation:
 import numpy as np
 from psn import PSN
 
-# Generate test data (10 units, 20 conditions, 5 trials)
+# Generate test data (25 units, 100 conditions, 5 trials)
 np.random.seed(42)
-data = np.random.randn(10, 20, 5)
+data = np.random.randn(25, 100, 5)
 
 # Apply PSN denoising using sklearn-style API
 denoiser = PSN()
