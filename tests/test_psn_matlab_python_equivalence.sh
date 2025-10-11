@@ -280,7 +280,7 @@ EOF
     $PYTHON_CMD "$TEST_DATA_DIR/run_python_${test_name}.py"
     
     # Run MATLAB PSN
-    cat > "$TEST_DATA_DIR/run_matlab_${test_name}.m" << 'EOF'
+    cat > "$TEST_DATA_DIR/run_matlab_${test_name}.m" << EOF
 try
     % Add PSN matlab directory to path
     addpath('$MATLAB_DIR');
@@ -317,7 +317,7 @@ try
     opt.cv_threshold_per = '$cv_threshold_per';
     opt.denoisingtype = $denoisingtype;
     opt.mag_frac = $mag_frac;
-    opt.truncate = ${truncate};
+    opt.truncate = $truncate;
 
     % Add cv_thresholds for cross-validation modes
     if $cv_mode >= 0

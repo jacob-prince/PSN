@@ -129,9 +129,9 @@ def plot_diagnostic_figures(data, results, test_data=None):
                     else:  # V == 3
                         title = 'Naive Trial-avg Data\nCovariance'
 
-                    matrix_max = np.max(np.abs(matrix_to_show))
+                    vmin, vmax = np.percentile(matrix_to_show, [1, 99])
 
-                    im1 = ax1.imshow(matrix_to_show, vmin=-matrix_max, vmax=matrix_max,
+                    im1 = ax1.imshow(matrix_to_show, vmin=vmin, vmax=vmax,
                                    aspect='equal', interpolation='nearest', cmap='RdBu_r')
                     plt.colorbar(im1, ax=ax1, label='Covariance')
                     ax1.set_title(title, pad=10)
@@ -141,8 +141,28 @@ def plot_diagnostic_figures(data, results, test_data=None):
                     ax1.text(0.5, 0.5, f'Covariance Matrix\nNot Available for V={V}',
                             ha='center', va='center', transform=ax1.transAxes)
                     ax1.set_title('')
-            else:  # V == 4
+            elif V == 4:  # Random basis
                 ax1.text(0.5, 0.5, 'Random Basis\n(No Matrix to Show)',
+                        ha='center', va='center', transform=ax1.transAxes)
+                ax1.set_title('')
+            elif V == 5:  # ICA basis
+                # Show the ICA components (mixing matrix)
+                if 'ica_mixing' in results and results['ica_mixing'] is not None:
+                    matrix_to_show = results['ica_mixing']
+                    vmin, vmax = np.percentile(matrix_to_show, [1, 99])
+                    
+                    im1 = ax1.imshow(matrix_to_show, vmin=vmin, vmax=vmax,
+                                   aspect='auto', interpolation='nearest', cmap='RdBu_r')
+                    plt.colorbar(im1, ax=ax1, label='Component Weight')
+                    ax1.set_title('ICA Mixing Matrix\n(Components)', pad=10)
+                    ax1.set_xlabel('Component')
+                    ax1.set_ylabel('Units')
+                else:
+                    ax1.text(0.5, 0.5, 'ICA Components\nNot Available',
+                            ha='center', va='center', transform=ax1.transAxes)
+                    ax1.set_title('')
+            else:
+                ax1.text(0.5, 0.5, f'V={V}\n(No Matrix to Show)',
                         ha='center', va='center', transform=ax1.transAxes)
                 ax1.set_title('')
         elif isinstance(V, np.ndarray):
@@ -158,17 +178,31 @@ def plot_diagnostic_figures(data, results, test_data=None):
 
         # Plot 2: Full basis matrix (top middle-left)
         ax2 = fig.add_subplot(gs[0, 1])
-        basis_max = np.max(np.abs(results['fullbasis']))
+        vmin, vmax = np.percentile(results['fullbasis'], [1, 99])
         im2 = ax2.imshow(results['fullbasis'], aspect='auto', interpolation='none',
-                        clim=(-basis_max, basis_max), cmap='RdBu_r')
+                        vmin=vmin, vmax=vmax, cmap='RdBu_r')
         plt.colorbar(im2, ax=ax2)
         ax2.set_title('Full Basis Matrix')
         ax2.set_xlabel('Dimension')
         ax2.set_ylabel('Units')
 
-        # Plot 3: Eigenspectrum (top middle)
+        # Plot 3: Magnitude spectrum (top middle)
+        # Determine labels based on ranking method
+        ranking = results.get('opt', {}).get('ranking', 'eigs')
+        
+        # Define labels for different ranking methods
+        ranking_labels = {
+            'eigs': ('Eigenvalues', 'Eigenvalue', 'Eigenspectrum'),
+            'eig-inv': ('Eigenvalues', 'Eigenvalue', 'Eigenspectrum (increasing)'),
+            'signal': ('Signal Variance', 'Signal Variance', 'Signal Variance Spectrum'),
+            'ncsnr': ('Noise-Ceiling SNR', 'NCSNR', 'NCSNR Spectrum'),
+            'sig-noise': ('Signal% - Noise%', 'Signal% - Noise%', 'Signal-Noise Spectrum')
+        }
+        
+        legend_label, ylabel, title = ranking_labels.get(ranking, ('Magnitude', 'Magnitude', 'Magnitude Spectrum'))
+        
         ax3 = fig.add_subplot(gs[0, 2])
-        ax3.plot(S, linewidth=1, color='blue', label='Eigenvalues')  # Made line thinner
+        ax3.plot(S, linewidth=1, color='blue', label=legend_label)  # Made line thinner
 
         # Show truncated dimensions if truncate > 0
         truncate = results.get('opt', {}).get('truncate', 0)
@@ -214,8 +248,8 @@ def plot_diagnostic_figures(data, results, test_data=None):
                           label=f'Dims retained: {threshold_len}')
 
         ax3.set_xlabel('Dimension')
-        ax3.set_ylabel('Eigenvalue')
-        ax3.set_title('Denoising Basis\nEigenspectrum')
+        ax3.set_ylabel(ylabel)
+        ax3.set_title(f'Denoising Basis\n{title}')
         ax3.grid(True, alpha=0.3)
         ax3.legend()
 
@@ -370,8 +404,8 @@ def plot_diagnostic_figures(data, results, test_data=None):
 
         # Plot 6-8: Raw data, denoised data, noise (rest of middle row)
         all_data = np.concatenate([raw_data.flatten(), denoised_data.flatten(), noise.flatten()])
-        max_abs_val = np.max(np.abs(all_data))
-        data_clim = (-max_abs_val, max_abs_val)
+        vmin, vmax = np.percentile(all_data, [1, 99])
+        data_clim = (vmin, vmax)
 
         # Raw data
         ax6 = fig.add_subplot(gs[1, 1])
@@ -399,8 +433,8 @@ def plot_diagnostic_figures(data, results, test_data=None):
 
         # Plot denoising matrix (first subplot in bottom row)
         ax9 = fig.add_subplot(gs[2, 0])
-        denoiser_max = np.max(np.abs(results['denoiser']))
-        denoiser_clim = (-denoiser_max, denoiser_max)
+        vmin, vmax = np.percentile(results['denoiser'], [1, 99])
+        denoiser_clim = (vmin, vmax)
         im9 = plt.imshow(results['denoiser'], aspect='auto', interpolation='none', clim=denoiser_clim, cmap='RdBu_r')
         plt.colorbar(im9)
         plt.title('Optimal Basis Matrix')
@@ -448,7 +482,12 @@ def plot_diagnostic_figures(data, results, test_data=None):
 
             for v in range(nunits):
                 raw_r2_per_unit[0, v] = compute_r2(test_avg[v], train_avg[v])
-                raw_corr_per_unit[0, v] = np.corrcoef(test_avg[v], train_avg[v])[0, 1]
+                
+                # Compute correlation, handling zero-variance case
+                if np.std(test_avg[v]) == 0 or np.std(train_avg[v]) == 0:
+                    raw_corr_per_unit[0, v] = np.nan
+                else:
+                    raw_corr_per_unit[0, v] = np.corrcoef(test_avg[v], train_avg[v])[0, 1]
 
             # Demean before denoising for consistent handling
             train_avg_demeaned = (train_avg.T - results['unit_means']).T
@@ -458,7 +497,12 @@ def plot_diagnostic_figures(data, results, test_data=None):
 
             for v in range(nunits):
                 denoised_r2_per_unit[0, v] = compute_r2(test_avg[v], train_avg_denoised[v])
-                denoised_corr_per_unit[0, v] = np.corrcoef(test_avg[v], train_avg_denoised[v])[0, 1]
+                
+                # Compute correlation, handling zero-variance case
+                if np.std(test_avg[v]) == 0 or np.std(train_avg_denoised[v]) == 0:
+                    denoised_corr_per_unit[0, v] = np.nan
+                else:
+                    denoised_corr_per_unit[0, v] = np.corrcoef(test_avg[v], train_avg_denoised[v])[0, 1]
 
         # Compute mean and SEM
         raw_r2_mean = np.mean(raw_r2_per_unit, axis=0)
@@ -480,15 +524,17 @@ def plot_diagnostic_figures(data, results, test_data=None):
             bins = np.linspace(-1, 1, 50)
             bin_width = bins[1] - bins[0]
 
-            # Plot R2 histogram
-            r2_hist, _ = np.histogram(r2_mean, bins=bins)  # Remove density=True
+            # Plot R2 histogram (exclude NaN values)
+            r2_valid = r2_mean[~np.isnan(r2_mean)]
+            r2_hist, _ = np.histogram(r2_valid, bins=bins)
             plt.bar(bins[:-1] + bin_width/2, r2_hist, width=bin_width,
-                    color=r2_color, alpha=0.6, label=f'Mean R² = {np.mean(r2_mean):.3f}')
+                    color=r2_color, alpha=0.6, label=f'Mean R² = {np.nanmean(r2_mean):.3f}')
 
-            # Plot correlation histogram
-            corr_hist, _ = np.histogram(corr_mean, bins=bins)  # Remove density=True
+            # Plot correlation histogram (exclude NaN values)
+            corr_valid = corr_mean[~np.isnan(corr_mean)]
+            corr_hist, _ = np.histogram(corr_valid, bins=bins)
             plt.bar(bins[:-1] + bin_width/2, corr_hist, width=bin_width,
-                    color=corr_color, alpha=0.6, label=f'Mean r = {np.mean(corr_mean):.3f}')
+                    color=corr_color, alpha=0.6, label=f'Mean r = {np.nanmean(corr_mean):.3f}')
 
             plt.ylabel('# Units')  # Updated label
             plt.xlabel('R² / Pearson r')
