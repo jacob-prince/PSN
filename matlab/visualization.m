@@ -47,13 +47,13 @@ function visualization(data, results, test_data)
             mag_frac_str = regexprep(mag_frac_str, '0*$', '');
             mag_frac_str = regexprep(mag_frac_str, '\.$', '');
             title_text = sprintf(['Data shape: %d units × %d conditions × %d trials    |    ' ...
-                         'V = %s    |    cv_mode = %d    |    ' ...
-                         'mag_type = %d, mag_frac = %s\n'], ...
+                         'V = %s    |    cv\\_mode = %d    |    ' ...
+                         'mag\\_type = %d, mag\\_frac = %s\n'], ...
                         nunits, nconds, ntrials, V_desc, cv_mode, mag_type, mag_frac_str);
         else
             threshold_per = results.opt.cv_threshold_per;
             title_text = sprintf(['Data shape: %d units × %d conditions × %d trials    |    ' ...
-                         'V = %s    |    cv_mode = %d    |    thresh = %s\n'], ...
+                         'V = %s    |    cv\\_mode = %d    |    thresh = %s\n'], ...
                         nunits, nconds, ntrials, V_desc, cv_mode, threshold_per);
         end
     end
@@ -149,9 +149,9 @@ function visualization(data, results, test_data)
                     else  % V == 3
                         title_str = sprintf('Naive Trial-avg Data\nCovariance');
                     end
-                    
+
                     matrix_max = max(abs(matrix_to_show(:)));
-                    
+
                     imagesc(matrix_to_show, [-matrix_max, matrix_max]);
                     colormap(gca, redblue);
                     colorbar;
@@ -165,8 +165,31 @@ function visualization(data, results, test_data)
                          'Units', 'normalized');
                     title('');
                 end
-            else  % V == 4
+            elseif V == 4
                 text(0.5, 0.5, sprintf('Random Basis\n(No Matrix to Show)'), ...
+                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+                     'Units', 'normalized');
+                title('');
+            elseif V == 5  % ICA basis
+                % Show the ICA components (mixing matrix)
+                if isfield(results, 'ica_mixing') && ~isempty(results.ica_mixing)
+                    matrix_to_show = results.ica_mixing;
+                    matrix_max = max(abs(matrix_to_show(:)));
+
+                    imagesc(matrix_to_show, [-matrix_max, matrix_max]);
+                    colormap(gca, redblue);
+                    colorbar;
+                    title(sprintf('ICA Mixing Matrix\n(Components)'));
+                    xlabel('Component');
+                    ylabel('Units');
+                else
+                    text(0.5, 0.5, sprintf('ICA Components\nNot Available'), ...
+                         'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+                         'Units', 'normalized');
+                    title('');
+                end
+            else
+                text(0.5, 0.5, sprintf('V=%d\n(No Matrix to Show)', V), ...
                      'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
                      'Units', 'normalized');
                 title('');
@@ -195,9 +218,43 @@ function visualization(data, results, test_data)
         xlabel('Dimension');
         ylabel('Units');
         
-        % Plot 3: Eigenspectrum (top middle)
+        % Plot 3: Magnitude spectrum (top middle)
         subplot(3, 4, 3);
-        
+
+        % Determine labels based on ranking method
+        if isfield(results, 'opt') && isfield(results.opt, 'ranking')
+            ranking = results.opt.ranking;
+        else
+            ranking = 'eigs';  % default
+        end
+
+        % Define labels for different ranking methods
+        if strcmp(ranking, 'eigs')
+            legend_label = 'Eigenvalues';
+            ylabel_str = 'Eigenvalue';
+            title_str = 'Eigenspectrum';
+        elseif strcmp(ranking, 'eig-inv')
+            legend_label = 'Eigenvalues';
+            ylabel_str = 'Eigenvalue';
+            title_str = 'Eigenspectrum (increasing)';
+        elseif strcmp(ranking, 'signal')
+            legend_label = 'Signal Variance';
+            ylabel_str = 'Signal Variance';
+            title_str = 'Signal Variance Spectrum';
+        elseif strcmp(ranking, 'ncsnr')
+            legend_label = 'Noise-Ceiling SNR';
+            ylabel_str = 'NCSNR';
+            title_str = 'NCSNR Spectrum';
+        elseif strcmp(ranking, 'sig-noise')
+            legend_label = 'Signal% - Noise%';
+            ylabel_str = 'Signal% - Noise%';
+            title_str = 'Signal-Noise Spectrum';
+        else
+            legend_label = 'Magnitude';
+            ylabel_str = 'Magnitude';
+            title_str = 'Magnitude Spectrum';
+        end
+
         % Get eigenvalues from results - try multiple sources
         S_local = [];
         if isfield(results, 'mags') && ~isempty(results.mags)
@@ -210,31 +267,32 @@ function visualization(data, results, test_data)
             if isfield(results, 'fullbasis') && ~isempty(results.fullbasis)
                 % We have the basis but not the eigenvalues
                 % Show a placeholder message
-                text(0.5, 0.5, sprintf('Eigenspectrum not available\nin cross-validation mode'), ...
+                text(0.5, 0.5, sprintf('Magnitude spectrum not available\nin cross-validation mode'), ...
                      'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
                      'Units', 'normalized');
                 S_local = [];  % Mark as unavailable
             else
-                text(0.5, 0.5, sprintf('Eigenspectrum not available\n(no basis data)'), ...
+                text(0.5, 0.5, sprintf('Magnitude spectrum not available\n(no basis data)'), ...
                      'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
                      'Units', 'normalized');
                 S_local = [];  % Mark as unavailable
             end
         end
-        
-        % Plot eigenspectrum if data is available
+
+        % Plot magnitude spectrum if data is available
         if ~isempty(S_local)
-            % Clear any previous plots and plot the eigenspectrum with thicker line
+            % Clear any previous plots and plot the spectrum
             cla;
-            h_eigen = plot(1:length(S_local), S_local, 'LineWidth', 3, 'Color', 'blue', 'Marker', 'o', 'MarkerSize', 4);
-            
+            h_eigen = plot(1:length(S_local), S_local, 'LineWidth', 1, 'Color', 'blue');
+            set(h_eigen, 'DisplayName', legend_label);
+
             % Set axis limits immediately after main plot
             if length(S_local) > 1
                 xlim([0.5, length(S_local) + 0.5]);
             else
                 xlim([0.5, 1.5]);
             end
-            
+
             if max(S_local) > min(S_local)
                 y_range = max(S_local) - min(S_local);
                 ylim([min(S_local) - 0.1*y_range, max(S_local) + 0.1*y_range]);
@@ -262,20 +320,20 @@ function visualization(data, results, test_data)
                     best_threshold = best_threshold(1);  % Take first value if array
                 end
                 if isnumeric(best_threshold) && best_threshold > 0
-                    xline(best_threshold, 'r--', 'LineWidth', 1);
+                    xline(best_threshold, 'r--', 'LineWidth', 1, 'HandleVisibility', 'off');
                 end
             else  % Unit mode
                 % Mean line for unit-specific thresholds
                 if isnumeric(best_threshold) && length(best_threshold) > 1
                     mean_threshold = mean(best_threshold);
-                    xline(mean_threshold, 'r--', 'LineWidth', 1);
+                    xline(mean_threshold, 'r--', 'LineWidth', 1, 'HandleVisibility', 'off');
                     % Add asterisks at the top for each unit's threshold
                     unique_thresholds = unique(best_threshold);
                     y_max = max(S);
                     for i = 1:length(unique_thresholds)
                         thresh = unique_thresholds(i);
                         if thresh <= length(S)
-                            plot(thresh, y_max, 'r*', 'MarkerSize', 5);
+                            plot(thresh, y_max, 'r*', 'MarkerSize', 5, 'HandleVisibility', 'off');
                         end
                     end
                 end
@@ -290,28 +348,51 @@ function visualization(data, results, test_data)
                 % Add circles for included dimensions 
                 valid_indices = best_threshold(best_threshold <= length(S));
                 if ~isempty(valid_indices)
-                    plot(valid_indices, S(valid_indices), 'ro', 'MarkerSize', 4);
+                    plot(valid_indices, S(valid_indices), 'ro', 'MarkerSize', 4, 'HandleVisibility', 'off');
                 end
                 % Show vertical line for number of dimensions retained
                 threshold_len = length(best_threshold);
                 if threshold_len <= length(S)
-                    xline(threshold_len, 'r--', 'LineWidth', 1);
+                    xline(threshold_len, 'r--', 'LineWidth', 1, 'HandleVisibility', 'off');
                 end
             end
         end
         
+        % Show truncated dimensions if truncate > 0
+        if isfield(opt, 'truncate') && opt.truncate > 0
+            truncate_val = opt.truncate;
+            % Highlight truncated dimensions in red
+            truncate_range = min(truncate_val, length(S_local));
+            if truncate_range > 0
+                plot(1:truncate_range, S_local(1:truncate_range), 'rx', 'MarkerSize', 6, ...
+                    'DisplayName', sprintf('Truncated dims (first %d)', truncate_range));
+            end
+        end
+
         % Set labels
         xlabel('Dimension');
-        ylabel('Eigenvalue');
-        title(sprintf('Denoising Basis\nEigenspectrum'));
+        ylabel(ylabel_str);
+        title(sprintf('Denoising Basis\n%s', title_str));
         grid on;
+        legend;
 
         % Plot 4: Signal and noise variances with NCSNR (top right)
         subplot(3, 4, 4);
         yyaxis left;
-        plot(sigvars, 'LineWidth', 1, 'DisplayName', 'Sig. var');
+        plot(sigvars, '-', 'LineWidth', 1, 'Color', 'blue', 'DisplayName', 'Sig. var');
         hold on;
-        plot(noisevars, 'LineWidth', 1, 'DisplayName', 'Noise var');
+        plot(noisevars, '-', 'LineWidth', 1, 'Color', [1 0.5 0], 'DisplayName', 'Noise var');  % Solid orange
+
+        % Show truncated dimensions if truncate > 0
+        if isfield(opt, 'truncate') && opt.truncate > 0
+            truncate_val = opt.truncate;
+            % Highlight truncated dimensions in red
+            truncate_range = min(truncate_val, length(sigvars));
+            if truncate_range > 0
+                plot(1:truncate_range, sigvars(1:truncate_range), 'rx', 'MarkerSize', 6, ...
+                    'DisplayName', sprintf('Truncated dims (first %d)', truncate_range));
+            end
+        end
         
         % Handle thresholds based on mode
         if cv_mode >= 0  % Cross-validation mode
@@ -373,7 +454,13 @@ function visualization(data, results, test_data)
             
             imagesc(cv_data');
             colorbar;
-            xlabel('PC exclusion threshold');
+
+            % Update xlabel based on whether truncation is used
+            if isfield(opt, 'truncate') && opt.truncate > 0
+                xlabel(sprintf('PC threshold (starting from PC %d)', opt.truncate));
+            else
+                xlabel('PC exclusion threshold');
+            end
             ylabel('Units');
             title('Cross-validation scores (z)');
             
