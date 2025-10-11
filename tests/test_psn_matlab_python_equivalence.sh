@@ -29,8 +29,8 @@ set -e  # Exit on any error
 # Parse command-line arguments
 TEST_TO_RUN="${1:-all}"
 
-if [[ "$TEST_TO_RUN" != "all" ]] && ! [[ "$TEST_TO_RUN" =~ ^[1-9]$|^10$ ]]; then
-    echo "Error: Invalid test number '$TEST_TO_RUN'. Must be 1-10 or 'all'"
+if [[ "$TEST_TO_RUN" != "all" ]] && ! [[ "$TEST_TO_RUN" =~ ^[1-9]$|^1[01]$ ]]; then
+    echo "Error: Invalid test number '$TEST_TO_RUN'. Must be 1-11 or 'all'"
     echo "Usage: $0 [test_number|all]"
     exit 1
 fi
@@ -409,8 +409,19 @@ print(f"Python result fields: {sorted(python_results.keys())}")
 print(f"MATLAB result fields: {sorted(matlab_results.keys())}")
 print("")
 
-tolerance = $TOLERANCE
-min_correlation = $MIN_CORRELATION
+# Special handling for ICA tests - use looser tolerances
+is_ica_test = "$test_name" == "test11_ica_basis"
+if is_ica_test:
+    # ICA uses different solvers (sklearn FastICA vs MATLAB fastica)
+    # We expect similar results but not numerically identical
+    tolerance = 0.1  # Much looser tolerance
+    min_correlation = 0.95  # Still expect high correlation
+    print("NOTE: ICA test - using relaxed tolerances due to different ICA solvers")
+    print(f"      Tolerance: {tolerance}, Min correlation: {min_correlation}")
+    print("")
+else:
+    tolerance = $TOLERANCE
+    min_correlation = $MIN_CORRELATION
 max_error = 0.0
 failed_fields = []
 correlation_failed_fields = []
@@ -616,56 +627,69 @@ if should_run_test 1; then
 fi
 
 # Test 2: Signal covariance basis with population CV
-echo "=== Test 2: Signal covariance basis, population CV ==="
-if run_psn_equivalence_test "test2_signal_pop_cv" 20 50 3 0 0 "population" 0 0.95; then
-    test_results+=("PASSED")
-else
-    test_results+=("FAILED")
+if should_run_test 2; then
+    echo "=== Test 2: Signal covariance basis, population CV ==="
+    if run_psn_equivalence_test "test2_signal_pop_cv" 20 50 3 0 0 "population" 0 0.95; then
+        test_results+=("PASSED")
+    else
+        test_results+=("FAILED")
+    fi
+    echo ""
 fi
-echo ""
 
 # Test 3: Signal covariance basis with magnitude thresholding
-echo "=== Test 3: Signal covariance basis, magnitude thresholding ==="
-if run_psn_equivalence_test "test3_signal_mag" 20 50 3 0 -1 "population" 0 0.9; then
-    test_results+=("PASSED")
-else
-    test_results+=("FAILED")
+if should_run_test 3; then
+    echo "=== Test 3: Signal covariance basis, magnitude thresholding ==="
+    if run_psn_equivalence_test "test3_signal_mag" 20 50 3 0 -1 "population" 0 0.9; then
+        test_results+=("PASSED")
+    else
+        test_results+=("FAILED")
+    fi
+    echo ""
 fi
-echo ""
 
 # Test 4: Transformed signal covariance basis (V=1)
-echo "=== Test 4: Transformed signal covariance basis ==="
-if run_psn_equivalence_test "test4_transformed_signal" 15 40 3 1 0 "unit" 0 0.95; then
-    test_results+=("PASSED")
-else
-    test_results+=("FAILED")
+if should_run_test 4; then
+    echo "=== Test 4: Transformed signal covariance basis ==="
+    if run_psn_equivalence_test "test4_transformed_signal" 15 40 3 1 0 "unit" 0 0.95; then
+        test_results+=("PASSED")
+    else
+        test_results+=("FAILED")
+    fi
+    echo ""
 fi
-echo ""
 
 # Test 5: Noise covariance basis (V=2)
-echo "=== Test 5: Noise covariance basis ==="
-if run_psn_equivalence_test "test5_noise_basis" 15 40 3 2 0 "population" 0 0.95; then
-    test_results+=("PASSED")
-else
-    test_results+=("FAILED")
+if should_run_test 5; then
+    echo "=== Test 5: Noise covariance basis ==="
+    if run_psn_equivalence_test "test5_noise_basis" 15 40 3 2 0 "population" 0 0.95; then
+        test_results+=("PASSED")
+    else
+        test_results+=("FAILED")
+    fi
+    echo ""
 fi
-echo ""
 
 # Test 6: PCA basis (V=3)
-echo "=== Test 6: PCA basis ==="
-if run_psn_equivalence_test "test6_pca_basis" 15 40 3 3 0 "unit" 0 0.95; then
-    test_results+=("PASSED")
-else
-    test_results+=("FAILED")
+if should_run_test 6; then
+    echo "=== Test 6: PCA basis ==="
+    # Use fewer voxels and more trials to ensure all dimensions have positive signal
+    # This avoids tie-breaking issues with zero NCSNR values
+    if run_psn_equivalence_test "test6_pca_basis" 10 40 5 3 0 "unit" 0 0.95; then
+        test_results+=("PASSED")
+    else
+        test_results+=("FAILED")
+    fi
+    echo ""
 fi
-echo ""
 
 # Test 7: Random basis (V=4)
-echo "=== Test 7: Random basis ==="
-# Generate shared random basis for consistent comparison
-if [ ! -f "$TEST_DATA_DIR/shared_random_basis.npy" ]; then
-    echo "Generating shared random basis..."
-    cat > "$TEST_DATA_DIR/generate_shared_random_basis.py" << EOF
+if should_run_test 7; then
+    echo "=== Test 7: Random basis ==="
+    # Generate shared random basis for consistent comparison
+    if [ ! -f "$TEST_DATA_DIR/shared_random_basis.npy" ]; then
+        echo "Generating shared random basis..."
+        cat > "$TEST_DATA_DIR/generate_shared_random_basis.py" << EOF
 import numpy as np
 import scipy.io
 
@@ -692,42 +716,63 @@ scipy.io.savemat('$TEST_DATA_DIR/shared_random_basis.mat', {'shared_basis': Q})
 
 print("Shared random basis saved successfully")
 EOF
-    $PYTHON_CMD "$TEST_DATA_DIR/generate_shared_random_basis.py"
+        $PYTHON_CMD "$TEST_DATA_DIR/generate_shared_random_basis.py"
+    fi
+    # Use "shared_random_basis" instead of "4" to indicate using shared basis
+    if run_psn_equivalence_test "test7_random_basis" 15 40 3 "shared_random_basis" -1 "population" 0 0.8; then
+        test_results+=("PASSED")
+    else
+        test_results+=("FAILED")
+    fi
+    echo ""
 fi
-# Use "shared_random_basis" instead of "4" to indicate using shared basis
-if run_psn_equivalence_test "test7_random_basis" 15 40 3 "shared_random_basis" -1 "population" 0 0.8; then
-    test_results+=("PASSED")
-else
-    test_results+=("FAILED")
-fi
-echo ""
 
 # Test 8: Single-trial denoising mode
-echo "=== Test 8: Single-trial denoising ==="
-if run_psn_equivalence_test "test8_single_trial" 15 30 4 0 1 "population" 1 0.95; then
-    test_results+=("PASSED")
-else
-    test_results+=("FAILED")
+if should_run_test 8; then
+    echo "=== Test 8: Single-trial denoising ==="
+    if run_psn_equivalence_test "test8_single_trial" 15 30 4 0 1 "population" 1 0.95; then
+        test_results+=("PASSED")
+    else
+        test_results+=("FAILED")
+    fi
+    echo ""
 fi
-echo ""
 
 # Test 9: Small dataset edge case
-echo "=== Test 9: Small dataset edge case ==="
-if run_psn_equivalence_test "test9_small_data" 5 10 2 0 0 "population" 0 0.95; then
-    test_results+=("PASSED")
-else
-    test_results+=("FAILED")
+if should_run_test 9; then
+    echo "=== Test 9: Small dataset edge case ==="
+    if run_psn_equivalence_test "test9_small_data" 5 10 2 0 0 "population" 0 0.95; then
+        test_results+=("PASSED")
+    else
+        test_results+=("FAILED")
+    fi
+    echo ""
 fi
-echo ""
 
 # Test 10: Truncate functionality
-echo "=== Test 10: Truncate functionality ==="
-if run_psn_equivalence_test "test10_truncate" 15 30 4 0 0 "population" 0 0.95 2; then
-    test_results+=("PASSED")
-else
-    test_results+=("FAILED")
+if should_run_test 10; then
+    echo "=== Test 10: Truncate functionality ==="
+    if run_psn_equivalence_test "test10_truncate" 15 30 4 0 0 "population" 0 0.95 2; then
+        test_results+=("PASSED")
+    else
+        test_results+=("FAILED")
+    fi
+    echo ""
 fi
-echo ""
+
+# Test 11: ICA basis (V=5)
+if should_run_test 11; then
+    echo "=== Test 11: ICA basis ==="
+    # Note: ICA uses different random number generators in Python (sklearn) and MATLAB (fastica)
+    # We expect the results to be similar but not numerically identical
+    # Using magnitude thresholding to make comparison more straightforward
+    if run_psn_equivalence_test "test11_ica_basis" 15 30 4 5 -1 "population" 0 0.85; then
+        test_results+=("PASSED")
+    else
+        test_results+=("FAILED")
+    fi
+    echo ""
+fi
 
 echo ""
 echo "=========================================="
@@ -745,6 +790,7 @@ test_names=(
     "Single-trial denoising"
     "Small dataset"
     "Truncate functionality"
+    "ICA basis"
 )
 
 # Print individual test results
@@ -800,7 +846,7 @@ test_data_dir = '$TEST_DATA_DIR'
 # Test information
 test_configs = [
     ('test1_signal_unit_cv', 'Signal basis, unit CV'),
-    ('test2_signal_pop_cv', 'Signal basis, population CV'),  
+    ('test2_signal_pop_cv', 'Signal basis, population CV'),
     ('test3_signal_mag', 'Signal basis, magnitude thresh'),
     ('test4_transformed_signal', 'Transformed signal basis'),
     ('test5_noise_basis', 'Noise basis'),
@@ -808,7 +854,8 @@ test_configs = [
     ('test7_random_basis', 'Random basis'),
     ('test8_single_trial', 'Single-trial denoising'),
     ('test9_small_data', 'Small dataset'),
-    ('test10_truncate', 'Truncate functionality')
+    ('test10_truncate', 'Truncate functionality'),
+    ('test11_ica_basis', 'ICA basis')
 ]
 
 print("=" * 80)

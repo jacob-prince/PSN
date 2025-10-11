@@ -23,6 +23,7 @@ function [results] = psn(data, V, opt, wantfig)
 %     - V=2: Uses eigenvectors of noise covariance (cNb)
 %     - V=3: Uses naive PCA on trial-averaged data
 %     - V=4: Uses random orthonormal basis
+%     - V=5: Uses ICA (Independent Component Analysis) basis
 %     - V=matrix: Uses user-supplied orthonormal basis
 %
 % 3. Dimension Selection:
@@ -78,6 +79,8 @@ function [results] = psn(data, V, opt, wantfig)
 %   3 means naive PCA (i.e. eigenvectors of the covariance
 %     of the trial-averaged data)
 %   4 means use a randomly generated orthonormal basis [nunits x nunits]
+%   5 means use ICA (Independent Component Analysis) basis.
+%     Requires FastICA toolbox. Will fall back to PCA if not available.
 %   B means use user-supplied basis B. The dimensionality of B
 %     should be [nunits x D] where D >= 1. The columns of B should
 %     unit-length and pairwise orthogonal.
@@ -131,6 +134,13 @@ function [results] = psn(data, V, opt, wantfig)
 %     whatever later dimensions are deemed optimal to remove via cross validation.
 %     This is useful for removing unwanted global signals or artifacts.
 %     Default: 0.
+%   <ranking> - string. Method for ranking basis dimensions:
+%     'eigs' means rank by eigenvalue magnitude (decreasing)
+%     'eig-inv' means rank by eigenvalue magnitude (increasing)
+%     'signal' means rank by signal variance (decreasing)
+%     'ncsnr' means rank by noise-ceiling SNR (decreasing)
+%     'sig-noise' means rank by difference between signal % and noise % (decreasing)
+%     Default: 'ncsnr' for most cases, 'sig-noise' for V=2 or V=4 with unit-wise thresholding
 % <wantfig> - bool. Whether to generate diagnostic figures showing the denoising results.
 %   Default: true.
 %
@@ -231,6 +241,12 @@ function [results] = psn(data, V, opt, wantfig)
                '  git submodule update --init --recursive'], gsn_matlab_path);
     end
 
+    % Setup FastICA dependency path (for V=5 ICA basis)
+    fastica_path = fullfile(fileparts(mfilename('fullpath')), 'FastICA_25');
+    if exist(fastica_path, 'dir')
+        addpath(fastica_path);
+    end
+
     % 1) Validate data
     [nunits, nconds, ntrials] = validate_data(data);
 
@@ -255,12 +271,51 @@ function [results] = psn(data, V, opt, wantfig)
 
     % 5) Compute or validate basis
     gsn_results = [];
+    ica_mixing = [];
     if isnumeric(V) && isscalar(V)
         [basis, mags, basis_source, gsn_results] = compute_basis_from_mode(data, V, unit_means);
-        results.basis_source = basis_source;
+
+        % Set default ranking based on V value and threshold type if not explicitly provided
+        if ~isfield(opt, 'ranking')
+            % Special case: V=2 (noise) or V=4 (random) with unit thresholding -> use sig-noise
+            if ismember(V, [2, 4]) && strcmp(opt.cv_threshold_per, 'unit')
+                opt.ranking = 'sig-noise';
+            else
+                % Default for all other cases: use ncsnr (noise-ceiling SNR)
+                % This has been empirically validated as the most robust across scenarios
+                opt.ranking = 'ncsnr';
+            end
+        end
+
+        % Rank basis dimensions according to the specified ranking method
+        [basis, mags, ranked_source] = rank_basis_dimensions(basis, basis_source, data, mags, opt.ranking);
+
+        % For ICA, store the ranked mixing matrix separately
+        if V == 5
+            ica_mixing = ranked_source;
+            % For ICA, we don't want basis_source in visualization, replace with []
+            results.basis_source = [];
+            results.ica_mixing = ica_mixing;
+        else
+            % For other basis types, update basis_source with ranked version
+            results.basis_source = ranked_source;
+            results.ica_mixing = [];
+        end
     else
         [basis, mags] = validate_and_normalize_custom_basis(V, data, nunits, unit_means);
         results.basis_source = [];
+        results.ica_mixing = [];
+
+        % Set default ranking for user-supplied basis
+        if ~isfield(opt, 'ranking')
+            % Use ncsnr as default (most robust across scenarios)
+            opt.ranking = 'ncsnr';
+        end
+
+        % Rank user-supplied basis if ranking is specified
+        if ~strcmp(opt.ranking, 'eigs') || ~issorted(mags, 'descend')
+            [basis, mags, ~] = rank_basis_dimensions(basis, [], data, mags, opt.ranking);
+        end
     end
 
     stored_mags = mags;
@@ -302,7 +357,7 @@ function [results] = psn(data, V, opt, wantfig)
 
     else
         [denoiser, cv_scores, best_threshold, denoiseddata, fullbasis_out, signalsubspace, dimreduce, mags_out, dimsretained] = ...
-            perform_magnitude_thresholding(data, basis, gsn_results, opt, V, unit_means);
+            perform_magnitude_thresholding(data, basis, gsn_results, opt, V, unit_means, stored_mags);
 
         results.denoiser = denoiser;
         results.cv_scores = cv_scores;
@@ -398,7 +453,7 @@ function [basis, mags, basis_source, gsn_results] = compute_basis_from_mode(data
     %
     % Inputs:
     %   <data> - neural response data
-    %   <V> - integer mode (0-4)
+    %   <V> - integer mode (0-5)
     %   <unit_means> - mean response for each unit
     %
     % Returns:
@@ -407,8 +462,8 @@ function [basis, mags, basis_source, gsn_results] = compute_basis_from_mode(data
     %   <basis_source> - source matrix used to compute basis
     %   <gsn_results> - GSN computation results (if applicable)
 
-    if ~ismember(V, [0, 1, 2, 3, 4])
-        error('V must be in [0..4] (int) or a 2D numeric array.');
+    if ~ismember(V, [0, 1, 2, 3, 4, 5])
+        error('V must be in [0..5] (int) or a 2D numeric array.');
     end
 
     gsn_results = [];
@@ -446,7 +501,7 @@ function [basis, mags, basis_source, gsn_results] = compute_basis_from_mode(data
         cov_matrix = cov(trial_avg_demeaned.');
         [basis, mags, basis_source] = compute_symmetric_eigen(cov_matrix);
 
-    else  % V == 4
+    elseif V == 4
         % Random orthonormal basis
         rng('default');
         rng(42, 'twister');
@@ -455,6 +510,84 @@ function [basis, mags, basis_source, gsn_results] = compute_basis_from_mode(data
         basis = basis(:, 1:nunits);
         mags = ones(nunits, 1);
         basis_source = [];
+
+    else  % V == 5
+        % ICA (Independent Component Analysis) basis
+        trial_avg = mean(data, 3);
+        trial_avg_demeaned = trial_avg - unit_means;
+        nconds = size(data, 2);
+
+        n_components = min(nunits, nconds);
+
+        % Use MATLAB's rica (Robust ICA) or fastica if available
+        % We'll match Python's sklearn FastICA behavior as closely as possible
+        try
+            % Try using fastica if available (from FastICA toolbox)
+            % Note: FastICA expects each row to be an observed signal (unit)
+            % trial_avg_demeaned is (nunits x nconds), which is the correct format
+            % Use deterministic random initialization matching Python (seed 42)
+            rng('default');
+            rng(42, 'twister');
+            [~, A, ~] = fastica(trial_avg_demeaned, 'numOfIC', n_components, ...
+                               'verbose', 'off', 'maxNumIterations', 1000, ...
+                               'epsilon', 1e-4, 'initGuess', randn(n_components, n_components));
+
+            % A is the mixing matrix (nunits x n_components)
+            mixing_directions = A;
+        catch
+            % Fallback to PCA if FastICA is not available
+            warning('FastICA not available, falling back to PCA for V=5');
+            cov_matrix = cov(trial_avg_demeaned.');
+            [basis, mags, basis_source] = compute_symmetric_eigen(cov_matrix);
+            return;
+        end
+
+        % Normalize mixing directions to unit length
+        mixing_directions_normalized = mixing_directions ./ ...
+            sqrt(sum(mixing_directions.^2, 1));
+
+        % Apply QR decomposition to make orthonormal
+        [basis, ~] = qr(mixing_directions_normalized, 0);
+
+        % Store the original normalized mixing matrix in basis_source
+        basis_source = mixing_directions_normalized;
+
+        % Add random basis vectors if necessary to complete the basis
+        if size(basis, 2) < nunits
+            remaining_dims = nunits - size(basis, 2);
+            rng('default');
+            rng(43, 'twister');
+            rand_mat = randn(nunits, remaining_dims);
+
+            % Orthogonalize against existing basis using modified Gram-Schmidt
+            for i = 1:remaining_dims
+                v = rand_mat(:, i);
+                % Project out existing basis vectors
+                for j = 1:size(basis, 2)
+                    v = v - dot(v, basis(:, j)) * basis(:, j);
+                end
+                % Normalize
+                norm_v = norm(v);
+                if norm_v > 1e-10
+                    v = v / norm_v;
+                    rand_mat(:, i) = v;
+                else
+                    % Generate a new random vector if current one is too small
+                    v = randn(nunits, 1);
+                    for j = 1:size(basis, 2)
+                        v = v - dot(v, basis(:, j)) * basis(:, j);
+                    end
+                    v = v / norm(v);
+                    rand_mat(:, i) = v;
+                end
+            end
+
+            basis = [basis, rand_mat];
+        end
+
+        % Placeholder magnitudes (will be recomputed with noise ceiling in main function)
+        projections_avg = trial_avg_demeaned' * basis;  % (nconds x nunits)
+        mags = var(projections_avg, 0, 1)';
     end
 end
 
@@ -837,7 +970,7 @@ end
 
 
 function [denoiser, cv_scores, best_threshold, denoiseddata, basis, signalsubspace, dimreduce, magnitudes, dimsretained] = ...
-    perform_magnitude_thresholding(data, basis, gsn_results, opt, V, unit_means)
+    perform_magnitude_thresholding(data, basis, gsn_results, opt, V, unit_means, ranked_mags)
 % PERFORM_MAGNITUDE_THRESHOLDING Select dimensions using magnitude thresholding.
 %
 % Implements the magnitude thresholding procedure for PSN denoising.
@@ -848,10 +981,10 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, basis, signalsubspa
 % 1. Get magnitudes either:
 %    - From signal variance of the data projected into the basis (mag_type=0)
 %    - Or precomputed basis eigenvalues (mag_type=1)
-% 2. Sort dimensions by magnitude in descending order
+% 2. Use magnitudes as-is (already sorted by the ranking method)
 % 3. Select the top dimensions that cumulatively account for mag_frac
 %    of the total variance
-% 4. Create denoising matrix using selected dimensions (in original order)
+% 4. Create denoising matrix using selected dimensions
 %
 % Inputs:
 %   <data> - shape [nunits x nconds x ntrials]. Neural response data to denoise.
@@ -890,11 +1023,13 @@ function [denoiser, cv_scores, best_threshold, denoiseddata, basis, signalsubspa
 
     cv_scores = [];
 
-    % Get magnitudes
-    magnitudes = compute_magnitudes(data, basis, gsn_results, opt, V, unit_means);
-
-    % Sort dimensions by magnitude and compute cumulative variance
-    [sorted_magnitudes, sorted_indices] = sort(magnitudes, 'descend');
+    % Use magnitudes provided from ranking (already sorted by rank_basis_dimensions)
+    % Note: The magnitudes are assumed to already be sorted according to the ranking method.
+    % For most ranking methods (eigs, signal, ncsnr, sig-noise), this is decreasing order.
+    % For eig-inv, this is increasing order. We use them as-is without re-sorting.
+    magnitudes = ranked_mags(:);
+    sorted_indices = (1:length(magnitudes))';
+    sorted_magnitudes = magnitudes;
 
     total_variance = sum(sorted_magnitudes);
     cumulative_variance = cumsum(sorted_magnitudes);
@@ -1059,4 +1194,129 @@ function V_orthonormal = make_orthonormal(V)
     if ~all(abs(gram - eye(n)) < 1e-10, 'all')
         warning('Result may not be perfectly orthonormal due to numerical precision');
     end
+end
+
+
+function [basis_ranked, magnitudes_ranked, basis_source_ranked] = rank_basis_dimensions(basis, basis_source, data, magnitudes, ranking)
+    % RANK_BASIS_DIMENSIONS Rank basis dimensions by various criteria.
+    %
+    % This function ranks basis dimensions using different methods:
+    % - 'eigs': By eigenvalue magnitude (decreasing)
+    % - 'eig-inv': By eigenvalue magnitude (increasing)
+    % - 'signal': By signal variance (decreasing)
+    % - 'ncsnr': By noise-ceiling SNR (decreasing)
+    % - 'sig-noise': By difference between signal % and noise % (decreasing)
+    %
+    % Inputs:
+    %   <basis> - Orthonormal basis (nunits x ndims)
+    %   <basis_source> - Source matrix before orthonormalization (nunits x ncomponents), can be []
+    %   <data> - Raw trial data (nunits x nconds x ntrials)
+    %   <magnitudes> - Initial eigenvalues/magnitudes for each dimension
+    %   <ranking> - Ranking method - 'eigs', 'eig-inv', 'signal', 'ncsnr', or 'sig-noise'
+    %
+    % Returns:
+    %   <basis_ranked> - Reranked orthonormal basis
+    %   <magnitudes_ranked> - Ranking values in appropriate order
+    %   <basis_source_ranked> - Reordered source matrix (or [])
+
+    [nunits, nconds, ntrials] = size(data);
+    ndims = size(basis, 2);
+
+    if strcmp(ranking, 'eigs')
+        % Rank by eigenvalue magnitude (decreasing) - magnitudes already computed
+        [magnitudes_ranked, sort_idx] = sort(magnitudes, 'descend');
+
+    elseif strcmp(ranking, 'eig-inv')
+        % Rank by eigenvalue magnitude (increasing)
+        [magnitudes_ranked, sort_idx] = sort(magnitudes, 'ascend');
+
+    elseif ismember(ranking, {'signal', 'ncsnr', 'sig-noise'})
+        % Need to compute signal and noise components for each dimension
+        data_reshaped = permute(data, [2, 3, 1]);  % (nconds x ntrials x nunits)
+        signal_variances = zeros(ndims, 1);
+        noise_variances = zeros(ndims, 1);
+        ncsnrs = zeros(ndims, 1);
+
+        for i = 1:ndims
+            % Get this basis vector
+            this_basis_vec = basis(:, i);
+
+            % Project data onto this direction: (nconds x ntrials x nunits) @ (nunits,) = (nconds x ntrials)
+            proj_data = zeros(nconds, ntrials);
+            for j = 1:nconds
+                for k = 1:ntrials
+                    proj_data(j, k) = dot(squeeze(data_reshaped(j, k, :)), this_basis_vec);
+                end
+            end
+
+            % Use compute_noise_ceiling to get signal variance, noise variance, and ncsnr
+            % proj_data needs shape (1 x nconds x ntrials) for compute_noise_ceiling
+            [~, ncsnr, sigvar, noisevar] = compute_noise_ceiling(reshape(proj_data, [1, nconds, ntrials]));
+
+            signal_variances(i) = sigvar;
+            noise_variances(i) = noisevar;
+            ncsnrs(i) = ncsnr;
+        end
+
+        if strcmp(ranking, 'signal')
+            % Rank by signal variance (decreasing)
+            [magnitudes_ranked, sort_idx] = sort(signal_variances, 'descend');
+
+        elseif strcmp(ranking, 'ncsnr')
+            % Rank by noise-ceiling SNR (decreasing)
+            [magnitudes_ranked, sort_idx] = sort(ncsnrs, 'descend');
+
+        elseif strcmp(ranking, 'sig-noise')
+            % Rank by difference between signal % and noise %
+            total_signal = sum(signal_variances);
+            total_noise = sum(noise_variances);
+
+            % Avoid division by zero
+            if total_signal > 0
+                signal_pcts = 100 * signal_variances / total_signal;
+            else
+                signal_pcts = zeros(ndims, 1);
+            end
+
+            if total_noise > 0
+                noise_pcts = 100 * noise_variances / total_noise;
+            else
+                noise_pcts = zeros(ndims, 1);
+            end
+
+            sig_noise_diff = signal_pcts - noise_pcts;
+            [magnitudes_ranked, sort_idx] = sort(sig_noise_diff, 'descend');
+        end
+
+    else
+        error('Invalid ranking method: %s. Must be one of: ''eigs'', ''eig-inv'', ''signal'', ''ncsnr'', ''sig-noise''', ranking);
+    end
+
+    % Reorder basis and basis_source
+    basis_ranked = basis(:, sort_idx);
+
+    if ~isempty(basis_source) && size(basis_source, 2) == length(sort_idx)
+        basis_source_ranked = basis_source(:, sort_idx);
+    else
+        basis_source_ranked = [];
+    end
+end
+
+
+% Helper function to compute noise ceiling
+function [noiseceiling, ncsnr, signalvar, noisevar] = compute_noise_ceiling(data_in)
+    % noisevar: mean variance across trials for each unit
+    noisevar = mean(std(data_in, 0, 3) .^ 2, 2);
+
+    % datavar: variance of the trial means across conditions for each unit
+    datavar = std(mean(data_in, 3), 0, 2) .^ 2;
+
+    % signalvar: signal variance, obtained by subtracting noise variance from data variance
+    signalvar = max(datavar - noisevar / size(data_in, 3), 0);  % Ensure non-negative variance
+
+    % ncsnr: signal-to-noise ratio (SNR) for each unit
+    ncsnr = sqrt(signalvar) ./ sqrt(noisevar);
+
+    % noiseceiling: percentage noise ceiling based on SNR
+    noiseceiling = 100 * (ncsnr .^ 2 ./ (ncsnr .^ 2 + 1 / size(data_in, 3)));
 end

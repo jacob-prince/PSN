@@ -70,6 +70,10 @@ venv.bak/
 notebooks/
 lab/
 todo
+benchmark_results
+logos
+matlab/FastICA_25
+
 
 # ide
 .idea

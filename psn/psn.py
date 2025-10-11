@@ -145,8 +145,12 @@ def _compute_basis_from_gsn(V, gsn_results, trial_avg_demeaned):
         nconds = trial_avg_demeaned.shape[1]
         
         n_components = min(nunits, nconds)
+        # Use deterministic random initialization matching MATLAB
+        # Generate initialization matrix with seed 42
+        np.random.seed(42)
+        w_init = np.random.randn(n_components, n_components)
         ica = FastICA(n_components=n_components, random_state=42, max_iter=1000, 
-                      tol=1e-4, whiten='unit-variance')
+                      tol=1e-4, whiten='unit-variance', w_init=w_init)
 
         try:
             # Fit ICA: FastICA expects (n_samples, n_features)
