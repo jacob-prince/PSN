@@ -225,30 +225,30 @@ function visualization(data, results, test_data)
         if isfield(results, 'opt') && isfield(results.opt, 'ranking')
             ranking = results.opt.ranking;
         else
-            ranking = 'eigs';  % default
+            ranking = 'signal_variance';  % default
         end
 
         % Define labels for different ranking methods
-        if strcmp(ranking, 'eigs')
+        if strcmp(ranking, 'eigenvalue')
             legend_label = 'Eigenvalues';
             ylabel_str = 'Eigenvalue';
-            title_str = 'Eigenspectrum';
-        elseif strcmp(ranking, 'eig-inv')
+            title_str = 'Eigenspectrum (decreasing)';
+        elseif strcmp(ranking, 'eigenvalue_asc')
             legend_label = 'Eigenvalues';
             ylabel_str = 'Eigenvalue';
             title_str = 'Eigenspectrum (increasing)';
-        elseif strcmp(ranking, 'signal')
+        elseif strcmp(ranking, 'signal_variance')
             legend_label = 'Signal Variance';
             ylabel_str = 'Signal Variance';
             title_str = 'Signal Variance Spectrum';
-        elseif strcmp(ranking, 'ncsnr')
+        elseif strcmp(ranking, 'snr')
             legend_label = 'Noise-Ceiling SNR';
             ylabel_str = 'NCSNR';
             title_str = 'NCSNR Spectrum';
-        elseif strcmp(ranking, 'sig-noise')
+        elseif strcmp(ranking, 'signal_specificity')
             legend_label = 'Signal% - Noise%';
             ylabel_str = 'Signal% - Noise%';
-            title_str = 'Signal-Noise Spectrum';
+            title_str = 'Signal Specificity Spectrum';
         else
             legend_label = 'Magnitude';
             ylabel_str = 'Magnitude';
@@ -451,7 +451,8 @@ function visualization(data, results, test_data)
             
             % Z-score the data (MATCH PYTHON: axis=0 means along columns in MATLAB)
             cv_data = zscore(cv_data, 1, 1);  % Z-score along columns (axis=0 in Python)
-            
+
+            % Plot without extent - use default pixel coordinates with 'nearest' interpolation
             imagesc(cv_data');
             colorbar;
 
@@ -517,7 +518,7 @@ function visualization(data, results, test_data)
                     end
                     
                     hold on;
-                    % In MATLAB, imagesc displays matrix elements centered at integer coordinates
+                    % In MATLAB, imagesc displays matrix elements centered at integer coordinates (pixel indices)
                     plot(threshold_positions, unit_indices, 'r.', 'MarkerSize', 8);
                 end
             end
@@ -660,85 +661,200 @@ function visualization(data, results, test_data)
         denoised_corr_mean = mean(denoised_corr_per_unit, 1);
         denoised_corr_sem = std(denoised_corr_per_unit, 0, 1) / sqrt(size(denoised_corr_per_unit, 1));
 
-        % Plot bottom row histograms and R² progression
-        train_trials = ntrials - 1;
-        if nargin >= 3 && ~isempty(test_data)
-            train_trials = size(data, 3);
-            if ndims(test_data) > 2
-                test_trials = size(test_data, 3);
-            else
-                test_trials = 1;
-            end
-        else
-            test_trials = 1;
+        % Plot trial-averaged and denoised traces similar to EEG notebook
+        % Get trial-averaged data
+        trial_avg_full = mean(data, 3);  % (nunits x nconds)
+        denoised_full = results.denoiseddata;
+
+        % If denoised data is 3D, average it
+        if ndims(denoised_full) == 3
+            denoised_full = mean(denoised_full, 3);
         end
-        
-        % Plot baseline generalization
+
+        % Calculate mean response across conditions for rainbow coloring
+        cond_means = mean(trial_avg_full, 1);  % Mean across units for each condition
+        [~, sorted_cond_indices] = sort(cond_means);
+        colors_rainbow = jet(nconds);
+
+        % Create color array where each condition gets its color based on rank
+        trace_colors = zeros(nconds, 3);
+        for rank = 1:nconds
+            cond_idx = sorted_cond_indices(rank);
+            trace_colors(cond_idx, :) = colors_rainbow(rank, :);
+        end
+
+        % Plot trial-averaged traces
         subplot(3, 4, 10);
-        plot_bottom_histogram(raw_r2_mean, raw_corr_mean, 'blue', 'cyan', ...
-                              sprintf('Baseline Generalization\nTrial-avg Train (%d trials) vs\nTrial-avg Test (%d trials)', ...
-                                      train_trials, test_trials));
-
-        % Plot denoised generalization
-        subplot(3, 4, 11);
-        plot_bottom_histogram(denoised_r2_mean, denoised_corr_mean, 'green', 'yellow', ...
-                              sprintf('Denoised Generalization\nTrial-avg Train + denoised (%d trials) vs\nTrial-avg Test (%d trials)', ...
-                                      train_trials, test_trials));
-
-        % Add R² progression plot
-        subplot(3, 4, 12);
-        x_positions = [1, 2];  % Two positions for the two conditions
-        
-        % Plot lines for each unit
-        for v = 1:nunits
-            values = [raw_r2_mean(v), denoised_r2_mean(v)];
-            plot(x_positions, values, 'Color', [0.7 0.7 0.7], 'LineWidth', 0.5);
-            hold on;
-            scatter(x_positions(1), values(1), 20, 'blue', 'filled', 'MarkerFaceAlpha', 0.5);
-            scatter(x_positions(2), values(2), 20, 'green', 'filled', 'MarkerFaceAlpha', 0.5);
+        hold on;
+        x_units = 0:nunits-1;  % 0-indexed to match Python
+        for cond_idx = 1:nconds
+            plot(x_units, trial_avg_full(:, cond_idx), 'Color', trace_colors(cond_idx, :), ...
+                'LineWidth', 0.5);
         end
-        
-        % Plot mean performance
-        mean_values = [mean(raw_r2_mean), mean(denoised_r2_mean)];
-        plot(x_positions, mean_values, 'Color', 'magenta', 'LineWidth', 2, 'DisplayName', 'Mean');
-        scatter(x_positions(1), mean_values(1), 100, 'blue', 'filled', 'MarkerEdgeColor', 'magenta', 'LineWidth', 2);
-        scatter(x_positions(2), mean_values(2), 100, 'green', 'filled', 'MarkerEdgeColor', 'magenta', 'LineWidth', 2);
-        
-        set(gca, 'XTick', x_positions, 'XTickLabel', {'Trial Averaged', 'With Denoising'});
-        ylabel('R²');
-        title(sprintf('Impact of denoising on R² (%d units)', nunits));
+        xlabel('Units');
+        ylabel('Activity');
+        title(sprintf('Trial-Averaged Traces\n(rainbow: conditions by mean response)'));
         grid on;
-        xlim([0.5, 2.5]);
-        ylim([-1, 1]);
-        yline(0, 'k-', 'LineWidth', 2);
-    end
-end
+        xlim([min(x_units), max(x_units)]);
 
-% Helper function to plot bottom row with rotated histograms
-function plot_bottom_histogram(r2_mean, corr_mean, r2_color, corr_color, title_str)
-    hold on;
-    xline(0, 'k-', 'LineWidth', 2);
-    
-    % Calculate histogram bins (MATCH PYTHON: 50 bins from -1 to 1)
-    bins = linspace(-1, 1, 50);  % Creates 49 bin edges, like Python's np.linspace(-1, 1, 50)
-    bin_width = bins(2) - bins(1);
-    
-    % Plot R2 histogram (MATCH PYTHON exactly)
-    [r2_hist, ~] = histcounts(r2_mean, bins);
-    bar(bins(1:end-1) + bin_width/2, r2_hist, bin_width, ...
-        'FaceColor', r2_color, 'FaceAlpha', 0.6, 'DisplayName', sprintf('Mean R² = %.3f', mean(r2_mean)));
-    
-    % Plot correlation histogram (MATCH PYTHON exactly)
-    [corr_hist, ~] = histcounts(corr_mean, bins);
-    bar(bins(1:end-1) + bin_width/2, corr_hist, bin_width, ...
-        'FaceColor', corr_color, 'FaceAlpha', 0.6, 'DisplayName', sprintf('Mean r = %.3f', mean(corr_mean)));
-    
-    ylabel('# Units');
-    xlabel('R² / Pearson r');
-    title(title_str);
-    grid on;
-    legend;
-    xlim([-1, 1]);
+        % Plot denoised traces
+        subplot(3, 4, 11);
+        hold on;
+        for cond_idx = 1:nconds
+            plot(x_units, denoised_full(:, cond_idx), 'Color', trace_colors(cond_idx, :), ...
+                'LineWidth', 0.5);
+        end
+        xlabel('Units');
+        ylabel('Activity');
+        title(sprintf('PSN Denoised Traces\n(same condition coloring)'));
+        grid on;
+        xlim([min(x_units), max(x_units)]);
+
+        % Match y-axis limits across both plots
+        all_trace_data = [trial_avg_full(:); denoised_full(:)];
+        y_min = min(all_trace_data);
+        y_max = max(all_trace_data);
+        y_range = y_max - y_min;
+        y_margin = y_range * 0.05;
+
+        subplot(3, 4, 10);
+        ylim([y_min - y_margin, y_max + y_margin]);
+
+        subplot(3, 4, 11);
+        ylim([y_min - y_margin, y_max + y_margin]);
+
+        % Add split-half correlation comparison plot
+        subplot(3, 4, 12);
+
+        % Split trials in half
+        half_idx = floor(ntrials / 2);
+        data_A = data(:, :, 1:half_idx);
+        data_B = data(:, :, half_idx+1:end);
+
+        % Compute trial averages for each split
+        trial_avg_A = mean(data_A, 3);  % (nunits x nconds)
+        trial_avg_B = mean(data_B, 3);
+
+        % Denoise each split separately
+        denoiser = results.denoiser;
+        unit_means = results.unit_means;
+
+        % Denoise split A
+        trial_avg_A_demeaned = trial_avg_A - unit_means;
+        denoised_A = (trial_avg_A_demeaned' * denoiser)' + unit_means;
+
+        % Denoise split B
+        trial_avg_B_demeaned = trial_avg_B - unit_means;
+        denoised_B = (trial_avg_B_demeaned' * denoiser)' + unit_means;
+
+        % Compute correlations for each unit
+        corr_tavg_tavg = zeros(nunits, 1);
+        corr_cross_AB = zeros(nunits, 1);
+        corr_cross_BA = zeros(nunits, 1);
+        corr_dn_dn = zeros(nunits, 1);
+
+        for unit_idx = 1:nunits
+            % Trial avg vs trial avg
+            if std(trial_avg_A(unit_idx, :)) > 0 && std(trial_avg_B(unit_idx, :)) > 0
+                corr_tavg_tavg(unit_idx) = corr(trial_avg_A(unit_idx, :)', trial_avg_B(unit_idx, :)');
+            else
+                corr_tavg_tavg(unit_idx) = NaN;
+            end
+
+            % Cross-method: trial avg A vs denoised B
+            if std(trial_avg_A(unit_idx, :)) > 0 && std(denoised_B(unit_idx, :)) > 0
+                corr_cross_AB(unit_idx) = corr(trial_avg_A(unit_idx, :)', denoised_B(unit_idx, :)');
+            else
+                corr_cross_AB(unit_idx) = NaN;
+            end
+
+            % Cross-method: denoised A vs trial avg B
+            if std(denoised_A(unit_idx, :)) > 0 && std(trial_avg_B(unit_idx, :)) > 0
+                corr_cross_BA(unit_idx) = corr(denoised_A(unit_idx, :)', trial_avg_B(unit_idx, :)');
+            else
+                corr_cross_BA(unit_idx) = NaN;
+            end
+
+            % Denoised vs denoised
+            if std(denoised_A(unit_idx, :)) > 0 && std(denoised_B(unit_idx, :)) > 0
+                corr_dn_dn(unit_idx) = corr(denoised_A(unit_idx, :)', denoised_B(unit_idx, :)');
+            else
+                corr_dn_dn(unit_idx) = NaN;
+            end
+        end
+
+        % Average the two cross-method correlations
+        corr_cross = (corr_cross_AB + corr_cross_BA) / 2;
+
+        % Three x positions
+        x_positions = [1, 2, 3];
+        labels = {'TAvg vs TAvg', 'TAvg vs Denoised', 'Denoised vs Denoised'};
+
+        % Add jitter
+        jitter = 0.08;
+        rng(42);  % Set seed for reproducibility
+        x_jitter = (rand(nunits, 1) - 0.5) * 2 * jitter;
+
+        hold on;
+
+        % Plot connecting lines for each unit
+        for unit_idx = 1:nunits
+            values = [corr_tavg_tavg(unit_idx), corr_cross(unit_idx), corr_dn_dn(unit_idx)];
+            if ~any(isnan(values))
+                x_vals = x_positions + x_jitter(unit_idx);
+                plot(x_vals, values, 'Color', [0.5 0.5 0.5], 'LineWidth', 0.3);
+            end
+        end
+
+        % Plot individual dots
+        scatter(x_positions(1) + x_jitter, corr_tavg_tavg, 15, 'blue', 'filled', 'MarkerFaceAlpha', 0.4);
+        scatter(x_positions(2) + x_jitter, corr_cross, 15, [1 0.84 0], 'filled', 'MarkerFaceAlpha', 0.4);  % Gold
+        scatter(x_positions(3) + x_jitter, corr_dn_dn, 15, [0.5 0.8 0.3], 'filled', 'MarkerFaceAlpha', 0.4);  % Lime green
+
+        % Compute means (excluding NaN)
+        mean_tavg_tavg = nanmean(corr_tavg_tavg);
+        mean_cross = nanmean(corr_cross);
+        mean_dn_dn = nanmean(corr_dn_dn);
+
+        % Plot mean dots (larger, with edge)
+        scatter(x_positions(1), mean_tavg_tavg, 100, 'blue', 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+        scatter(x_positions(2), mean_cross, 100, [1 0.84 0], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+        scatter(x_positions(3), mean_dn_dn, 100, [0.2 0.6 0.2], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+
+        % Add mean values as text above the dots
+        y_text_offset = 0.08;
+        text(x_positions(1), mean_tavg_tavg + y_text_offset, sprintf('%.3f', mean_tavg_tavg), ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+        text(x_positions(2), mean_cross + y_text_offset, sprintf('%.3f', mean_cross), ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+        text(x_positions(3), mean_dn_dn + y_text_offset, sprintf('%.3f', mean_dn_dn), ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+
+        % Formatting
+        set(gca, 'XTick', x_positions);
+        set(gca, 'XTickLabel', labels);
+        set(gca, 'XTickLabelRotation', 0);
+        set(gca, 'FontSize', 7);
+        ylabel('Pearson r');
+        title(sprintf('Split-Half Reliability (%d units)\nSplit: %d vs %d trials', nunits, size(data_A, 3), size(data_B, 3)));
+        grid on;
+        xlim([0.5, 3.5]);
+
+        % Set y-axis limits based on data range
+        all_corr_values = [corr_tavg_tavg; corr_cross; corr_dn_dn];
+        valid_corr_values = all_corr_values(~isnan(all_corr_values));
+        if ~isempty(valid_corr_values)
+            y_min_corr = min(valid_corr_values);
+            y_max_corr = max(valid_corr_values);
+            y_range_corr = y_max_corr - y_min_corr;
+            y_padding = max(0.1, y_range_corr * 0.15);
+            ylim([y_min_corr - y_padding, y_max_corr + y_padding]);
+        else
+            ylim([-1, 1]);
+        end
+
+        yline(0, 'k-', 'LineWidth', 1);
+    end
 end
 
 % Helper function to compute noise ceiling
