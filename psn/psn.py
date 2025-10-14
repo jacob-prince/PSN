@@ -139,17 +139,15 @@ def _compute_basis_from_gsn(V, gsn_results, trial_avg_demeaned):
 
     elif V == 5:
         # ICA (Independent Component Analysis) basis
-        # Store the unnormalized mixing matrix before QR decomposition
-        # This will be retrieved and reranked later in the main psn() function
+        # Store the unnormalized mixing matrix before QR decomposition for visualization
         nunits = trial_avg_demeaned.shape[0]
         nconds = trial_avg_demeaned.shape[1]
-        
+
         n_components = min(nunits, nconds)
-        # Use deterministic random initialization matching MATLAB
-        # Generate initialization matrix with seed 42
+        # Use deterministic random initialization with seed 42 for all random operations
         np.random.seed(42)
         w_init = np.random.randn(n_components, n_components)
-        ica = FastICA(n_components=n_components, random_state=42, max_iter=1000, 
+        ica = FastICA(n_components=n_components, random_state=42, max_iter=1000,
                       tol=1e-4, whiten='unit-variance', w_init=w_init)
 
         try:
@@ -161,25 +159,22 @@ def _compute_basis_from_gsn(V, gsn_results, trial_avg_demeaned):
             # In sklearn: mixing_ matrix has shape (n_features, n_components) = (nunits, n_components)
             # Each column is a mixing direction
             mixing_directions = ica.mixing_  # (nunits, n_components)
-            
+
             # Make them unit length (normalize each column)
             mixing_directions_normalized = mixing_directions / np.linalg.norm(
                 mixing_directions, axis=0, keepdims=True)
-            
+
             # Apply QR decomposition to make orthonormal
-            # NOTE: The original mixing_directions will be stored in basis_source for later use
-            # Signal variance ranking will be done later in main psn() function
-            # using compute_noise_ceiling on the raw trial data
             basis, _ = np.linalg.qr(mixing_directions_normalized)
-            
-            # Store the original (normalized) mixing matrix in basis_source
-            # This will be used for reranking and visualization
+
+            # Store the original (normalized) mixing matrix in basis_source for visualization only
+            # Ranking will be done on the orthonormal basis, not this non-orthogonal mixing matrix
             basis_source = mixing_directions_normalized.copy()
-            
+
             # Add random basis vectors if necessary to complete the basis
             if basis.shape[1] < nunits:
                 remaining_dims = nunits - basis.shape[1]
-                np.random.seed(43)
+                np.random.seed(42)  # Use same seed for consistency
                 rand_mat = np.random.randn(nunits, remaining_dims)
 
                 # Orthogonalize against existing basis using modified Gram-Schmidt
@@ -195,6 +190,7 @@ def _compute_basis_from_gsn(V, gsn_results, trial_avg_demeaned):
                         rand_mat[:, i] = v
                     else:
                         # Generate a new random vector if current one is too small
+                        np.random.seed(42)  # Ensure determinism
                         v = np.random.randn(nunits)
                         for j in range(basis.shape[1]):
                             v = v - np.dot(v, basis[:, j]) * basis[:, j]
@@ -202,8 +198,8 @@ def _compute_basis_from_gsn(V, gsn_results, trial_avg_demeaned):
                         rand_mat[:, i] = v
 
                 basis = np.hstack([basis, rand_mat])
-            
-            # Placeholder magnitudes (will be recomputed with noise ceiling in main function)
+
+            # Placeholder magnitudes (will be recomputed during ranking)
             projections_avg = trial_avg_demeaned.T @ basis  # (nconds, nunits)
             magnitudes = np.var(projections_avg, axis=0, ddof=1)
 
@@ -219,23 +215,23 @@ def _compute_basis_from_gsn(V, gsn_results, trial_avg_demeaned):
     return basis, magnitudes, basis_source
 
 
-def _rank_basis_dimensions(basis, basis_source, data, magnitudes, ranking='eigs'):
+def _rank_basis_dimensions(basis, basis_source, data, magnitudes, ranking='eigenvalue'):
     """Rank basis dimensions by various criteria.
-    
+
     This function ranks basis dimensions using different methods:
-    - 'eigs': By eigenvalue magnitude (decreasing)
-    - 'eig-inv': By eigenvalue magnitude (increasing)
-    - 'signal': By signal variance (decreasing)
-    - 'ncsnr': By noise-ceiling SNR (decreasing)
-    - 'sig-noise': By difference between signal % and noise % (decreasing)
-    
+    - 'eigenvalue': By eigenvalue magnitude (decreasing)
+    - 'eigenvalue_asc': By eigenvalue magnitude (increasing)
+    - 'signal_variance': By signal variance (decreasing)
+    - 'snr': By noise-ceiling SNR (decreasing)
+    - 'signal_specificity': By difference between signal % and noise % (decreasing)
+
     Args:
         basis: Orthonormal basis (nunits, ndims)
         basis_source: Source matrix before orthonormalization (nunits, ncomponents), can be None
         data: Raw trial data (nunits, nconds, ntrials)
         magnitudes: Initial eigenvalues/magnitudes for each dimension
-        ranking: Ranking method - 'eigs', 'eig-inv', 'signal', 'ncsnr', or 'sig-noise'
-    
+        ranking: Ranking method - 'eigenvalue', 'eigenvalue_asc', 'signal_variance', 'snr', or 'signal_specificity'
+
     Returns:
         basis_ranked: Reranked orthonormal basis
         magnitudes_ranked: Ranking values in appropriate order
@@ -243,18 +239,18 @@ def _rank_basis_dimensions(basis, basis_source, data, magnitudes, ranking='eigs'
     """
     nunits, nconds, ntrials = data.shape
     ndims = basis.shape[1]
-    
-    if ranking == 'eigs':
+
+    if ranking == 'eigenvalue':
         # Rank by eigenvalue magnitude (decreasing) - magnitudes already computed
         sort_idx = np.argsort(magnitudes)[::-1]
         magnitudes_ranked = magnitudes[sort_idx]
-        
-    elif ranking == 'eig-inv':
+
+    elif ranking == 'eigenvalue_asc':
         # Rank by eigenvalue magnitude (increasing)
         sort_idx = np.argsort(magnitudes)
         magnitudes_ranked = magnitudes[sort_idx]
-        
-    elif ranking in ['signal', 'ncsnr', 'sig-noise']:
+
+    elif ranking in ['signal_variance', 'snr', 'signal_specificity']:
         # Need to compute signal and noise components for each dimension
         data_reshaped = data.transpose(1, 2, 0)  # (nconds, ntrials, nunits)
         signal_variances = np.zeros(ndims)
@@ -276,39 +272,39 @@ def _rank_basis_dimensions(basis, basis_source, data, magnitudes, ranking='eigs'
             noise_variances[i] = float(noisevar[0])
             ncsnrs[i] = float(ncsnr[0])
         
-        if ranking == 'signal':
+        if ranking == 'signal_variance':
             # Rank by signal variance (decreasing)
             sort_idx = np.argsort(signal_variances)[::-1]
             magnitudes_ranked = signal_variances[sort_idx]
-            
-        elif ranking == 'ncsnr':
+
+        elif ranking == 'snr':
             # Rank by noise-ceiling SNR (decreasing)
             sort_idx = np.argsort(ncsnrs)[::-1]
             magnitudes_ranked = ncsnrs[sort_idx]
-            
-        elif ranking == 'sig-noise':
+
+        elif ranking == 'signal_specificity':
             # Rank by difference between signal % and noise %
             total_signal = np.sum(signal_variances)
             total_noise = np.sum(noise_variances)
-            
+
             # Avoid division by zero
             if total_signal > 0:
                 signal_pcts = 100 * signal_variances / total_signal
             else:
                 signal_pcts = np.zeros(ndims)
-                
+
             if total_noise > 0:
                 noise_pcts = 100 * noise_variances / total_noise
             else:
                 noise_pcts = np.zeros(ndims)
-            
+
             sig_noise_diff = signal_pcts - noise_pcts
             sort_idx = np.argsort(sig_noise_diff)[::-1]
             magnitudes_ranked = sig_noise_diff[sort_idx]
-    
+
     else:
         raise ValueError(f"Invalid ranking method: {ranking}. Must be one of: "
-                        "'eigs', 'eig-inv', 'signal', 'ncsnr', 'sig-noise'")
+                        "'eigenvalue', 'eigenvalue_asc', 'signal_variance', 'snr', 'signal_specificity'")
     
     # Reorder basis and basis_source
     basis_ranked = basis[:, sort_idx]
@@ -836,13 +832,9 @@ def psn(data, V=None, opt=None, wantfig=True):
         
         # Set default ranking based on V value and threshold type if not explicitly provided
         if 'ranking' not in opt:
-            # Special case: V=2 (noise) or V=4 (random) with unit thresholding -> use sig-noise
-            if V in [2, 4] and opt.get('cv_threshold_per', 'unit') == 'unit':
-                opt['ranking'] = 'sig-noise'
-            else:
-                # Default for all other cases: use ncsnr (noise-ceiling SNR)
-                # This has been empirically validated as the most robust across scenarios
-                opt['ranking'] = 'ncsnr'
+            # Default: use signal variance (decreasing)
+            # This ranks dimensions by how much signal variance they capture
+            opt['ranking'] = 'signal_variance'
         
         # Rank basis dimensions according to the specified ranking method
         # basis_source contains the original matrix before orthonormalization (e.g., ICA mixing)
@@ -870,11 +862,11 @@ def psn(data, V=None, opt=None, wantfig=True):
         
         # Set default ranking for user-supplied basis
         if 'ranking' not in opt:
-            # Use ncsnr as default (most robust across scenarios)
-            opt['ranking'] = 'ncsnr'
+            # Default: use signal variance (decreasing)
+            opt['ranking'] = 'signal_variance'
         
         # Rank user-supplied basis if ranking is specified
-        if opt['ranking'] != 'eigs' or not np.allclose(magnitudes, np.sort(magnitudes)[::-1]):
+        if opt['ranking'] != 'eigenvalue' or not np.allclose(magnitudes, np.sort(magnitudes)[::-1]):
             basis, magnitudes, _ = _rank_basis_dimensions(
                 basis, None, data, magnitudes, ranking=opt['ranking'])
 
@@ -1030,9 +1022,34 @@ class PSN(BaseEstimator, TransformerMixin):
         or all units get the same threshold (for 'population' mode).
 
     truncate : int, default=0
-        Number of early PCs to remove from the retained dimensions. If set to 1, the first
-        PC will be excluded from denoising in addition to whatever later dimensions are
+        Number of early dimensions to exclude from dimension selection. If set to 1, the first
+        dimension will be excluded from denoising in addition to whatever later dimensions are
         deemed optimal to remove via cross validation or magnitude thresholding.
+
+    ranking : str or None, default=None
+        Method for ranking basis dimensions before selection:
+        - 'eigenvalue': By eigenvalue magnitude (decreasing)
+        - 'eigenvalue_asc': By eigenvalue magnitude (increasing)
+        - 'signal_variance': By signal variance (decreasing)
+        - 'snr': By noise-ceiling SNR (decreasing)
+        - 'signal_specificity': By signal % - noise % difference (decreasing)
+        - None: Use default ranking based on basis type (signal_variance)
+
+    cv_thresholds : array-like or None, default=None
+        Array of candidate dimension counts to test during cross-validation.
+        If None, tests all dimensions from 0 to max. Only applicable when cv is not None.
+
+    cv_mode : int or None, default=None
+        Cross-validation mode:
+        - 0: Leave-one-trial-out (train on n-1, test on 1)
+        - 1: Keep-one-trial-in (train on 1, test on n-1)
+        - -1: Magnitude thresholding
+        - None: Use default based on cv parameter
+
+    denoisingtype : int, default=0
+        Type of denoising to perform:
+        - 0: Trial-averaged denoising (returns nunits x nconds)
+        - 1: Single-trial denoising (returns nunits x nconds x ntrials)
 
     verbose : bool, default=False
         Whether to print progress messages during fitting
@@ -1097,13 +1114,18 @@ class PSN(BaseEstimator, TransformerMixin):
     """
 
     def __init__(self, basis='signal', cv='unit', scoring='mse', mag_threshold=None,
-                 unit_groups=None, truncate=0, verbose=False, wantfig=True, gsn_kwargs=None):
+                 unit_groups=None, truncate=0, ranking=None, cv_thresholds=None,
+                 cv_mode=None, denoisingtype=0, verbose=False, wantfig=True, gsn_kwargs=None):
         self.basis = basis
         self.cv = cv
         self.scoring = scoring
         self.mag_threshold = mag_threshold
         self.unit_groups = unit_groups
         self.truncate = truncate
+        self.ranking = ranking
+        self.cv_thresholds = cv_thresholds
+        self.cv_mode = cv_mode
+        self.denoisingtype = denoisingtype
         self.verbose = verbose
         self.wantfig = wantfig
         self.gsn_kwargs = gsn_kwargs
@@ -1154,7 +1176,11 @@ class PSN(BaseEstimator, TransformerMixin):
             V = self.basis
 
         # Convert cv and scoring parameters
-        if self.cv is None:
+        # Priority: cv_mode > cv parameter
+        if self.cv_mode is not None:
+            cv_mode = self.cv_mode
+            cv_threshold_per = self.cv if self.cv is not None else 'unit'
+        elif self.cv is None:
             # cv=None means magnitude thresholding
             cv_mode = -1
             cv_threshold_per = 'population'
@@ -1176,9 +1202,16 @@ class PSN(BaseEstimator, TransformerMixin):
             'cv_threshold_per': cv_threshold_per,
             'cv_scoring_fn': cv_scoring_fn,
             'mag_frac': self.mag_threshold if self.mag_threshold is not None else 0.95,
-            'denoisingtype': 0,
+            'denoisingtype': self.denoisingtype,
             'truncate': self.truncate,
         }
+
+        # Add optional parameters
+        if self.ranking is not None:
+            opt['ranking'] = self.ranking
+
+        if self.cv_thresholds is not None:
+            opt['cv_thresholds'] = np.asarray(self.cv_thresholds)
 
         if self.unit_groups is not None:
             opt['unit_groups'] = np.asarray(self.unit_groups, dtype=int)
@@ -1408,6 +1441,10 @@ class PSN(BaseEstimator, TransformerMixin):
             'mag_threshold': self.mag_threshold,
             'unit_groups': self.unit_groups,
             'truncate': self.truncate,
+            'ranking': self.ranking,
+            'cv_thresholds': self.cv_thresholds,
+            'cv_mode': self.cv_mode,
+            'denoisingtype': self.denoisingtype,
             'verbose': self.verbose,
             'wantfig': self.wantfig,
             'gsn_kwargs': self.gsn_kwargs

@@ -188,17 +188,17 @@ def plot_diagnostic_figures(data, results, test_data=None):
 
         # Plot 3: Magnitude spectrum (top middle)
         # Determine labels based on ranking method
-        ranking = results.get('opt', {}).get('ranking', 'eigs')
-        
+        ranking = results.get('opt', {}).get('ranking', 'signal_variance')
+
         # Define labels for different ranking methods
         ranking_labels = {
-            'eigs': ('Eigenvalues', 'Eigenvalue', 'Eigenspectrum'),
-            'eig-inv': ('Eigenvalues', 'Eigenvalue', 'Eigenspectrum (increasing)'),
-            'signal': ('Signal Variance', 'Signal Variance', 'Signal Variance Spectrum'),
-            'ncsnr': ('Noise-Ceiling SNR', 'NCSNR', 'NCSNR Spectrum'),
-            'sig-noise': ('Signal% - Noise%', 'Signal% - Noise%', 'Signal-Noise Spectrum')
+            'eigenvalue': ('Eigenvalues', 'Eigenvalue', 'Eigenspectrum (decreasing)'),
+            'eigenvalue_asc': ('Eigenvalues', 'Eigenvalue', 'Eigenspectrum (increasing)'),
+            'signal_variance': ('Signal Variance', 'Signal Variance', 'Signal Variance Spectrum'),
+            'snr': ('Noise-Ceiling SNR', 'NCSNR', 'NCSNR Spectrum'),
+            'signal_specificity': ('Signal% - Noise%', 'Signal% - Noise%', 'Signal Specificity Spectrum')
         }
-        
+
         legend_label, ylabel, title = ranking_labels.get(ranking, ('Magnitude', 'Magnitude', 'Magnitude Spectrum'))
         
         ax3 = fig.add_subplot(gs[0, 2])
@@ -332,13 +332,11 @@ def plot_diagnostic_figures(data, results, test_data=None):
             cv_data = stats.zscore(cv_data,axis=0,ddof=1)
             vmin, vmax = np.percentile(cv_data, [0, 100])
 
-            # Set proper extent for imshow - ensure no white columns
-            extent = [0, len(thresholds), nunits, 0]
-
+            # Plot without extent - use default pixel coordinates
             im5 = ax5.imshow(cv_data.T, aspect='auto', interpolation='none',
-                    clim=(vmin, vmax), extent=extent)
+                    clim=(vmin, vmax))
             plt.colorbar(im5, ax=ax5)
-            
+
             # Update xlabel based on whether truncation is used
             truncate = results.get('opt', {}).get('truncate', 0)
             if truncate > 0:
@@ -348,9 +346,9 @@ def plot_diagnostic_figures(data, results, test_data=None):
             ax5.set_ylabel('Units')
             ax5.set_title('Cross-validation scores (z)')
 
-            # Set x-ticks to show actual threshold values
+            # Set x-ticks to show actual threshold values at pixel centers
             step = max(len(thresholds) // 10, 1)  # Show ~10 ticks or less
-            tick_positions = np.arange(0, len(thresholds), step) + 0.5  # Center of bins
+            tick_positions = np.arange(0, len(thresholds), step)  # Pixel indices
             tick_labels = thresholds[::step]
             ax5.set_xticks(tick_positions)
             ax5.set_xticklabels(tick_labels)
@@ -359,7 +357,7 @@ def plot_diagnostic_figures(data, results, test_data=None):
             if results.get('opt', {}).get('cv_threshold_per') == 'unit':
                 if isinstance(best_threshold, np.ndarray) and len(best_threshold) == nunits:
                     # For each unit, find the threshold index that gives maximum CV score
-                    unit_indices = np.arange(nunits) + 0.5  # Center dots in cells
+                    unit_indices = np.arange(nunits)  # Pixel row indices
                     threshold_positions = []
 
                     # Check if unit_groups are being used
@@ -382,8 +380,8 @@ def plot_diagnostic_figures(data, results, test_data=None):
                             # Find threshold index with maximum group score
                             max_thresh_idx = np.argmax(group_cv_scores)
 
-                            # Position at center of that threshold's cell
-                            threshold_positions.append(max_thresh_idx + 0.5)
+                            # Position at pixel column index
+                            threshold_positions.append(max_thresh_idx)
                     else:
                         # No unit grouping - use individual unit's maximum CV score
                         for unit_idx in range(nunits):
@@ -393,8 +391,8 @@ def plot_diagnostic_figures(data, results, test_data=None):
                             # Find threshold index with maximum score
                             max_thresh_idx = np.argmax(unit_cv_scores)
 
-                            # Position at center of that threshold's cell
-                            threshold_positions.append(max_thresh_idx + 0.5)
+                            # Position at pixel column index
+                            threshold_positions.append(max_thresh_idx)
 
                     ax5.plot(threshold_positions, unit_indices, 'r.', markersize=4)
         else:
@@ -515,71 +513,172 @@ def plot_diagnostic_figures(data, results, test_data=None):
         denoised_corr_mean = np.mean(denoised_corr_per_unit, axis=0)
         denoised_corr_sem = stats.sem(denoised_corr_per_unit, axis=0)
 
-        # Function to plot bottom row with rotated histograms
-        def plot_bottom_histogram(ax, r2_mean, corr_mean, r2_color, corr_color, title):
-            plt.sca(ax)
-            plt.axvline(x=0, color='k', linewidth=2, zorder=1)
+        # Plot trial-averaged and denoised traces similar to EEG notebook
+        # Get trial-averaged data
+        trial_avg_full = np.mean(data, axis=2)  # (nunits, nconds)
+        denoised_full = results['denoiseddata']  # Already trial-averaged if denoisingtype=0
 
-            # Calculate histogram bins
-            bins = np.linspace(-1, 1, 50)
-            bin_width = bins[1] - bins[0]
+        # If denoised data is 3D, average it
+        if denoised_full.ndim == 3:
+            denoised_full = np.mean(denoised_full, axis=2)
 
-            # Plot R2 histogram (exclude NaN values)
-            r2_valid = r2_mean[~np.isnan(r2_mean)]
-            r2_hist, _ = np.histogram(r2_valid, bins=bins)
-            plt.bar(bins[:-1] + bin_width/2, r2_hist, width=bin_width,
-                    color=r2_color, alpha=0.6, label=f'Mean R² = {np.nanmean(r2_mean):.3f}')
+        # Calculate mean response across conditions for rainbow coloring
+        cond_means = np.mean(trial_avg_full, axis=0)  # Mean across units for each condition
+        sorted_cond_indices = np.argsort(cond_means)
+        colors = plt.cm.rainbow(np.linspace(0, 1, nconds))
 
-            # Plot correlation histogram (exclude NaN values)
-            corr_valid = corr_mean[~np.isnan(corr_mean)]
-            corr_hist, _ = np.histogram(corr_valid, bins=bins)
-            plt.bar(bins[:-1] + bin_width/2, corr_hist, width=bin_width,
-                    color=corr_color, alpha=0.6, label=f'Mean r = {np.nanmean(corr_mean):.3f}')
+        # Create color array where each condition gets its color based on rank
+        trace_colors = np.zeros((nconds, 4))  # RGBA
+        for rank, cond_idx in enumerate(sorted_cond_indices):
+            trace_colors[cond_idx] = colors[rank]
 
-            plt.ylabel('# Units')  # Updated label
-            plt.xlabel('R² / Pearson r')
-            plt.title(title)
-            plt.grid(True, alpha=0.3)
-            plt.legend()
-            plt.xlim(-1, 1)
+        # Plot trial-averaged traces
+        ax_tavg = fig.add_subplot(gs[2, 1])
+        for cond_idx in range(nconds):
+            ax_tavg.plot(trial_avg_full[:, cond_idx], color=trace_colors[cond_idx],
+                        linewidth=0.5, alpha=0.7)
 
-        # Plot bottom row histograms and R² progression
-        train_trials = ntrials-1 if test_data is None else data.shape[2]
-        test_trials = 1 if test_data is None else (test_data.shape[2] if len(test_data.shape) > 2 else 1)
+        ax_tavg.set_xlabel('Units')
+        ax_tavg.set_ylabel('Activity')
+        ax_tavg.set_title('Trial-Averaged Traces\n(rainbow: conditions by mean response)')
+        ax_tavg.grid(True, alpha=0.3)
 
-        plot_bottom_histogram(fig.add_subplot(gs[2, 1]),
-                            raw_r2_mean, raw_corr_mean,
-                            'blue', 'lightblue',
-                            f'Baseline Generalization\nTrial-avg Train ({train_trials} trials) vs\nTrial-avg Test ({test_trials} trials)')
+        # Plot denoised traces
+        ax_dn = fig.add_subplot(gs[2, 2])
+        for cond_idx in range(nconds):
+            ax_dn.plot(denoised_full[:, cond_idx], color=trace_colors[cond_idx],
+                      linewidth=0.5, alpha=0.7)
 
-        plot_bottom_histogram(fig.add_subplot(gs[2, 2]),
-                            denoised_r2_mean, denoised_corr_mean,
-                            'green', 'lightgreen',
-                            f'Denoised Generalization\nTrial-avg Train + denoised ({train_trials} trials) vs\nTrial-avg Test ({test_trials} trials)')
+        ax_dn.set_xlabel('Units')
+        ax_dn.set_ylabel('Activity')
+        ax_dn.set_title('PSN Denoised Traces\n(same condition coloring)')
+        ax_dn.grid(True, alpha=0.3)
 
-        # Add R² progression plot
+        # Match y-axis limits across both plots
+        all_trace_data = np.concatenate([trial_avg_full.flatten(), denoised_full.flatten()])
+        y_min = np.min(all_trace_data)
+        y_max = np.max(all_trace_data)
+        y_range = y_max - y_min
+        y_margin = y_range * 0.05
+        ax_tavg.set_ylim(y_min - y_margin, y_max + y_margin)
+        ax_dn.set_ylim(y_min - y_margin, y_max + y_margin)
+
+        # Add split-half correlation comparison plot
         ax_prog = fig.add_subplot(gs[2, 3])
-        x_positions = [1, 2]  # Two positions for the two conditions
 
-        # Plot lines for each unit
-        for v in range(nunits):
-            values = [raw_r2_mean[v], denoised_r2_mean[v]]
-            plt.plot(x_positions, values, color='gray', alpha=0.2, linewidth=0.5)
-            plt.scatter(x_positions[0], values[0], alpha=0.5, s=20, color='blue')
-            plt.scatter(x_positions[1], values[1], alpha=0.5, s=20, color='green')
+        # Split trials in half
+        half_idx = ntrials // 2
+        data_A = data[:, :, :half_idx]  # First half of trials
+        data_B = data[:, :, half_idx:]  # Second half of trials
 
-        # Plot mean performance
-        mean_values = [np.mean(raw_r2_mean), np.mean(denoised_r2_mean)]
-        plt.plot(x_positions, mean_values, color='pink', linewidth=2, label='Mean')
-        plt.scatter(x_positions[0], mean_values[0], color='blue', s=100, edgecolor='pink', linewidth=2)
-        plt.scatter(x_positions[1], mean_values[1], color='green', s=100, edgecolor='pink', linewidth=2)
+        # Compute trial averages for each split
+        trial_avg_A = np.mean(data_A, axis=2)  # (nunits, nconds)
+        trial_avg_B = np.mean(data_B, axis=2)  # (nunits, nconds)
 
-        plt.xticks(x_positions, ['Trial Averaged', 'With Denoising'])
-        plt.ylabel('R²')
-        plt.title(f'Impact of denoising on R² ({nunits} units)')
-        plt.grid(True, alpha=0.3)
-        plt.legend()
-        plt.xlim(0.5, 2.5)
-        plt.ylim(-1, 1)
-        plt.axhline(y=0, color='k', linewidth=2, zorder=1)
+        # Denoise each split separately
+        denoiser = results['denoiser']
+        unit_means = results['unit_means']
+
+        # Denoise split A
+        trial_avg_A_demeaned = trial_avg_A - unit_means[:, np.newaxis]
+        denoised_A = (trial_avg_A_demeaned.T @ denoiser).T + unit_means[:, np.newaxis]
+
+        # Denoise split B
+        trial_avg_B_demeaned = trial_avg_B - unit_means[:, np.newaxis]
+        denoised_B = (trial_avg_B_demeaned.T @ denoiser).T + unit_means[:, np.newaxis]
+
+        # Compute correlations for each unit
+        corr_tavg_tavg = np.zeros(nunits)  # Trial avg A vs trial avg B
+        corr_cross_AB = np.zeros(nunits)   # Trial avg A vs denoised B
+        corr_cross_BA = np.zeros(nunits)   # Denoised A vs trial avg B
+        corr_dn_dn = np.zeros(nunits)      # Denoised A vs denoised B
+
+        for unit_idx in range(nunits):
+            # Trial avg vs trial avg
+            if np.std(trial_avg_A[unit_idx]) > 0 and np.std(trial_avg_B[unit_idx]) > 0:
+                corr_tavg_tavg[unit_idx] = np.corrcoef(trial_avg_A[unit_idx], trial_avg_B[unit_idx])[0, 1]
+            else:
+                corr_tavg_tavg[unit_idx] = np.nan
+
+            # Cross-method: trial avg A vs denoised B
+            if np.std(trial_avg_A[unit_idx]) > 0 and np.std(denoised_B[unit_idx]) > 0:
+                corr_cross_AB[unit_idx] = np.corrcoef(trial_avg_A[unit_idx], denoised_B[unit_idx])[0, 1]
+            else:
+                corr_cross_AB[unit_idx] = np.nan
+
+            # Cross-method: denoised A vs trial avg B
+            if np.std(denoised_A[unit_idx]) > 0 and np.std(trial_avg_B[unit_idx]) > 0:
+                corr_cross_BA[unit_idx] = np.corrcoef(denoised_A[unit_idx], trial_avg_B[unit_idx])[0, 1]
+            else:
+                corr_cross_BA[unit_idx] = np.nan
+
+            # Denoised vs denoised
+            if np.std(denoised_A[unit_idx]) > 0 and np.std(denoised_B[unit_idx]) > 0:
+                corr_dn_dn[unit_idx] = np.corrcoef(denoised_A[unit_idx], denoised_B[unit_idx])[0, 1]
+            else:
+                corr_dn_dn[unit_idx] = np.nan
+
+        # Average the two cross-method correlations
+        corr_cross = (corr_cross_AB + corr_cross_BA) / 2
+
+        # Three x positions for the three comparison types
+        x_positions = np.array([1, 2, 3])
+        labels = ['TAvg vs\nTAvg', 'TAvg vs\nDenoised', 'Denoised vs\nDenoised']
+
+        # Add small jitter to x positions
+        jitter = 0.08
+        x_jitter = np.random.uniform(-jitter, jitter, nunits)
+
+        # Plot connecting lines for each unit
+        for unit_idx in range(nunits):
+            values = [corr_tavg_tavg[unit_idx], corr_cross[unit_idx], corr_dn_dn[unit_idx]]
+            if not np.any(np.isnan(values)):
+                x_vals = x_positions + x_jitter[unit_idx]
+                plt.plot(x_vals, values, 'gray', linewidth=0.3, alpha=0.4, zorder=1)
+
+        # Plot individual dots
+        plt.scatter(x_positions[0] + x_jitter, corr_tavg_tavg, s=15, c='blue', alpha=0.4, zorder=2)
+        plt.scatter(x_positions[1] + x_jitter, corr_cross, s=15, c='gold', alpha=0.4, zorder=2)
+        plt.scatter(x_positions[2] + x_jitter, corr_dn_dn, s=15, c='limegreen', alpha=0.4, zorder=2)
+
+        # Compute means (excluding NaN)
+        mean_tavg_tavg = np.nanmean(corr_tavg_tavg)
+        mean_cross = np.nanmean(corr_cross)
+        mean_dn_dn = np.nanmean(corr_dn_dn)
+        mean_values = [mean_tavg_tavg, mean_cross, mean_dn_dn]
+
+        # Plot mean dots (larger, with edge)
+        plt.scatter(x_positions[0], mean_tavg_tavg, s=100, c='darkblue', edgecolors='white', linewidth=2, zorder=3)
+        plt.scatter(x_positions[1], mean_cross, s=100, c='gold', edgecolors='white', linewidth=2, zorder=3)
+        plt.scatter(x_positions[2], mean_dn_dn, s=100, c='darkgreen', edgecolors='white', linewidth=2, zorder=3)
+
+        # Add mean values as text above the dots
+        y_text_offset = 0.08
+        plt.text(x_positions[0], mean_tavg_tavg + y_text_offset, f'{mean_tavg_tavg:.3f}',
+                ha='center', va='bottom', fontsize=10, fontweight='bold')
+        plt.text(x_positions[1], mean_cross + y_text_offset, f'{mean_cross:.3f}',
+                ha='center', va='bottom', fontsize=10, fontweight='bold')
+        plt.text(x_positions[2], mean_dn_dn + y_text_offset, f'{mean_dn_dn:.3f}',
+                ha='center', va='bottom', fontsize=10, fontweight='bold')
+
+        # Formatting
+        plt.xticks(x_positions, labels, fontsize=8)
+        plt.ylabel('Pearson r')
+        plt.title(f'Split-Half Reliability ({nunits} units)\nSplit: {data_A.shape[2]} vs {data_B.shape[2]} trials')
+        plt.grid(True, alpha=0.3, axis='y')
+        plt.xlim(0.5, 3.5)
+
+        # Set y-axis limits based on data range with some padding
+        all_corr_values = np.concatenate([corr_tavg_tavg, corr_cross, corr_dn_dn])
+        valid_corr_values = all_corr_values[~np.isnan(all_corr_values)]
+        if len(valid_corr_values) > 0:
+            y_min = np.min(valid_corr_values)
+            y_max = np.max(valid_corr_values)
+            y_range = y_max - y_min
+            y_padding = max(0.1, y_range * 0.15)  # At least 0.1, or 15% of range
+            plt.ylim(y_min - y_padding, y_max + y_padding)
+        else:
+            plt.ylim(-1, 1)
+
+        plt.axhline(y=0, color='k', linewidth=1, alpha=0.5, zorder=0)
     plt.show()

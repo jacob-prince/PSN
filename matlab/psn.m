@@ -277,14 +277,9 @@ function [results] = psn(data, V, opt, wantfig)
 
         % Set default ranking based on V value and threshold type if not explicitly provided
         if ~isfield(opt, 'ranking')
-            % Special case: V=2 (noise) or V=4 (random) with unit thresholding -> use sig-noise
-            if ismember(V, [2, 4]) && strcmp(opt.cv_threshold_per, 'unit')
-                opt.ranking = 'sig-noise';
-            else
-                % Default for all other cases: use ncsnr (noise-ceiling SNR)
-                % This has been empirically validated as the most robust across scenarios
-                opt.ranking = 'ncsnr';
-            end
+            % Default: use signal variance (decreasing)
+            % This ranks dimensions by how much signal variance they capture
+            opt.ranking = 'signal_variance';
         end
 
         % Rank basis dimensions according to the specified ranking method
@@ -308,12 +303,12 @@ function [results] = psn(data, V, opt, wantfig)
 
         % Set default ranking for user-supplied basis
         if ~isfield(opt, 'ranking')
-            % Use ncsnr as default (most robust across scenarios)
-            opt.ranking = 'ncsnr';
+            % Default: use signal variance (decreasing)
+            opt.ranking = 'signal_variance';
         end
 
         % Rank user-supplied basis if ranking is specified
-        if ~strcmp(opt.ranking, 'eigs') || ~issorted(mags, 'descend')
+        if ~strcmp(opt.ranking, 'eigenvalue') || ~issorted(mags, 'descend')
             [basis, mags, ~] = rank_basis_dimensions(basis, [], data, mags, opt.ranking);
         end
     end
@@ -1201,18 +1196,18 @@ function [basis_ranked, magnitudes_ranked, basis_source_ranked] = rank_basis_dim
     % RANK_BASIS_DIMENSIONS Rank basis dimensions by various criteria.
     %
     % This function ranks basis dimensions using different methods:
-    % - 'eigs': By eigenvalue magnitude (decreasing)
-    % - 'eig-inv': By eigenvalue magnitude (increasing)
-    % - 'signal': By signal variance (decreasing)
-    % - 'ncsnr': By noise-ceiling SNR (decreasing)
-    % - 'sig-noise': By difference between signal % and noise % (decreasing)
+    % - 'eigenvalue': By eigenvalue magnitude (decreasing)
+    % - 'eigenvalue_asc': By eigenvalue magnitude (increasing)
+    % - 'signal_variance': By signal variance (decreasing)
+    % - 'snr': By noise-ceiling SNR (decreasing)
+    % - 'signal_specificity': By difference between signal % and noise % (decreasing)
     %
     % Inputs:
     %   <basis> - Orthonormal basis (nunits x ndims)
     %   <basis_source> - Source matrix before orthonormalization (nunits x ncomponents), can be []
     %   <data> - Raw trial data (nunits x nconds x ntrials)
     %   <magnitudes> - Initial eigenvalues/magnitudes for each dimension
-    %   <ranking> - Ranking method - 'eigs', 'eig-inv', 'signal', 'ncsnr', or 'sig-noise'
+    %   <ranking> - Ranking method - 'eigenvalue', 'eigenvalue_asc', 'signal_variance', 'snr', or 'signal_specificity'
     %
     % Returns:
     %   <basis_ranked> - Reranked orthonormal basis
@@ -1222,15 +1217,15 @@ function [basis_ranked, magnitudes_ranked, basis_source_ranked] = rank_basis_dim
     [nunits, nconds, ntrials] = size(data);
     ndims = size(basis, 2);
 
-    if strcmp(ranking, 'eigs')
+    if strcmp(ranking, 'eigenvalue')
         % Rank by eigenvalue magnitude (decreasing) - magnitudes already computed
         [magnitudes_ranked, sort_idx] = sort(magnitudes, 'descend');
 
-    elseif strcmp(ranking, 'eig-inv')
+    elseif strcmp(ranking, 'eigenvalue_asc')
         % Rank by eigenvalue magnitude (increasing)
         [magnitudes_ranked, sort_idx] = sort(magnitudes, 'ascend');
 
-    elseif ismember(ranking, {'signal', 'ncsnr', 'sig-noise'})
+    elseif ismember(ranking, {'signal_variance', 'snr', 'signal_specificity'})
         % Need to compute signal and noise components for each dimension
         data_reshaped = permute(data, [2, 3, 1]);  % (nconds x ntrials x nunits)
         signal_variances = zeros(ndims, 1);
@@ -1258,15 +1253,15 @@ function [basis_ranked, magnitudes_ranked, basis_source_ranked] = rank_basis_dim
             ncsnrs(i) = ncsnr;
         end
 
-        if strcmp(ranking, 'signal')
+        if strcmp(ranking, 'signal_variance')
             % Rank by signal variance (decreasing)
             [magnitudes_ranked, sort_idx] = sort(signal_variances, 'descend');
 
-        elseif strcmp(ranking, 'ncsnr')
+        elseif strcmp(ranking, 'snr')
             % Rank by noise-ceiling SNR (decreasing)
             [magnitudes_ranked, sort_idx] = sort(ncsnrs, 'descend');
 
-        elseif strcmp(ranking, 'sig-noise')
+        elseif strcmp(ranking, 'signal_specificity')
             % Rank by difference between signal % and noise %
             total_signal = sum(signal_variances);
             total_noise = sum(noise_variances);
@@ -1289,7 +1284,7 @@ function [basis_ranked, magnitudes_ranked, basis_source_ranked] = rank_basis_dim
         end
 
     else
-        error('Invalid ranking method: %s. Must be one of: ''eigs'', ''eig-inv'', ''signal'', ''ncsnr'', ''sig-noise''', ranking);
+        error('Invalid ranking method: %s. Must be one of: ''eigenvalue'', ''eigenvalue_asc'', ''signal_variance'', ''snr'', ''signal_specificity''', ranking);
     end
 
     % Reorder basis and basis_source
