@@ -751,3 +751,331 @@ def plot_data_diagnostic(data, ground_truth, params):
 
     return fig
 
+
+def generate_heterogeneous_populations(
+    n_populations=3,
+    units_per_pop=20,
+    ncond=100,
+    ntrial=3,
+    signal_decay=2.0,
+    noise_decay=1.25,
+    noise_multiplier=3.0,
+    population_orthogonality=0.9,
+    random_seed=42,
+    want_fig=False,
+    verbose=True
+):
+    """
+    Generate data with heterogeneous subpopulations that have conflicting preferences.
+    
+    This creates a challenging scenario where different groups of units have different
+    optimal basis orderings, making global/population-based approaches suboptimal.
+    
+    Args:
+        n_populations (int): Number of distinct subpopulations
+        units_per_pop (int): Number of units per subpopulation
+        ncond (int): Number of conditions
+        ntrial (int): Number of trials per condition
+        signal_decay (float): Rate of eigenvalue decay for signal covariance
+        noise_decay (float): Rate of eigenvalue decay for noise covariance  
+        noise_multiplier (float): Scaling factor for noise variance
+        population_orthogonality (float): How different the populations are (0=identical, 1=orthogonal)
+                                         Controls the angle between population-specific signal subspaces
+        random_seed (int): Random seed for reproducibility
+        want_fig (bool): Whether to display diagnostic figures
+        verbose (bool): Whether to print diagnostic information
+    
+    Returns:
+        (train_data, test_data, ground_truth)
+         - train_data: (nvox, ncond, ntrial)
+         - test_data: (nvox, ncond, ntrial)
+         - ground_truth: dict with keys:
+             'signal' -> (ncond, nvox) - ground truth signal
+             'signal_cov' -> (nvox, nvox) - overall signal covariance
+             'noise_cov' -> (nvox, nvox) - overall noise covariance
+             'population_labels' -> (nvox,) - which population each unit belongs to
+             'population_bases' -> list of (nvox, nvox) - optimal basis for each population
+             'population_signals' -> list of (ncond, units_per_pop) - signal for each population
+    
+    Example:
+        >>> # Create 3 populations with 15 units each, where each population has different preferences
+        >>> train, test, gt = generate_heterogeneous_populations(
+        ...     n_populations=3, 
+        ...     units_per_pop=15,
+        ...     population_orthogonality=0.8,
+        ...     want_fig=True
+        ... )
+    """
+    if random_seed is not None:
+        rng = np.random.RandomState(random_seed)
+    else:
+        rng = np.random.RandomState()
+    
+    nvox = n_populations * units_per_pop
+    
+    if verbose:
+        print(f"\n{'='*80}")
+        print(f"GENERATING HETEROGENEOUS POPULATION DATA")
+        print(f"{'='*80}")
+        print(f"  Populations: {n_populations}")
+        print(f"  Units per population: {units_per_pop}")
+        print(f"  Total units: {nvox}")
+        print(f"  Conditions: {ncond}")
+        print(f"  Trials: {ntrial}")
+        print(f"  Population orthogonality: {population_orthogonality:.2f}")
+        print(f"{'='*80}\n")
+    
+    # Create population-specific signal subspaces
+    # Each population will have a different optimal basis ordering
+    population_bases = []
+    population_signals = []
+    population_labels = np.zeros(nvox, dtype=int)
+    
+    # Generate a base random orthonormal matrix
+    U_base, _, _ = np.linalg.svd(rng.randn(units_per_pop, units_per_pop), full_matrices=True)
+    
+    for pop_idx in range(n_populations):
+        # Create population-specific basis by rotating from base
+        if pop_idx == 0:
+            # First population uses the base
+            U_pop = U_base.copy()
+        else:
+            # Subsequent populations are rotated versions
+            # Use Givens rotations to create controlled orthogonality
+            U_pop = U_base.copy()
+            
+            # Apply rotation based on population_orthogonality
+            # Higher orthogonality = more rotation = more different preferences
+            n_rotations = max(1, int(units_per_pop * population_orthogonality))
+            
+            for _ in range(n_rotations):
+                # Random Givens rotation
+                i, j = rng.choice(units_per_pop, size=2, replace=False)
+                theta = rng.uniform(0, np.pi * population_orthogonality)
+                
+                # Apply rotation in plane (i, j)
+                c, s = np.cos(theta), np.sin(theta)
+                G = np.eye(units_per_pop)
+                G[i, i] = c
+                G[i, j] = -s
+                G[j, i] = s
+                G[j, j] = c
+                U_pop = G @ U_pop
+        
+        population_bases.append(U_pop)
+        
+        # Generate population-specific signal with decaying eigenvalues
+        signal_eigs_pop = 1.0 / (np.arange(1, units_per_pop + 1) ** signal_decay)
+        signal_cov_pop = U_pop @ np.diag(signal_eigs_pop) @ U_pop.T
+        
+        # Generate signal for this population
+        signal_pop = rng.multivariate_normal(
+            mean=np.zeros(units_per_pop),
+            cov=signal_cov_pop,
+            size=ncond
+        )  # (ncond, units_per_pop)
+        
+        population_signals.append(signal_pop)
+        
+        # Track which units belong to which population
+        start_idx = pop_idx * units_per_pop
+        end_idx = start_idx + units_per_pop
+        population_labels[start_idx:end_idx] = pop_idx
+    
+    # Assemble full signal matrix
+    true_signal = np.hstack(population_signals)  # (ncond, nvox)
+    
+    # Compute overall signal covariance (will be block-diagonal-ish)
+    signal_cov = np.cov(true_signal, rowvar=False)
+    
+    # Generate noise covariance (could be global or population-specific)
+    # For simplicity, use a global noise structure
+    U_noise, _, _ = np.linalg.svd(rng.randn(nvox, nvox), full_matrices=True)
+    noise_eigs = noise_multiplier / (np.arange(1, nvox + 1) ** noise_decay)
+    noise_cov = U_noise @ np.diag(noise_eigs) @ U_noise.T
+    
+    # Preallocate train/test data
+    train_data = np.zeros((ntrial, nvox, ncond))
+    test_data = np.zeros((ntrial, nvox, ncond))
+    
+    # Generate noisy data
+    for t in range(ntrial):
+        train_noise = rng.multivariate_normal(
+            mean=np.zeros(nvox),
+            cov=noise_cov,
+            size=ncond
+        )  # (ncond, nvox)
+        
+        test_noise = rng.multivariate_normal(
+            mean=np.zeros(nvox),
+            cov=noise_cov,
+            size=ncond
+        )  # (ncond, nvox)
+        
+        train_data[t, :, :] = (true_signal + train_noise).T
+        test_data[t, :, :] = (true_signal + test_noise).T
+    
+    # Reshape to (nvox, ncond, ntrial)
+    train_data = train_data.transpose(1, 2, 0)
+    test_data = test_data.transpose(1, 2, 0)
+    
+    # Create ground truth dictionary
+    ground_truth = {
+        'signal': true_signal,
+        'signal_cov': signal_cov,
+        'noise_cov': noise_cov,
+        'population_labels': population_labels,
+        'population_bases': population_bases,
+        'population_signals': population_signals,
+        'n_populations': n_populations,
+        'units_per_pop': units_per_pop,
+        'population_orthogonality': population_orthogonality
+    }
+    
+    if want_fig:
+        _visualize_heterogeneous_populations(
+            train_data, true_signal, ground_truth, 
+            signal_cov, noise_cov, ntrial
+        )
+    
+    return train_data, test_data, ground_truth
+
+
+def _visualize_heterogeneous_populations(train_data, true_signal, ground_truth, 
+                                         signal_cov, noise_cov, ntrial):
+    """Visualize heterogeneous population data structure."""
+    
+    population_labels = ground_truth['population_labels']
+    n_populations = ground_truth['n_populations']
+    units_per_pop = ground_truth['units_per_pop']
+    nvox = len(population_labels)
+    ncond = true_signal.shape[0]
+    
+    fig = plt.figure(figsize=(20, 12))
+    gs = GridSpec(3, 4, figure=fig, hspace=0.3, wspace=0.3)
+    
+    # Population colors
+    colors = plt.cm.tab10(np.linspace(0, 1, n_populations))
+    
+    # Plot 1: Ground truth signal with population boundaries
+    ax1 = fig.add_subplot(gs[0, 0])
+    im1 = ax1.imshow(true_signal.T, aspect='auto', cmap='RdBu_r', interpolation='none')
+    plt.colorbar(im1, ax=ax1)
+    ax1.set_title('Ground Truth Signal\n(with population structure)')
+    ax1.set_xlabel('Condition')
+    ax1.set_ylabel('Unit')
+    
+    # Add population boundaries
+    for pop_idx in range(1, n_populations):
+        ax1.axhline(pop_idx * units_per_pop - 0.5, color='yellow', linewidth=3, linestyle='--')
+    
+    # Plot 2: Signal covariance (should show block structure)
+    ax2 = fig.add_subplot(gs[0, 1])
+    im2 = ax2.imshow(signal_cov, aspect='equal', cmap='RdBu_r', interpolation='none')
+    plt.colorbar(im2, ax=ax2)
+    ax2.set_title('Signal Covariance\n(block structure)')
+    ax2.set_xlabel('Unit')
+    ax2.set_ylabel('Unit')
+    
+    # Add population boundaries
+    for pop_idx in range(1, n_populations):
+        ax2.axhline(pop_idx * units_per_pop - 0.5, color='yellow', linewidth=2)
+        ax2.axvline(pop_idx * units_per_pop - 0.5, color='yellow', linewidth=2)
+    
+    # Plot 3: Noise covariance
+    ax3 = fig.add_subplot(gs[0, 2])
+    im3 = ax3.imshow(noise_cov, aspect='equal', cmap='RdBu_r', interpolation='none')
+    plt.colorbar(im3, ax=ax3)
+    ax3.set_title('Noise Covariance\n(global structure)')
+    ax3.set_xlabel('Unit')
+    ax3.set_ylabel('Unit')
+    
+    # Plot 4: Population labels
+    ax4 = fig.add_subplot(gs[0, 3])
+    ax4.barh(np.arange(nvox), np.ones(nvox), color=[colors[pop] for pop in population_labels])
+    ax4.set_yticks(np.arange(0, nvox, max(1, nvox // 10)))
+    ax4.set_xlabel('Population')
+    ax4.set_ylabel('Unit')
+    ax4.set_title(f'Population Labels\n({n_populations} populations)')
+    ax4.set_xlim([0, 1.5])
+    
+    # Plot 5-7: Per-population signal patterns
+    for pop_idx in range(min(3, n_populations)):
+        ax = fig.add_subplot(gs[1, pop_idx])
+        pop_start = pop_idx * units_per_pop
+        pop_end = pop_start + units_per_pop
+        pop_signal = true_signal[:, pop_start:pop_end].T
+        
+        im = ax.imshow(pop_signal, aspect='auto', cmap='RdBu_r', interpolation='none')
+        plt.colorbar(im, ax=ax)
+        ax.set_title(f'Population {pop_idx + 1} Signal\n({units_per_pop} units)', color=colors[pop_idx])
+        ax.set_xlabel('Condition')
+        ax.set_ylabel('Unit (within pop)')
+    
+    # Plot 8: Trial-averaged data
+    ax8 = fig.add_subplot(gs[1, 3])
+    trial_avg = np.mean(train_data, axis=2)
+    im8 = ax8.imshow(trial_avg, aspect='auto', cmap='RdBu_r', interpolation='none')
+    plt.colorbar(im8, ax=ax8)
+    ax8.set_title(f'Trial-Averaged Data\n({ntrial} trials)')
+    ax8.set_xlabel('Condition')
+    ax8.set_ylabel('Unit')
+    
+    # Add population boundaries
+    for pop_idx in range(1, n_populations):
+        ax8.axhline(pop_idx * units_per_pop - 0.5, color='yellow', linewidth=2, linestyle='--')
+    
+    # Plot 9: Cross-population basis alignment
+    ax9 = fig.add_subplot(gs[2, 0:2])
+    if n_populations >= 2:
+        # Show alignment between first two populations
+        U1 = ground_truth['population_bases'][0]
+        U2 = ground_truth['population_bases'][1]
+        alignment = np.abs(U1.T @ U2)
+        
+        im9 = ax9.imshow(alignment, aspect='equal', cmap='viridis', vmin=0, vmax=1)
+        plt.colorbar(im9, ax=ax9)
+        ax9.set_title('Cross-Population Basis Alignment\n(Pop 1 vs Pop 2)')
+        ax9.set_xlabel('Population 2 basis dimension')
+        ax9.set_ylabel('Population 1 basis dimension')
+    
+    # Plot 10: Signal variance per population
+    ax10 = fig.add_subplot(gs[2, 2])
+    pop_variances = []
+    for pop_idx in range(n_populations):
+        pop_start = pop_idx * units_per_pop
+        pop_end = pop_start + units_per_pop
+        pop_var = np.var(true_signal[:, pop_start:pop_end])
+        pop_variances.append(pop_var)
+    
+    ax10.bar(range(n_populations), pop_variances, color=colors[:n_populations])
+    ax10.set_xlabel('Population')
+    ax10.set_ylabel('Signal Variance')
+    ax10.set_title('Signal Variance per Population')
+    ax10.set_xticks(range(n_populations))
+    
+    # Plot 11: Explanation text
+    ax11 = fig.add_subplot(gs[2, 3])
+    ax11.axis('off')
+    explanation = (
+        f"HETEROGENEOUS POPULATIONS\n\n"
+        f"• {n_populations} distinct subpopulations\n"
+        f"• {units_per_pop} units per population\n"
+        f"• Orthogonality: {ground_truth['population_orthogonality']:.2f}\n\n"
+        f"Each population has different\n"
+        f"optimal basis orderings.\n\n"
+        f"Global approaches will be\n"
+        f"suboptimal because they\n"
+        f"average across conflicting\n"
+        f"preferences."
+    )
+    ax11.text(0.1, 0.5, explanation, fontsize=11, verticalalignment='center',
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    plt.suptitle('Heterogeneous Population Data Structure', fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    plt.show()
+    
+    return fig
+
+

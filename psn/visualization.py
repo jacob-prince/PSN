@@ -312,7 +312,8 @@ def plot_diagnostic_figures(data, results, test_data=None):
 
        # Plot 5: Cross-validation results (first subplot in middle row)
         ax5 = fig.add_subplot(gs[1, 0])
-        if 'cv_scores' in results and results.get('opt', {}).get('cv_mode', 0) > -1:
+        cv_mode = results.get('opt', {}).get('cv_mode', 0)
+        if 'cv_scores' in results and cv_mode in [0, 1] and len(results['cv_scores']) > 0:
             #cv_data = stats.zscore(results['cv_scores'].mean(1),axis=1,ddof=1)
             cv_data = results['cv_scores'].mean(1)#,axis=0,ddof=1)
 
@@ -395,6 +396,124 @@ def plot_diagnostic_figures(data, results, test_data=None):
                             threshold_positions.append(max_thresh_idx)
 
                     ax5.plot(threshold_positions, unit_indices, 'r.', markersize=4)
+        elif cv_mode == 2:
+            # Analytic threshold selection - show signal/noise variance curves
+            # Compute average signal and noise variance across units
+            gsn_result = results.get('gsn_result', {})
+            if gsn_result and 'cSb' in gsn_result and 'cNb' in gsn_result:
+                basis = results['fullbasis']
+                cSb = gsn_result['cSb']
+                cNb = gsn_result['cNb']
+
+                # Project covariances into basis space
+                cSb_basis = basis.T @ cSb @ basis
+                cNb_basis = basis.T @ cNb @ basis
+
+                signal_proj = np.diag(cSb_basis)
+                noise_proj = np.diag(cNb_basis)
+
+                # Average across units (using squared loadings)
+                avg_signal_var = np.zeros(basis.shape[1])
+                avg_noise_var = np.zeros(basis.shape[1])
+
+                for d in range(basis.shape[1]):
+                    unit_loadings_sq = basis[:, d] ** 2
+                    avg_signal_var[d] = np.mean(unit_loadings_sq * signal_proj[d])
+                    avg_noise_var[d] = np.mean(unit_loadings_sq * noise_proj[d])
+
+                # Rank by same method used in analytic threshold selection
+                ranking = opt.get('ranking', 'snr')
+
+                if ranking == 'snr':
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        scores = np.divide(avg_signal_var, avg_noise_var,
+                                      out=np.zeros_like(avg_signal_var),
+                                      where=avg_noise_var > 0)
+                    sort_idx = np.argsort(scores)[::-1]
+                elif ranking == 'signal_variance':
+                    scores = avg_signal_var
+                    sort_idx = np.argsort(scores)[::-1]
+                elif ranking == 'snd':
+                    scores = avg_signal_var - avg_noise_var
+                    sort_idx = np.argsort(scores)[::-1]
+                elif ranking == 'eigenvalue':
+                    # Keep original basis ordering
+                    sort_idx = np.arange(len(avg_signal_var))
+                else:
+                    # Default to SNR
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        scores = np.divide(avg_signal_var, avg_noise_var,
+                                      out=np.zeros_like(avg_signal_var),
+                                      where=avg_noise_var > 0)
+                    sort_idx = np.argsort(scores)[::-1]
+
+                avg_signal_var_sorted = avg_signal_var[sort_idx]
+                avg_noise_var_sorted = avg_noise_var[sort_idx]
+
+                # Scale noise by ntrials
+                avg_noise_var_scaled = avg_noise_var_sorted / ntrials
+                sig_noise_diff = avg_signal_var_sorted - avg_noise_var_scaled
+
+                # Plot
+                dims = np.arange(len(avg_signal_var_sorted))
+                ax5.plot(dims, avg_signal_var_sorted, 'b-', linewidth=2, label='Signal Var')
+                ax5.plot(dims, avg_noise_var_sorted, 'r-', linewidth=2, label='Noise Var')
+                ax5.plot(dims, avg_noise_var_scaled, 'r--', linewidth=2, label=f'Noise Var / {ntrials}')
+                ax5.plot(dims, sig_noise_diff, 'g-', linewidth=2, label='Signal - Noise/n')
+                ax5.axhline(0, color='k', linestyle=':', linewidth=1)
+
+                # Show average threshold
+                if isinstance(best_threshold, np.ndarray):
+                    avg_thresh = best_threshold.mean()
+                else:
+                    avg_thresh = best_threshold
+
+                ax5.axvline(avg_thresh, color='orange', linestyle='--', linewidth=2,
+                           label=f'Threshold (mean={avg_thresh:.1f})')
+
+                # Set xlabel based on ranking method
+                ranking_labels = {
+                    'snr': 'SNR-sorted',
+                    'signal_variance': 'Signal Var-sorted',
+                    'snd': 'SND-sorted',
+                    'eigenvalue': 'Eigenvalue order'
+                }
+                ranking_label = ranking_labels.get(ranking, 'sorted')
+                ax5.set_xlabel(f'Basis Dimension ({ranking_label})')
+                ax5.set_ylabel('Variance')
+                ax5.set_title('Analytic Threshold Selection')
+                ax5.legend(fontsize=8)
+                ax5.grid(True, alpha=0.3)
+                ax5.set_xlim([0, min(100, len(dims))])  # Show first 100 dims
+
+                # Set y-limits to focus on region around threshold crossing
+                # Use percentiles to be robust to outliers
+                xlim_max = min(100, len(dims))
+                visible_diff = sig_noise_diff[:xlim_max]
+                if len(visible_diff) > 0:
+                    # Focus on the difference curve since that's what matters
+                    ymin = np.percentile(visible_diff, 5)
+                    ymax = np.percentile(visible_diff, 95)
+                    # Ensure zero is visible and add some padding
+                    ymin = min(ymin, 0)
+                    ymax = max(ymax, 0)
+                    y_range = ymax - ymin
+                    ax5.set_ylim([ymin - 0.1 * y_range, ymax + 0.1 * y_range])
+            else:
+                # Fallback if GSN results not available
+                if isinstance(best_threshold, np.ndarray):
+                    ax5.hist(best_threshold, bins=20, alpha=0.7, color='C2', edgecolor='black')
+                    ax5.axvline(best_threshold.mean(), color='red', linestyle='--',
+                               label=f'Mean: {best_threshold.mean():.1f}')
+                    ax5.set_xlabel('Threshold (dimensions retained)')
+                    ax5.set_ylabel('Number of units')
+                    ax5.set_title('Analytic Threshold Selection')
+                    ax5.legend()
+                    ax5.grid(True, alpha=0.3)
+                else:
+                    ax5.text(0.5, 0.5, f'Analytic Threshold: {best_threshold}',
+                            ha='center', va='center', transform=ax5.transAxes, fontsize=14)
+                    ax5.set_title('Analytic Threshold Selection')
         else:
             ax5.text(0.5, 0.5, 'No Cross-validation\nScores Available',
                     ha='center', va='center', transform=ax5.transAxes)

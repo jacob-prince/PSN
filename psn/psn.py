@@ -223,6 +223,7 @@ def _rank_basis_dimensions(basis, basis_source, data, magnitudes, ranking='eigen
     - 'eigenvalue_asc': By eigenvalue magnitude (increasing)
     - 'signal_variance': By signal variance (decreasing)
     - 'snr': By noise-ceiling SNR (decreasing)
+    - 'snd': By signal-noise difference (decreasing)
     - 'signal_specificity': By difference between signal % and noise % (decreasing)
 
     Args:
@@ -230,7 +231,7 @@ def _rank_basis_dimensions(basis, basis_source, data, magnitudes, ranking='eigen
         basis_source: Source matrix before orthonormalization (nunits, ncomponents), can be None
         data: Raw trial data (nunits, nconds, ntrials)
         magnitudes: Initial eigenvalues/magnitudes for each dimension
-        ranking: Ranking method - 'eigenvalue', 'eigenvalue_asc', 'signal_variance', 'snr', or 'signal_specificity'
+        ranking: Ranking method - 'eigenvalue', 'eigenvalue_asc', 'signal_variance', 'snr', 'snd', or 'signal_specificity'
 
     Returns:
         basis_ranked: Reranked orthonormal basis
@@ -250,28 +251,28 @@ def _rank_basis_dimensions(basis, basis_source, data, magnitudes, ranking='eigen
         sort_idx = np.argsort(magnitudes)
         magnitudes_ranked = magnitudes[sort_idx]
 
-    elif ranking in ['signal_variance', 'snr', 'signal_specificity']:
+    elif ranking in ['signal_variance', 'snr', 'snd', 'signal_specificity']:
         # Need to compute signal and noise components for each dimension
         data_reshaped = data.transpose(1, 2, 0)  # (nconds, ntrials, nunits)
         signal_variances = np.zeros(ndims)
         noise_variances = np.zeros(ndims)
         ncsnrs = np.zeros(ndims)
-        
+
         for i in range(ndims):
             # Get this basis vector
             this_basis_vec = basis[:, i]
-            
+
             # Project data onto this direction: (nconds, ntrials, nunits) @ (nunits,) = (nconds, ntrials)
             proj_data = np.dot(data_reshaped, this_basis_vec)
-            
+
             # Use compute_noise_ceiling to get signal variance, noise variance, and ncsnr
             # proj_data needs shape (1, nconds, ntrials) for compute_noise_ceiling
             _, ncsnr, sigvar, noisevar = compute_noise_ceiling(proj_data[np.newaxis, ...])
-            
+
             signal_variances[i] = float(sigvar[0])
             noise_variances[i] = float(noisevar[0])
             ncsnrs[i] = float(ncsnr[0])
-        
+
         if ranking == 'signal_variance':
             # Rank by signal variance (decreasing)
             sort_idx = np.argsort(signal_variances)[::-1]
@@ -281,6 +282,12 @@ def _rank_basis_dimensions(basis, basis_source, data, magnitudes, ranking='eigen
             # Rank by noise-ceiling SNR (decreasing)
             sort_idx = np.argsort(ncsnrs)[::-1]
             magnitudes_ranked = ncsnrs[sort_idx]
+
+        elif ranking == 'snd':
+            # Rank by signal-noise difference (decreasing)
+            snd = signal_variances - noise_variances
+            sort_idx = np.argsort(snd)[::-1]
+            magnitudes_ranked = snd[sort_idx]
 
         elif ranking == 'signal_specificity':
             # Rank by difference between signal % and noise %
@@ -304,7 +311,7 @@ def _rank_basis_dimensions(basis, basis_source, data, magnitudes, ranking='eigen
 
     else:
         raise ValueError(f"Invalid ranking method: {ranking}. Must be one of: "
-                        "'eigenvalue', 'eigenvalue_asc', 'signal_variance', 'snr', 'signal_specificity'")
+                        "'eigenvalue', 'eigenvalue_asc', 'signal_variance', 'snr', 'snd', 'signal_specificity'")
     
     # Reorder basis and basis_source
     basis_ranked = basis[:, sort_idx]
@@ -519,6 +526,155 @@ def _perform_magnitude_thresholding(data, basis, opt, magnitudes, unit_means):
     return denoiser, cv_scores, best_threshold_indices, signalsubspace, dimreduce, sorted_magnitudes, dimsretained
 
 
+# ========== ANALYTIC THRESHOLD SELECTION ==========
+
+def _perform_analytic_threshold_selection(data, basis, gsn_results, opt, unit_means):
+    """Select dimensions per unit using analytic threshold formula.
+
+    For each unit:
+    1. Rank basis dimensions according to opt['ranking'] (default: 'snr')
+    2. Find threshold where signal_variance - noise_variance/ntrials crosses zero
+
+    This avoids cross-validation and provides a principled, fast threshold selection.
+
+    Args:
+        data: Input data (nunits, nconds, ntrials)
+        basis: Orthonormal basis (nunits, ndims)
+        gsn_results: Results from perform_gsn containing cSb and cNb
+        opt: Options dict (uses 'ranking' and 'truncate')
+        unit_means: Mean values per unit (nunits,)
+
+    Returns:
+        denoiser: Unit-specific denoising matrix (nunits, nunits)
+        cv_scores: Empty array (for compatibility)
+        best_threshold: Threshold per unit (nunits,)
+        signalsubspace: None (not computed for unit-specific)
+        dimreduce: None (not computed for unit-specific)
+    """
+    nunits, nconds, ntrials = data.shape
+    ndims = basis.shape[1]
+    truncate = opt.get('truncate', 0)
+    ranking = opt.get('ranking', 'snr')  # Default to SNR for analytic mode
+
+    cSb = gsn_results['cSb']
+    cNb = gsn_results['cNb']
+
+    best_threshold = np.zeros(nunits, dtype=int)
+
+    # Project signal and noise covariances into basis space (once for all units)
+    cSb_basis = basis.T @ cSb @ basis  # (ndims, ndims)
+    cNb_basis = basis.T @ cNb @ basis  # (ndims, ndims)
+    signal_proj = np.diag(cSb_basis)
+    noise_proj = np.diag(cNb_basis)
+
+    # For SNR ranking, the ordering is the same for all units (unit loadings cancel out)
+    # Compute global ranking once if using SNR
+    if ranking == 'snr':
+        with np.errstate(divide='ignore', invalid='ignore'):
+            global_snr = np.divide(signal_proj, noise_proj,
+                          out=np.zeros_like(signal_proj),
+                          where=noise_proj > 0)
+        global_sort_idx = np.argsort(global_snr)[::-1]
+    elif ranking == 'eigenvalue':
+        global_sort_idx = np.arange(ndims)
+    else:
+        global_sort_idx = None  # Compute per-unit for signal_variance and snd
+
+    # For each unit, compute threshold
+    for u in range(nunits):
+        # Get this unit's contribution to each dimension
+        unit_loadings_sq = basis[u, :] ** 2
+        signal_vars = unit_loadings_sq * signal_proj
+        noise_vars = unit_loadings_sq * noise_proj
+
+        # Rank by specified method
+        if ranking == 'snr' or ranking == 'eigenvalue':
+            # Use pre-computed global ordering (same for all units)
+            sort_idx = global_sort_idx
+        elif ranking == 'signal_variance':
+            # Signal variance ranking (unit-specific)
+            scores = signal_vars
+            sort_idx = np.argsort(scores)[::-1]
+        elif ranking == 'snd':
+            # Signal-noise difference ranking (unit-specific)
+            scores = signal_vars - noise_vars
+            sort_idx = np.argsort(scores)[::-1]
+        else:
+            # Default to SNR with global ordering
+            sort_idx = global_sort_idx if global_sort_idx is not None else np.arange(ndims)
+
+        signal_vars_sorted = signal_vars[sort_idx]
+        noise_vars_sorted = noise_vars[sort_idx]
+
+        # Find threshold where signal - noise/ntrials crosses zero
+        scaled_noise_vars = noise_vars_sorted / ntrials
+        sig_noise_diff = signal_vars_sorted - scaled_noise_vars
+
+        # Skip first 'truncate' dimensions
+        valid_dims = sig_noise_diff[truncate:] > 0
+
+        if not np.any(valid_dims):
+            threshold = 0
+        elif np.all(valid_dims):
+            threshold = len(valid_dims)
+        else:
+            threshold = np.argmin(valid_dims)
+
+        best_threshold[u] = threshold + truncate  # Account for truncation
+
+    # Create unit-specific denoiser matrix
+    denoiser = np.zeros((nunits, nunits))
+
+    # If using SNR or eigenvalue ranking, all units use the same basis ordering
+    # Pre-compute the reordered basis once
+    if ranking == 'snr' or ranking == 'eigenvalue':
+        reordered_basis = basis[:, global_sort_idx]
+
+        for u in range(nunits):
+            # Apply threshold for this unit
+            if best_threshold[u] > 0:
+                denoising_fn = np.zeros(ndims)
+                start_idx = truncate
+                end_idx = min(best_threshold[u], ndims)
+                if end_idx > start_idx:
+                    denoising_fn[start_idx:end_idx] = 1
+                unit_denoiser = reordered_basis @ np.diag(denoising_fn) @ reordered_basis.T
+                denoiser[:, u] = unit_denoiser[:, u]
+    else:
+        # Signal variance or SND ranking: each unit has different ordering
+        for u in range(nunits):
+            unit_loadings_sq = basis[u, :] ** 2
+            signal_vars = unit_loadings_sq * signal_proj
+            noise_vars = unit_loadings_sq * noise_proj
+
+            # Compute unit-specific ranking
+            if ranking == 'signal_variance':
+                scores = signal_vars
+            elif ranking == 'snd':
+                scores = signal_vars - noise_vars
+            else:
+                scores = signal_vars  # Fallback to signal_variance
+
+            sort_idx = np.argsort(scores)[::-1]
+            unit_basis = basis[:, sort_idx]
+
+            # Apply threshold for this unit
+            if best_threshold[u] > 0:
+                denoising_fn = np.zeros(ndims)
+                start_idx = truncate
+                end_idx = min(best_threshold[u], ndims)
+                if end_idx > start_idx:
+                    denoising_fn[start_idx:end_idx] = 1
+                unit_denoiser = unit_basis @ np.diag(denoising_fn) @ unit_basis.T
+                denoiser[:, u] = unit_denoiser[:, u]
+
+    cv_scores = np.array([])  # Not applicable for analytic method
+    signalsubspace = None  # Not computed for unit-specific
+    dimreduce = None  # Not computed for unit-specific
+
+    return denoiser, cv_scores, best_threshold, signalsubspace, dimreduce
+
+
 # ========== MAIN PSN FUNCTION ==========
 
 def psn(data, V=None, opt=None, wantfig=True):
@@ -544,9 +700,9 @@ def psn(data, V=None, opt=None, wantfig=True):
         - V=matrix: Uses user-supplied orthonormal basis
 
     3. Dimension Selection:
-        The algorithm must decide how many dimensions to keep. This can be done in two ways:
+        The algorithm must decide how many dimensions to keep. This can be done in three ways:
 
-        a) Cross-validation (<cv_mode> >= 0):
+        a) Cross-validation (<cv_mode> = 0 or 1):
             - Splits trials into training and testing sets
             - For training set:
                 * Projects data onto different numbers of basis dimensions
@@ -557,7 +713,17 @@ def psn(data, V=None, opt=None, wantfig=True):
             - Selects number of dimensions that gives best prediction
             - Can be done per-unit or for whole population
 
-        b) Magnitude Thresholding (<cv_mode> = -1):
+        b) Analytic Threshold (<cv_mode> = 2):
+            - For each unit independently:
+                * Ranks basis dimensions by SNR (signal_variance / noise_variance)
+                * Computes signal and noise variance for each dimension
+                * Scales noise variance by 1/ntrials (for trial-averaged denoising)
+                * Finds threshold where signal_variance - noise_variance/ntrials crosses zero
+            - No cross-validation needed - uses principled criterion
+            - Faster than CV and often more accurate
+            - Always uses unit-specific thresholds
+
+        c) Magnitude Thresholding (<cv_mode> = -1):
             - Computes "magnitude" for each dimension:
                 * Either eigenvalues (signal strength)
                 * Or variance explained in the data
@@ -601,6 +767,9 @@ def psn(data, V=None, opt=None, wantfig=True):
         <cv_mode> - scalar. Indicates how to determine the optimal threshold:
           0 means cross-validation using n-1 (train) / 1 (test) splits of trials.
           1 means cross-validation using 1 (train) / n-1 (test) splits of trials.
+          2 means use analytic threshold selection (per-unit SNR ranking with
+            threshold where signal_variance - noise_variance/ntrials crosses zero).
+            This is faster than CV and uses a principled criterion.
          -1 means do not perform cross-validation and instead set the threshold
             based on when the magnitudes of components drop below
             a certain fraction (see <mag_frac>).
@@ -608,7 +777,8 @@ def psn(data, V=None, opt=None, wantfig=True):
         <cv_threshold_per> - string. 'population' or 'unit', specifying
           whether to use unit-wise thresholding (possibly different thresholds
           for different units) or population thresholding (one threshold for
-          all units). Matters only when <cv_mode> is 0 or 1. Default: 'unit'.
+          all units). Matters only when <cv_mode> is 0 or 1. For <cv_mode> = 2
+          (analytic), always uses unit-specific thresholds. Default: 'unit'.
         <unit_groups> - shape (nunits,). Integer array specifying which units should
           receive the same cv threshold. This is only applicable when <cv_threshold_per>
           is 'unit'. Units with the same integer value get the same cv threshold
@@ -819,8 +989,8 @@ def psn(data, V=None, opt=None, wantfig=True):
         if V not in [0, 1, 2, 3, 4, 5]:
             raise ValueError("V must be in [0..5] (int) or a 2D numpy array.")
 
-        # Compute GSN for modes 0-2
-        if V in [0, 1, 2]:
+        # Compute GSN for modes 0-2, or when cv_mode=2 (analytic threshold needs it)
+        if V in [0, 1, 2] or opt['cv_mode'] == 2:
             gsn_result = perform_gsn(data, {'wantverbose': False, 'random_seed': 42})
 
         # Demean trial average for PCA
@@ -859,12 +1029,16 @@ def psn(data, V=None, opt=None, wantfig=True):
         magnitudes = _compute_user_basis_magnitudes(basis, data)
         basis_source = None
         ica_mixing = None
-        
+
+        # Compute GSN if needed for cv_mode=2 (analytic threshold)
+        if opt['cv_mode'] == 2 and gsn_result is None:
+            gsn_result = perform_gsn(data, {'wantverbose': False, 'random_seed': 42})
+
         # Set default ranking for user-supplied basis
         if 'ranking' not in opt:
             # Default: use signal variance (decreasing)
             opt['ranking'] = 'signal_variance'
-        
+
         # Rank user-supplied basis if ranking is specified
         if opt['ranking'] != 'eigenvalue' or not np.allclose(magnitudes, np.sort(magnitudes)[::-1]):
             basis, magnitudes, _ = _rank_basis_dimensions(
@@ -884,7 +1058,35 @@ def psn(data, V=None, opt=None, wantfig=True):
             raise ValueError("cv_thresholds must be in sorted order with unique values")
 
     # Perform dimension selection and denoising
-    if opt['cv_mode'] >= 0:
+    if opt['cv_mode'] == 2:
+        # Analytic threshold selection
+        denoiser, cv_scores, best_threshold, signalsubspace, dimreduce = _perform_analytic_threshold_selection(
+            data, basis, gsn_result, opt, unit_means
+        )
+        denoiseddata = _apply_denoiser(data, denoiser, unit_means, opt['denoisingtype'])
+
+        # dimsretained is not populated for analytic mode
+        dimsretained = np.array([])
+
+        results = {
+            'denoiser': denoiser,
+            'cv_scores': cv_scores,
+            'best_threshold': best_threshold,
+            'denoiseddata': denoiseddata,
+            'fullbasis': basis,
+            'signalsubspace': signalsubspace,
+            'dimreduce': dimreduce,
+            'dimsretained': dimsretained,
+            'opt': opt,
+            'V': V if isinstance(V, int) else 'custom',
+            'gsn_result': gsn_result,
+            'unit_means': unit_means,
+            'mags': magnitudes,
+            'basis_source': basis_source if isinstance(V, int) else None,
+            'ica_mixing': ica_mixing,
+        }
+
+    elif opt['cv_mode'] >= 0:
         # Cross-validation
         denoiser, cv_scores, best_threshold, signalsubspace, dimreduce = _perform_cross_validation(
             data, basis, opt, unit_means
