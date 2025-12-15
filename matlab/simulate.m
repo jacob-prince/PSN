@@ -1,0 +1,950 @@
+function varargout = simulate(varargin)
+% SIMULATE Functions for generating simulated neural data with controlled signal and noise properties.
+%
+% This module provides tools to generate synthetic neural data with specific covariance
+% structures for both signal and noise components. The data generation process allows for:
+% - Control over signal and noise decay rates
+% - Alignment between signal and noise principal components
+% - Separate train and test datasets with matched properties
+%
+% Usage:
+%   [train_data, test_data, ground_truth] = simulate.generate_data(...)
+%   [train_data, test_data, ground_truth] = simulate.generate_heterogeneous_populations(...)
+
+    % Route to the requested function
+    if nargin == 0
+        error('simulate requires a function name as first argument');
+    end
+
+    func_name = varargin{1};
+    args = varargin(2:end);
+
+    switch func_name
+        case 'generate_data'
+            [varargout{1:nargout}] = generate_data(args{:});
+        case 'generate_heterogeneous_populations'
+            [varargout{1:nargout}] = generate_heterogeneous_populations(args{:});
+        otherwise
+            error('Unknown function: %s', func_name);
+    end
+end
+
+function [train_data, test_data, ground_truth] = generate_data(varargin)
+% GENERATE_DATA Generate synthetic neural data with controlled signal and noise properties.
+%
+% Parameters (as name-value pairs):
+%   'nvox' (int, optional):    Number of voxels/units. Default: 50.
+%                              If 'true_signal' is provided, automatically inferred from size(true_signal,2)
+%   'ncond' (int, optional):   Number of conditions. Default: 200.
+%                              If 'true_signal' is provided, automatically inferred from size(true_signal,1)
+%   'ntrial' (int):  Number of trials per condition
+%   'signal_decay' (double): Rate of eigenvalue decay for signal covariance
+%   'noise_decay' (double):  Rate of eigenvalue decay for noise covariance
+%   'noise_multiplier' (double): Scaling factor for noise variance
+%   'align_alpha' (double): Alignment between signal & noise PCs (1=aligned, 0=orthogonal)
+%   'align_k' (int): Number of top PCs to align
+%   'random_seed' (int, optional): Random seed for reproducibility
+%   'want_fig' (logical): Whether to display a diagnostic figure of the generated data
+%   'signal_cov' (array, optional): User-provided signal covariance matrix (nvox, nvox)
+%                                   If provided, overrides signal_decay parameter
+%   'true_signal' (array, optional): User-provided ground truth signal (ncond, nvox)
+%                                   If provided, overrides signal_cov and signal_decay.
+%                                   Note: When provided, signal_cov will be calculated
+%                                   as the sample covariance of this signal.
+%   'noise_cov' (array, optional): User-provided noise covariance matrix (nvox, nvox)
+%                                  If provided, overrides noise_decay parameter
+%   'cluster_units' (logical): Whether to reorder units based on hierarchical clustering
+%                           of the signal covariance matrix. This is purely cosmetic
+%                           for visualization and does not affect data properties.
+%   'verbose' (logical): Whether to print diagnostic information
+%
+% Returns:
+%   train_data: (nvox, ncond, ntrial)
+%   test_data:  (nvox, ncond, ntrial)
+%   ground_truth: struct w/ keys:
+%        'signal'     -> (ncond, nvox)
+%        'signal_cov' -> (nvox, nvox)
+%        'noise_cov'  -> (nvox, nvox)
+%        'U_signal'   -> Original eigenvectors for signal
+%        'U_noise'    -> Original eigenvectors for noise
+%        'signal_eigs'
+%        'noise_eigs'
+%        'unit_order' -> Original indices of units after clustering (if cluster_units=True)
+
+    % Default parameters
+    % Use empty [] for nvox/ncond so we can detect if user provided them
+    p = inputParser;
+    addParameter(p, 'nvox', []);
+    addParameter(p, 'ncond', []);
+    addParameter(p, 'ntrial', 5);
+    addParameter(p, 'signal_decay', 2.0);
+    addParameter(p, 'noise_decay', 1.25);
+    addParameter(p, 'noise_multiplier', 3.0);
+    addParameter(p, 'align_alpha', 0.5);
+    addParameter(p, 'align_k', 10);
+    addParameter(p, 'random_seed', 42);
+    addParameter(p, 'want_fig', true);
+    addParameter(p, 'signal_cov', []);
+    addParameter(p, 'true_signal', []);
+    addParameter(p, 'noise_cov', []);
+    addParameter(p, 'cluster_units', false);
+    addParameter(p, 'verbose', true);
+
+    parse(p, varargin{:});
+    nvox = p.Results.nvox;
+    ncond = p.Results.ncond;
+    ntrial = p.Results.ntrial;
+    signal_decay = p.Results.signal_decay;
+    noise_decay = p.Results.noise_decay;
+    noise_multiplier = p.Results.noise_multiplier;
+    align_alpha = p.Results.align_alpha;
+    align_k = p.Results.align_k;
+    random_seed = p.Results.random_seed;
+    want_fig = p.Results.want_fig;
+    signal_cov = p.Results.signal_cov;
+    true_signal = p.Results.true_signal;
+    noise_cov = p.Results.noise_cov;
+    cluster_units = p.Results.cluster_units;
+    verbose = p.Results.verbose;
+
+    if ~isempty(random_seed)
+        rng(random_seed);
+    end
+
+    % Infer nvox and ncond from true_signal if provided
+    if ~isempty(true_signal)
+        if ndims(true_signal) ~= 2
+            error('true_signal must be a 2D array with shape (ncond, nvox), got shape [%s]', ...
+                  num2str(size(true_signal)));
+        end
+
+        [true_signal_ncond, true_signal_nvox] = size(true_signal);
+
+        % If user provided nvox/ncond, verify they match true_signal
+        % Otherwise, infer from true_signal
+        if ~isempty(nvox) && nvox ~= true_signal_nvox
+            error('Provided nvox=%d doesn''t match true_signal shape(2)=%d', ...
+                  nvox, true_signal_nvox);
+        end
+        if ~isempty(ncond) && ncond ~= true_signal_ncond
+            error('Provided ncond=%d doesn''t match true_signal shape(1)=%d', ...
+                  ncond, true_signal_ncond);
+        end
+
+        % Use dimensions from true_signal
+        nvox = true_signal_nvox;
+        ncond = true_signal_ncond;
+    end
+
+    % Apply defaults if still empty
+    if isempty(nvox)
+        nvox = 50;  % Default
+    end
+    if isempty(ncond)
+        ncond = 200;  % Default
+    end
+
+    % Check that required parameters are now available
+    if isempty(ntrial)
+        error('ntrial must be provided');
+    end
+
+    % Track what was user-provided before we potentially modify these variables
+    user_provided_signal_cov = ~isempty(signal_cov);
+    user_provided_true_signal = ~isempty(true_signal);
+    user_provided_noise_cov = ~isempty(noise_cov);
+
+    % Check input dimensions if provided
+    if ~isempty(signal_cov)
+        if ~isequal(size(signal_cov), [nvox, nvox])
+            error('Provided signal_cov has shape [%s], expected [%d, %d]', ...
+                  num2str(size(signal_cov)), nvox, nvox);
+        end
+    end
+
+    if ~isempty(true_signal)
+        if ~isequal(size(true_signal), [ncond, nvox])
+            error('Provided true_signal has shape [%s], expected [%d, %d]', ...
+                  num2str(size(true_signal)), ncond, nvox);
+        end
+    end
+
+    if ~isempty(noise_cov)
+        if ~isequal(size(noise_cov), [nvox, nvox])
+            error('Provided noise_cov has shape [%s], expected [%d, %d]', ...
+                  num2str(size(noise_cov)), nvox, nvox);
+        end
+    end
+
+    % Generate random orthonormal matrices for signal & noise
+    [U_noise, ~, ~] = svd(randn(nvox, nvox));
+
+    % For signal, either use SVD of provided covariance or generate random
+    if ~isempty(signal_cov)
+        % Use provided signal covariance
+        [U_signal, S_signal, ~] = svd(signal_cov);
+        signal_eigs = diag(S_signal);
+        signal_cov = signal_cov;  % Ensure we have a copy to avoid modifying the input
+    else
+        % Generate random orthonormal matrix for signal
+        [U_signal, ~, ~] = svd(randn(nvox, nvox));
+        % Create diagonal eigenvalues
+        signal_eigs = 1.0 ./ ((1:nvox)' .^ signal_decay);
+        % Build signal covariance matrix
+        signal_cov = U_signal * diag(signal_eigs) * U_signal';
+    end
+
+    % For noise, either use SVD of provided covariance or generate random
+    if user_provided_noise_cov
+        % Use provided noise covariance
+        [U_noise, S_noise, ~] = svd(noise_cov);
+        noise_eigs = diag(S_noise);
+        noise_cov = noise_cov;  % Ensure we have a copy to avoid modifying the input
+
+        % Warn if alignment was requested but noise_cov is provided
+        if align_k > 0 && verbose
+            fprintf('Warning: align_k > 0 but noise_cov was provided. Using provided noise covariance without alignment.\n');
+        end
+    else
+        % Generate noise covariance after potential alignment
+        % Align noise PCs to signal PCs if requested
+        if align_k > 0
+            % Cap align_k to not exceed available dimensions
+            effective_k = min(align_k, nvox);
+            U_noise = adjust_alignment_gradient_descent(...
+                U_signal, U_noise, align_alpha, effective_k, verbose);
+        end
+
+        % Create diagonal eigenvalues for noise
+        noise_eigs = noise_multiplier ./ ((1:nvox)' .^ noise_decay);
+        % Build noise covariance matrix
+        noise_cov = U_noise * diag(noise_eigs) * U_noise';
+    end
+
+    % Generate the ground truth signal
+    if ~isempty(true_signal)
+        % Use provided ground truth signal
+        true_signal = true_signal;  % Ensure we have a copy
+
+        % Recalculate signal covariance based on the provided true signal
+        % This ensures signal_cov matches the actual covariance of true_signal
+        signal_cov = cov(true_signal, 0);  % 0 for normalization by N-1
+
+        % Recompute signal eigendecomposition for consistency
+        [U_signal, S_signal, ~] = svd(signal_cov);
+        signal_eigs = diag(S_signal);
+
+        % Re-align noise after recalculating U_signal (only if noise_cov was not user-provided)
+        if align_k > 0 && ~user_provided_noise_cov
+            U_noise = adjust_alignment_gradient_descent(...
+                U_signal, U_noise, align_alpha, align_k, verbose);
+            % Rebuild noise covariance matrix with the realigned eigenvectors
+            noise_cov = U_noise * diag(noise_eigs) * U_noise';
+        elseif align_k > 0 && user_provided_noise_cov
+            if verbose
+                fprintf('Warning: align_k > 0 but noise_cov was provided. Skipping noise alignment.\n');
+            end
+        end
+    else
+        % Generate from covariance
+        true_signal = mvnrnd(zeros(1, nvox), signal_cov, ncond);  % shape (ncond, nvox)
+    end
+
+    % Preallocate train/test data in shape (ntrial, nvox, ncond)
+    train_data = zeros(ntrial, nvox, ncond);
+    test_data = zeros(ntrial, nvox, ncond);
+
+    % Generate data
+    for t = 1:ntrial
+        % Independent noise for each trial
+        train_noise = mvnrnd(zeros(1, nvox), noise_cov, ncond);  % shape (ncond, nvox)
+        test_noise = mvnrnd(zeros(1, nvox), noise_cov, ncond);   % shape (ncond, nvox)
+
+        % Add noise to signal
+        train_data(t, :, :) = (true_signal + train_noise)';
+        test_data(t, :, :)  = (true_signal + test_noise)';
+    end
+
+    % Reshape to (nvox, ncond, ntrial)
+    train_data = permute(train_data, [2, 3, 1]);
+    test_data  = permute(test_data, [2, 3, 1]);
+
+    % Optionally reorder units based on hierarchical clustering
+    unit_order = [];
+    if cluster_units
+        % Cluster based on ground truth signal patterns
+        % true_signal shape is (ncond, nvox), so transpose to get (nvox, ncond)
+        % Standardize each unit's activity pattern for better clustering
+        signal_for_clustering = zscore(true_signal, 0, 1)';  % zscore across conditions for each unit
+
+        % Use correlation distance and average linkage for more balanced clusters
+        Z = linkage(signal_for_clustering, 'average', 'correlation');
+        unit_order = optimalleaforder(Z, pdist(signal_for_clustering, 'correlation'));
+
+        % Reorder all relevant matrices and arrays
+        train_data = train_data(unit_order, :, :);
+        test_data = test_data(unit_order, :, :);
+        true_signal = true_signal(:, unit_order);
+        signal_cov = signal_cov(unit_order, unit_order);
+        noise_cov = noise_cov(unit_order, unit_order);
+        U_signal = U_signal(unit_order, :);
+        U_noise = U_noise(unit_order, :);
+    end
+
+    ground_truth = struct();
+    ground_truth.signal = true_signal;
+    ground_truth.signal_cov = signal_cov;
+    ground_truth.noise_cov = noise_cov;
+    ground_truth.U_signal = U_signal;
+    ground_truth.U_noise = U_noise;
+    ground_truth.signal_eigs = signal_eigs;
+    ground_truth.noise_eigs = noise_eigs;
+    ground_truth.user_provided = struct(...
+        'signal_cov', user_provided_signal_cov, ...
+        'true_signal', user_provided_true_signal, ...
+        'noise_cov', user_provided_noise_cov);
+
+    if ~isempty(unit_order)
+        ground_truth.unit_order = unit_order;
+    end
+
+    if want_fig
+        plot_data_diagnostic(train_data, ground_truth, struct(...
+            'nvox', nvox, ...
+            'ncond', ncond, ...
+            'ntrial', ntrial, ...
+            'signal_decay', signal_decay, ...
+            'noise_decay', noise_decay, ...
+            'noise_multiplier', noise_multiplier, ...
+            'align_alpha', align_alpha, ...
+            'align_k', align_k, ...
+            'random_seed', random_seed, ...
+            'user_provided', ground_truth.user_provided, ...
+            'clustered', cluster_units));
+    end
+end
+
+function U_noise_aligned = adjust_alignment_gradient_descent(U_signal, U_noise_init, alpha, k, verbose)
+% ADJUST_ALIGNMENT_GRADIENT_DESCENT Gradient descent method to align U_noise to U_signal's top-k PCs
+% with dot(U_noise(:, i), U_signal(:, i)) ≈ alpha.
+%
+% Returns:
+%   U_noise_aligned (nvox, nvox): new orthonormal basis
+
+    if nargin < 5
+        verbose = true;
+    end
+
+    % Default parameters
+    lr = 5e-1;
+    lambda_orth = 1.0;
+    num_steps = 10000;
+    tol_align = 1e-6;
+    tol_orth = 1e-6;
+
+    % Handle edge cases
+    if k == 0
+        U_noise_aligned = U_noise_init;
+        return;
+    end
+
+    % Use shortcut alignment for perfect alignment (alpha = 1.0)
+    % This avoids convergence issues and ensures exact orthonormality
+    if abs(alpha - 1.0) < 1e-10
+        U_noise_aligned = shortcut_alignment(U_signal, U_noise_init, k);
+        return;
+    end
+
+    U = U_noise_init;
+    nvox = size(U, 1);
+    I = eye(nvox);
+
+    for step = 1:num_steps
+        grad = zeros(size(U));
+        align_vals = zeros(k, 1);
+        for i = 1:k
+            dot_val = U(:, i)' * U_signal(:, i);
+            align_vals(i) = dot_val;
+            grad(:, i) = (dot_val - alpha) * U_signal(:, i);
+        end
+        M = U' * U - I;
+        grad = grad + lambda_orth * (U * M);
+        U = U - lr * grad;
+
+        max_align_err = max(abs(align_vals - alpha));
+        orth_err = norm(U' * U - I, 'fro');
+
+        if max_align_err < tol_align && orth_err < tol_orth
+            if verbose
+                fprintf('\t\tOptimization complete. Step %d/%d: align_err=%.2e, orth_err=%.2e\n', ...
+                       step, num_steps, max_align_err, orth_err);
+            end
+            % Ensure perfect orthonormality before returning
+            [U, ~] = qr(U, 0);
+            U_noise_aligned = U;
+            return;
+        end
+    end
+
+    if verbose
+        fprintf('Optimization did not converge. Step %d/%d: align_err=%.2e, orth_err=%.2e\n', ...
+               num_steps, num_steps, max_align_err, orth_err);
+    end
+
+    % Ensure orthonormality even if didn't fully converge
+    [U, ~] = qr(U, 0);
+    U_noise_aligned = U;
+end
+
+function U_noise_adj = shortcut_alignment(U_signal, U_noise, k)
+% SHORTCUT_ALIGNMENT Directly align the first k noise PCs to the signal PCs without optimization.
+%
+% This method provides exact alignment (alpha=1.0) and maintains orthonormality
+% through Gram-Schmidt orthogonalization.
+%
+% Args:
+%   U_signal : (nvox, nvox) orthonormal signal basis
+%   U_noise  : (nvox, nvox) orthonormal noise basis
+%   k        : int, number of top PCs to align
+%
+% Returns:
+%   U_noise_adj : (nvox, nvox) orthonormal basis with first k columns aligned to U_signal
+
+    U_noise_adj = U_noise;
+    nvox = size(U_signal, 1);
+
+    % Set top k noise PCs equal to signal PCs
+    U_noise_adj(:, 1:k) = U_signal(:, 1:k);
+
+    % Orthonormalize remaining PCs via Gram-Schmidt
+    for i = k+1:nvox
+        v = U_noise_adj(:, i);
+
+        % Orthogonalize against all previous columns (including the aligned ones)
+        for j = 1:i-1
+            v = v - (v' * U_noise_adj(:, j)) * U_noise_adj(:, j);
+        end
+
+        norm_v = norm(v);
+        if norm_v < 1e-12
+            % Choose a random orthogonal vector if degenerate
+            attempts = 0;
+            while norm_v < 1e-12 && attempts < nvox
+                v = randn(nvox, 1);
+                % Orthogonalize against all previous columns
+                for j = 1:i-1
+                    v = v - (v' * U_noise_adj(:, j)) * U_noise_adj(:, j);
+                end
+                norm_v = norm(v);
+                attempts = attempts + 1;
+            end
+
+            if norm_v < 1e-12
+                % Last resort: use standard basis vector
+                for basis_idx = 1:nvox
+                    v = zeros(nvox, 1);
+                    v(basis_idx) = 1.0;
+                    % Orthogonalize against all previous columns
+                    for j = 1:i-1
+                        v = v - (v' * U_noise_adj(:, j)) * U_noise_adj(:, j);
+                    end
+                    norm_v = norm(v);
+                    if norm_v > 1e-12
+                        break;
+                    end
+                end
+            end
+        end
+
+        U_noise_adj(:, i) = v / norm_v;
+    end
+end
+
+function [train_data, test_data, ground_truth] = generate_heterogeneous_populations(varargin)
+% GENERATE_HETEROGENEOUS_POPULATIONS Generate data with heterogeneous subpopulations that have conflicting preferences.
+%
+% This creates a challenging scenario where different groups of units have different
+% optimal basis orderings, making global/population-based approaches suboptimal.
+%
+% Parameters (as name-value pairs):
+%   'n_populations' (int): Number of distinct subpopulations
+%   'units_per_pop' (int): Number of units per subpopulation
+%   'ncond' (int): Number of conditions
+%   'ntrial' (int): Number of trials per condition
+%   'signal_decay' (double): Rate of eigenvalue decay for signal covariance
+%   'noise_decay' (double): Rate of eigenvalue decay for noise covariance
+%   'noise_multiplier' (double): Scaling factor for noise variance
+%   'population_orthogonality' (double): How different the populations are (0=identical, 1=orthogonal)
+%                                        Controls the angle between population-specific signal subspaces
+%   'random_seed' (int): Random seed for reproducibility
+%   'want_fig' (logical): Whether to display diagnostic figures
+%   'verbose' (logical): Whether to print diagnostic information
+%
+% Returns:
+%   train_data: (nvox, ncond, ntrial)
+%   test_data: (nvox, ncond, ntrial)
+%   ground_truth: struct with keys:
+%        'signal' -> (ncond, nvox) - ground truth signal
+%        'signal_cov' -> (nvox, nvox) - overall signal covariance
+%        'noise_cov' -> (nvox, nvox) - overall noise covariance
+%        'population_labels' -> (nvox,1) - which population each unit belongs to
+%        'population_bases' -> cell array of (nvox, nvox) - optimal basis for each population
+%        'population_signals' -> cell array of (ncond, units_per_pop) - signal for each population
+
+    % Default parameters
+    p = inputParser;
+    addParameter(p, 'n_populations', 3);
+    addParameter(p, 'units_per_pop', 20);
+    addParameter(p, 'ncond', 100);
+    addParameter(p, 'ntrial', 3);
+    addParameter(p, 'signal_decay', 2.0);
+    addParameter(p, 'noise_decay', 1.25);
+    addParameter(p, 'noise_multiplier', 3.0);
+    addParameter(p, 'population_orthogonality', 0.9);
+    addParameter(p, 'random_seed', 42);
+    addParameter(p, 'want_fig', false);
+    addParameter(p, 'verbose', true);
+
+    parse(p, varargin{:});
+    n_populations = p.Results.n_populations;
+    units_per_pop = p.Results.units_per_pop;
+    ncond = p.Results.ncond;
+    ntrial = p.Results.ntrial;
+    signal_decay = p.Results.signal_decay;
+    noise_decay = p.Results.noise_decay;
+    noise_multiplier = p.Results.noise_multiplier;
+    population_orthogonality = p.Results.population_orthogonality;
+    random_seed = p.Results.random_seed;
+    want_fig = p.Results.want_fig;
+    verbose = p.Results.verbose;
+
+    if ~isempty(random_seed)
+        rng(random_seed);
+    end
+
+    nvox = n_populations * units_per_pop;
+
+    if verbose
+        fprintf('\n%s\n', repmat('=', 1, 80));
+        fprintf('GENERATING HETEROGENEOUS POPULATION DATA\n');
+        fprintf('%s\n', repmat('=', 1, 80));
+        fprintf('  Populations: %d\n', n_populations);
+        fprintf('  Units per population: %d\n', units_per_pop);
+        fprintf('  Total units: %d\n', nvox);
+        fprintf('  Conditions: %d\n', ncond);
+        fprintf('  Trials: %d\n', ntrial);
+        fprintf('  Population orthogonality: %.2f\n', population_orthogonality);
+        fprintf('%s\n\n', repmat('=', 1, 80));
+    end
+
+    % Create population-specific signal subspaces
+    % Each population will have a different optimal basis ordering
+    population_bases = cell(n_populations, 1);
+    population_signals = cell(n_populations, 1);
+    population_labels = zeros(nvox, 1);
+
+    % Generate a base random orthonormal matrix
+    [U_base, ~, ~] = svd(randn(units_per_pop, units_per_pop));
+
+    for pop_idx = 1:n_populations
+        % Create population-specific basis by rotating from base
+        if pop_idx == 1
+            % First population uses the base
+            U_pop = U_base;
+        else
+            % Subsequent populations are rotated versions
+            % Use Givens rotations to create controlled orthogonality
+            U_pop = U_base;
+
+            % Apply rotation based on population_orthogonality
+            % Higher orthogonality = more rotation = more different preferences
+            n_rotations = max(1, floor(units_per_pop * population_orthogonality));
+
+            for rot = 1:n_rotations
+                % Random Givens rotation
+                ij = randperm(units_per_pop, 2);
+                i = ij(1);
+                j = ij(2);
+                theta = rand() * pi * population_orthogonality;
+
+                % Apply rotation in plane (i, j)
+                c = cos(theta);
+                s = sin(theta);
+                G = eye(units_per_pop);
+                G(i, i) = c;
+                G(i, j) = -s;
+                G(j, i) = s;
+                G(j, j) = c;
+                U_pop = G * U_pop;
+            end
+        end
+
+        population_bases{pop_idx} = U_pop;
+
+        % Generate population-specific signal with decaying eigenvalues
+        signal_eigs_pop = 1.0 ./ ((1:units_per_pop)' .^ signal_decay);
+        signal_cov_pop = U_pop * diag(signal_eigs_pop) * U_pop';
+
+        % Generate signal for this population
+        signal_pop = mvnrnd(zeros(1, units_per_pop), signal_cov_pop, ncond);  % (ncond, units_per_pop)
+
+        population_signals{pop_idx} = signal_pop;
+
+        % Track which units belong to which population
+        start_idx = (pop_idx - 1) * units_per_pop + 1;
+        end_idx = start_idx + units_per_pop - 1;
+        population_labels(start_idx:end_idx) = pop_idx;
+    end
+
+    % Assemble full signal matrix
+    true_signal = horzcat(population_signals{:});  % (ncond, nvox)
+
+    % Compute overall signal covariance (will be block-diagonal-ish)
+    signal_cov = cov(true_signal, 0);
+
+    % Generate noise covariance (could be global or population-specific)
+    % For simplicity, use a global noise structure
+    [U_noise, ~, ~] = svd(randn(nvox, nvox));
+    noise_eigs = noise_multiplier ./ ((1:nvox)' .^ noise_decay);
+    noise_cov = U_noise * diag(noise_eigs) * U_noise';
+
+    % Preallocate train/test data
+    train_data = zeros(ntrial, nvox, ncond);
+    test_data = zeros(ntrial, nvox, ncond);
+
+    % Generate noisy data
+    for t = 1:ntrial
+        train_noise = mvnrnd(zeros(1, nvox), noise_cov, ncond);  % (ncond, nvox)
+        test_noise = mvnrnd(zeros(1, nvox), noise_cov, ncond);   % (ncond, nvox)
+
+        train_data(t, :, :) = (true_signal + train_noise)';
+        test_data(t, :, :) = (true_signal + test_noise)';
+    end
+
+    % Reshape to (nvox, ncond, ntrial)
+    train_data = permute(train_data, [2, 3, 1]);
+    test_data = permute(test_data, [2, 3, 1]);
+
+    % Create ground truth dictionary
+    ground_truth = struct();
+    ground_truth.signal = true_signal;
+    ground_truth.signal_cov = signal_cov;
+    ground_truth.noise_cov = noise_cov;
+    ground_truth.population_labels = population_labels;
+    ground_truth.population_bases = population_bases;
+    ground_truth.population_signals = population_signals;
+    ground_truth.n_populations = n_populations;
+    ground_truth.units_per_pop = units_per_pop;
+    ground_truth.population_orthogonality = population_orthogonality;
+
+    if want_fig
+        warning('MATLAB plotting for simulate.generate_heterogeneous_populations not yet implemented');
+    end
+end
+
+
+function plot_data_diagnostic(data, ground_truth, params)
+% PLOT_DATA_DIAGNOSTIC Generate a comprehensive diagnostic figure for simulated data.
+%
+% Parameters:
+%   data: (nvox, ncond, ntrial) - The simulated data
+%   ground_truth: struct - Dictionary with ground truth information
+%   params: struct - Dictionary with simulation parameters
+
+    % Extract important parameters and ground truth values
+    nvox = params.nvox;
+    ncond = params.ncond;
+    ntrial = params.ntrial;
+    signal_decay = params.signal_decay;
+    noise_decay = params.noise_decay;
+    noise_multiplier = params.noise_multiplier;
+    align_alpha = params.align_alpha;
+    align_k = params.align_k;
+
+    if isfield(params, 'user_provided')
+        user_provided = params.user_provided;
+    else
+        user_provided = struct('signal_cov', false, 'true_signal', false);
+    end
+
+    % Extract ground truth matrices
+    signal_cov = ground_truth.signal_cov;
+    noise_cov = ground_truth.noise_cov;
+    signal_eigs = ground_truth.signal_eigs;
+    noise_eigs = ground_truth.noise_eigs;
+    U_signal = ground_truth.U_signal;
+    U_noise = ground_truth.U_noise;
+    true_signal = ground_truth.signal;
+
+    % Create example trial data for visualization
+    trial_avg = mean(data, 3);  % Average across trials
+    example_trial = data(:, :, 1);  % First trial
+
+    % Create figure with custom layout
+    fig = figure('Position', [100, 100, 1800, 1200]);
+
+    % Add title with parameters
+    title_text = sprintf('Simulated Data: %d units × %d conditions × %d trials\n', nvox, ncond, ntrial);
+
+    % Add appropriate source info based on what was user-provided
+    if user_provided.true_signal
+        title_text = [title_text 'Using user-provided ground truth signal' newline];
+    elseif user_provided.signal_cov
+        title_text = [title_text 'Using user-provided signal covariance matrix' newline];
+    else
+        title_text = [title_text sprintf('Signal decay=%.2f, Noise decay=%.2f, Noise multiplier=%.2f\n', ...
+                     signal_decay, noise_decay, noise_multiplier)];
+    end
+
+    title_text = [title_text sprintf('Alignment: alpha=%.2f (0=orthogonal, 1=aligned), k=%d top PCs', ...
+                 align_alpha, align_k)];
+
+    % Add note about clustering if units were reordered
+    if isfield(params, 'clustered') && params.clustered
+        title_text = [title_text newline 'Units reordered by hierarchical clustering'];
+    end
+
+    sgtitle(title_text, 'FontSize', 14, 'FontWeight', 'bold');
+
+    % Plot 1a: Eigenvalue spectra - Log scale
+    subplot(3, 4, 1);
+    semilogy(0:nvox-1, signal_eigs, 'b-', 'LineWidth', 1.5, 'DisplayName', 'Signal eigenvalues');
+    hold on;
+    semilogy(0:nvox-1, noise_eigs, 'r-', 'LineWidth', 1.5, 'DisplayName', 'Noise eigenvalues');
+    if align_k > 0
+        xline(align_k-1, 'Color', [0.5 0.5 0.5], 'LineStyle', '--', ...
+             'DisplayName', sprintf('Alignment cutoff (k=%d)', align_k));
+    end
+    xlabel('Dimension');
+    ylabel('Eigenvalue (log scale)');
+    title('Eigenspectrum - Log Scale');
+    legend('Location', 'best');
+    grid on;
+
+    % Plot 1b: Eigenvalue spectra - Linear scale
+    subplot(3, 4, 2);
+    plot(0:nvox-1, signal_eigs, 'b-', 'LineWidth', 1.5, 'DisplayName', 'Signal eigenvalues');
+    hold on;
+    plot(0:nvox-1, noise_eigs, 'r-', 'LineWidth', 1.5, 'DisplayName', 'Noise eigenvalues');
+    if align_k > 0
+        xline(align_k-1, 'Color', [0.5 0.5 0.5], 'LineStyle', '--', ...
+             'DisplayName', sprintf('Alignment cutoff (k=%d)', align_k));
+    end
+    xlabel('Dimension');
+    ylabel('Eigenvalue (linear scale)');
+    title('Eigenspectrum - Linear Scale');
+    % Show top 25% of dimensions for better visualization in linear scale
+    dims_to_show = max(floor(nvox * 0.25), align_k + 5);
+    xlim([0, dims_to_show]);
+    legend('Location', 'best');
+    grid on;
+
+    % Plot 2: Signal-to-noise ratio per dimension
+    subplot(3, 4, [3 4]);
+    snr = signal_eigs ./ noise_eigs;
+    plot(0:nvox-1, snr, 'g-', 'LineWidth', 1.5);
+    xlabel('Dimension');
+    ylabel('SNR');
+    title('Signal-to-Noise Ratio per Dimension');
+    grid on;
+
+    % Plot 3: Signal covariance matrix
+    subplot(3, 4, 5);
+    % Calculate clim values similar to gsn_denoise.py
+    cov_max = prctile(abs(signal_cov(:)), 95);
+    imagesc(signal_cov, [-cov_max, cov_max]);
+    colormap(gca, redblue);
+    colorbar;
+
+    % Update title to be more informative about signal_cov source
+    if user_provided.true_signal
+        title_suffix = sprintf('\n(Derived from user-provided GT signal)');
+    else
+        title_suffix = '';
+    end
+    title(['Signal Covariance Matrix' title_suffix]);
+    xlabel('Unit');
+    ylabel('Unit');
+    axis square;
+
+    % Plot 4: Noise covariance matrix
+    subplot(3, 4, 6);
+    cov_max = prctile(abs(noise_cov(:)), 95);
+    imagesc(noise_cov, [-cov_max, cov_max]);
+    colormap(gca, redblue);
+    colorbar;
+    title('Noise Covariance Matrix');
+    xlabel('Unit');
+    ylabel('Unit');
+    axis square;
+
+    % Calculate shared colorbar limits for signal and trial data
+    % Combine the ground truth signal and example trial data to find common limits
+    all_data = [true_signal'; example_trial];
+    data_min = prctile(all_data(:), 1);  % Use 1st percentile instead of min to avoid outliers
+    data_max = prctile(all_data(:), 99);  % Use 99th percentile instead of max to avoid outliers
+    data_abs_max = max(abs(data_min), abs(data_max));
+
+    % Use symmetric limits for better visualization
+    signal_clim = [-data_abs_max, data_abs_max];
+
+    % Plot 5: Example of ground truth signal - show full matrix
+    subplot(3, 4, 7);
+    imagesc(true_signal', signal_clim);
+    colormap(gca, redblue);
+    colorbar;
+    title('Ground Truth Signal');
+    xlabel('Condition');
+    ylabel('Unit');
+
+    % Plot 6: Example trial data - show full matrix
+    subplot(3, 4, 8);
+    imagesc(example_trial, signal_clim);
+    colormap(gca, redblue);
+    colorbar;
+    title('Example Single Trial (with noise)');
+    xlabel('Condition');
+    ylabel('Unit');
+
+    % Plot 7: Signal eigenvectors
+    subplot(3, 4, 9);
+    imagesc(U_signal, [-0.3, 0.3]);
+    colormap(gca, redblue);
+    colorbar;
+    title('Signal Eigenvectors');
+    xlabel('Dimension');
+    ylabel('Unit');
+
+    % Plot 8: Noise eigenvectors
+    subplot(3, 4, 10);
+    imagesc(U_noise, [-0.3, 0.3]);
+    colormap(gca, redblue);
+    colorbar;
+    title('Noise Eigenvectors');
+    xlabel('Dimension');
+    ylabel('Unit');
+
+    % Plot 9: Alignment visualization (dot products between signal and noise eigenvectors)
+    subplot(3, 4, 11);
+    % Calculate full alignment matrix for all dimensions
+    full_alignment_matrix = abs(U_signal' * U_noise);
+
+    % Determine how many dimensions to display in the visualization
+    % If nvox is large, subsample the matrix but ensure we include the aligned dimensions
+    max_dims_to_show = min(25, nvox);  % Limit to 25x25 at most for readability
+
+    if nvox <= max_dims_to_show
+        % If we have fewer dimensions than the limit, show all
+        alignment_matrix = full_alignment_matrix;
+        dims_shown = nvox;
+    else
+        % Otherwise, show a subset with emphasis on aligned dimensions
+        if align_k > 0
+            % Always include the aligned dimensions
+            indices = 1:align_k;
+
+            % Add additional dimensions, evenly spaced
+            remaining_spots = max_dims_to_show - align_k;
+            if remaining_spots > 0
+                % Determine spacing for remaining dimensions
+                step = (nvox - align_k) / (remaining_spots + 1);
+                for i = 1:remaining_spots
+                    idx = align_k + floor(i * step);
+                    indices(end+1) = min(idx, nvox);  % Ensure we don't exceed bounds
+                end
+            end
+
+            % Sort indices to maintain proper order
+            indices = sort(indices);
+        else
+            % No alignment, just evenly space the indices
+            indices = round(linspace(1, nvox, max_dims_to_show));
+        end
+
+        % Extract the submatrix
+        alignment_matrix = full_alignment_matrix(indices, indices);
+        dims_shown = length(indices);
+    end
+
+    % Create the visualization
+    imagesc(alignment_matrix, [0, 1]);
+    colormap(gca, viridis_colormap());
+    colorbar;
+    title('Eigenvector Alignment (dot products)');
+    xlabel('Noise dimension');
+    ylabel('Signal dimension');
+    axis square;
+
+    % Add diagonal values text to show exact alignment of corresponding eigenvectors
+    if align_k > 0
+        hold on;
+        for i = 1:min(dims_shown, align_k)
+            text(i, i, sprintf('%.2f', alignment_matrix(i, i)), ...
+                'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+                'Color', 'white', 'FontWeight', 'bold');
+        end
+    end
+
+    % Show the total number of dimensions in title if we're displaying a subset
+    if dims_shown < nvox
+        title(sprintf('Eigenvector Alignment (showing %d/%d dimensions)', dims_shown, nvox));
+    end
+
+    % Plot 10: Trial-averaged data - also use the same colorbar limits
+    subplot(3, 4, 12);
+    imagesc(trial_avg, signal_clim);
+    colormap(gca, redblue);
+    colorbar;
+    title(sprintf('Trial-averaged Data (%d trials)', ntrial));
+    xlabel('Condition');
+    ylabel('Unit');
+end
+
+
+function cmap = redblue()
+% REDBLUE Red-Blue colormap
+    n = 256;
+    cmap = zeros(n, 3);
+    mid = ceil(n/2);
+
+    % Blue to white
+    cmap(1:mid, 1) = linspace(0, 1, mid);
+    cmap(1:mid, 2) = linspace(0, 1, mid);
+    cmap(1:mid, 3) = ones(mid, 1);
+
+    % White to red
+    cmap(mid+1:n, 1) = ones(n-mid, 1);
+    cmap(mid+1:n, 2) = linspace(1, 0, n-mid);
+    cmap(mid+1:n, 3) = linspace(1, 0, n-mid);
+end
+
+
+function cmap = viridis_colormap()
+% VIRIDIS_COLORMAP Viridis colormap approximation
+% Approximates the matplotlib viridis colormap
+    n = 256;
+
+    % Key points from viridis colormap (RGB values)
+    viridis_data = [
+        0.267004, 0.004874, 0.329415;
+        0.282623, 0.140926, 0.457517;
+        0.253935, 0.265254, 0.529983;
+        0.206756, 0.371758, 0.553117;
+        0.163625, 0.471133, 0.558148;
+        0.127568, 0.566949, 0.550556;
+        0.134692, 0.658636, 0.517649;
+        0.266941, 0.748751, 0.440573;
+        0.477504, 0.821444, 0.318195;
+        0.741388, 0.873449, 0.149561;
+        0.993248, 0.906157, 0.143936
+    ];
+
+    % Interpolate to get n colors
+    x_orig = linspace(0, 1, size(viridis_data, 1));
+    x_new = linspace(0, 1, n);
+
+    cmap = zeros(n, 3);
+    cmap(:, 1) = interp1(x_orig, viridis_data(:, 1), x_new);
+    cmap(:, 2) = interp1(x_orig, viridis_data(:, 2), x_new);
+    cmap(:, 3) = interp1(x_orig, viridis_data(:, 3), x_new);
+end

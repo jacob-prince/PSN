@@ -1,903 +1,836 @@
-function visualization(data, results, test_data)
-% PLOT_DIAGNOSTIC_FIGURES Generate diagnostic figures for PSN denoising results.
+function visualization(data, results)
+% VISUALIZATION Generate diagnostic figures for PSN denoising results (NEW API)
 %
-% Generates comprehensive diagnostic plots showing the denoising process,
-% including basis matrices, eigenspectrum, cross-validation results, and
-% performance evaluation.
+% This visualization works with the new PSN API and results structure.
 %
 % Parameters:
 % -----------
-% data : array
-%     Training data used for denoising, shape [nunits x nconds x ntrials]
+% data : array [nunits x nconds x ntrials]
+%     Training data used for denoising
 % results : struct
 %     Results structure from psn function
-% test_data : array, optional
-%     Data to use for testing in the bottom row plots, shape [nunits x nconds x ntrials].
-%     If not provided, will use leave-one-out cross-validation on the training data.
 
-    % Set random seed for reproducibility
-    rng('default');
-    rng(42, 'twister');
-    
-    % Create a single large figure with proper spacing
-    figure('Position', [100, 100, 1600, 960]);
-    
+    % Create a large figure
+    figure('Position', [100, 100, 1800, 1200]);
+
     % Extract data dimensions
     [nunits, nconds, ntrials] = size(data);
-    
-    % Add text at the top of the figure
-    V_type = results.V;  % Get V directly from results
-    if isnumeric(V_type) && ~isscalar(V_type)
-        V_desc = sprintf('user-supplied [%dx%d]', size(V_type, 1), size(V_type, 2));
+
+    % Get options if stored
+    if isfield(results, 'opt_used')
+        opt = results.opt_used;
     else
-        V_desc = num2str(V_type);
+        opt = struct();
     end
-        
-    % Create title text with data shape and PSN application info
-    title_text = sprintf('Data shape: %d units × %d conditions × %d trials    |    V = %s\n', ...
-                        nunits, nconds, ntrials, V_desc);
-    
-    % Add cv_mode and magnitude thresholding info to title
-    if isfield(results, 'opt') && isfield(results.opt, 'cv_mode')
-        cv_mode = results.opt.cv_mode;
-        if cv_mode == -1
-            mag_type = results.opt.mag_type;
-            mag_frac = results.opt.mag_frac;
-            mag_frac_str = sprintf('%.3f', mag_frac);
-            mag_frac_str = regexprep(mag_frac_str, '0*$', '');
-            mag_frac_str = regexprep(mag_frac_str, '\.$', '');
-            title_text = sprintf(['Data shape: %d units × %d conditions × %d trials    |    ' ...
-                         'V = %s    |    cv\\_mode = %d    |    ' ...
-                         'mag\\_type = %d, mag\\_frac = %s\n'], ...
-                        nunits, nconds, ntrials, V_desc, cv_mode, mag_type, mag_frac_str);
+
+    % Extract basis type description
+    if isfield(opt, 'basis')
+        if ischar(opt.basis)
+            basis_desc = opt.basis;
         else
-            threshold_per = results.opt.cv_threshold_per;
-            title_text = sprintf(['Data shape: %d units × %d conditions × %d trials    |    ' ...
-                         'V = %s    |    cv\\_mode = %d    |    thresh = %s\n'], ...
-                        nunits, nconds, ntrials, V_desc, cv_mode, threshold_per);
+            basis_desc = sprintf('custom [%dx%d]', size(opt.basis, 1), size(opt.basis, 2));
         end
-    end
-    
-    if nargin < 3 || isempty(test_data)
-        title_text = [title_text sprintf('psn applied to all %d trials', ntrials)];
     else
-        title_text = [title_text sprintf('psn applied to %d trials, tested on 1 heldout trial', ntrials)];
+        basis_desc = 'unknown';
     end
-    
-    sgtitle(title_text, 'FontSize', 14);
 
-    % Get raw and denoised data
-    if isfield(results, 'opt') && isfield(results.opt, 'denoisingtype') && results.opt.denoisingtype == 0
-        raw_data = mean(data, 3);  % Average across trials for trial-averaged denoising
-        denoised_data = results.denoiseddata;
+    % Extract threshold method
+    if isfield(opt, 'threshold_method')
+        threshold_method = opt.threshold_method;
     else
-        % For single-trial denoising, we'll plot the first trial
-        if ndims(data) == 3
-            raw_data = data(:, :, 1);
-        else
-            raw_data = data;
-        end
-        if ndims(results.denoiseddata) == 3
-            denoised_data = results.denoiseddata(:, :, 1);
-        else
-            denoised_data = results.denoiseddata;
-        end
+        threshold_method = 'unknown';
     end
 
-    % Compute noise as difference
-    noise = raw_data - denoised_data;
+    % Extract criterion
+    if isfield(opt, 'criterion')
+        criterion = opt.criterion;
+    else
+        criterion = 'unknown';
+    end
 
-    % Initialize lists for basis dimension analysis
-    ncsnrs = [];
-    sigvars = [];
-    noisevars = [];
-
-    if isfield(results, 'fullbasis') && isfield(results, 'mags')
-        % Project data into basis
-        data_reshaped = permute(data, [2, 3, 1]);  % [nconds x ntrials x nunits]
-        eigvecs = results.fullbasis;
-        for i = 1:size(eigvecs, 2)
-            this_eigv = eigvecs(:, i);
-            proj_data = zeros(nconds, ntrials);
-            for j = 1:nconds
-                for k = 1:ntrials
-                    proj_data(j, k) = dot(squeeze(data_reshaped(j, k, :)), this_eigv);
-                end
-            end
-            
-            [noiseceiling, ncsnr, sigvar, noisevar] = compute_noise_ceiling(reshape(proj_data, [1, nconds, ntrials]));
-            ncsnrs(end+1) = ncsnr;
-            sigvars(end+1) = sigvar;
-            noisevars(end+1) = noisevar;
+    % Check for NaNs and compute average number of trials
+    has_nans = any(isnan(data(:)));
+    if has_nans
+        validcnt = sum(~any(isnan(data), 1), 3);
+        ntrials_avg = sum(validcnt(validcnt > 1)) / nconds;
+        if ntrials_avg < 1
+            ntrials_avg = 1;
         end
+    else
+        ntrials_avg = ntrials;
+    end
 
-        % Convert to column vectors
-        sigvars = sigvars(:);
-        ncsnrs = ncsnrs(:);
-        noisevars = noisevars(:);
-        S = results.mags(:);
-        if isfield(results, 'opt')
-            opt = results.opt;
-        else
-            opt = struct();
-        end
-        if isfield(results, 'best_threshold')
-            best_threshold = results.best_threshold;
-        else
-            if isfield(results, 'dimsretained')
-                best_threshold = results.dimsretained;
-            else
-                best_threshold = [];
-            end
-        end
+    % Create title
+    if has_nans
+        title_text = sprintf('Data: %d units × %d conditions × %d max trials (avg %.1f)  |  Basis: %s  |  Method: %s  |  Criterion: %s', ...
+                            nunits, nconds, ntrials, ntrials_avg, basis_desc, threshold_method, criterion);
+    else
+        title_text = sprintf('Data: %d units × %d conditions × %d trials  |  Basis: %s  |  Method: %s  |  Criterion: %s', ...
+                            nunits, nconds, ntrials, basis_desc, threshold_method, criterion);
+    end
+    sgtitle(title_text, 'FontSize', 12, 'FontWeight', 'bold');
 
-        % Plot 1: basis source matrix (top left)
-        subplot(3, 4, 1);
-        V = results.V;
-        
-        if isnumeric(V) && isscalar(V)
-            if ismember(V, [0, 1, 2, 3])
-                % Show the basis source matrix
-                if isfield(results, 'basis_source') && ~isempty(results.basis_source)
-                    matrix_to_show = results.basis_source;
-                    if V == 0
-                        title_str = 'GSN Signal Covariance (cSb)';
-                    elseif V == 1
-                        title_str = sprintf('GSN Transformed Signal Cov\n(inv(cNb)*cSb)');
-                    elseif V == 2
-                        title_str = 'GSN Noise Covariance (cNb)';
-                    else  % V == 3
-                        title_str = sprintf('Naive Trial-avg Data\nCovariance');
-                    end
+    % Get trial-averaged and denoised data (use nanmean for NaN data)
+    if has_nans
+        trial_avg = nanmean(data, 3);
+    else
+        trial_avg = mean(data, 3);
+    end
+    denoised = results.denoiseddata;
+    noise = trial_avg - denoised;
 
-                    matrix_max = max(abs(matrix_to_show(:)));
+    % =====================================================================
+    % Plot 1: Basis source matrix (covariance)
+    % =====================================================================
+    subplot(4, 4, 1);
+    if isfield(results, 'gsn_result') && isfield(results.gsn_result, 'cSb')
+        cSb = results.gsn_result.cSb;
+        cNb = results.gsn_result.cNb;
 
-                    imagesc(matrix_to_show, [-matrix_max, matrix_max]);
-                    colormap(gca, redblue);
-                    colorbar;
-                    title(title_str);
-                    xlabel('Units');
-                    ylabel('Units');
-                    axis equal tight;
-                else
-                    text(0.5, 0.5, sprintf('Covariance Matrix\nNot Available for V=%d', V), ...
-                         'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
-                         'Units', 'normalized');
-                    title('');
-                end
-            elseif V == 4
-                text(0.5, 0.5, sprintf('Random Basis\n(No Matrix to Show)'), ...
-                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
-                     'Units', 'normalized');
-                title('');
-            elseif V == 5  % ICA basis
-                % Show the ICA components (mixing matrix)
-                if isfield(results, 'ica_mixing') && ~isempty(results.ica_mixing)
-                    matrix_to_show = results.ica_mixing;
-                    matrix_max = max(abs(matrix_to_show(:)));
+        % Determine which matrix to show based on basis type
+        if isfield(opt, 'basis')
+            basis_type = opt.basis;
+            if ischar(basis_type) || isstring(basis_type)
+                basis_type = char(basis_type);
 
-                    imagesc(matrix_to_show, [-matrix_max, matrix_max]);
-                    colormap(gca, redblue);
-                    colorbar;
-                    title(sprintf('ICA Mixing Matrix\n(Components)'));
-                    xlabel('Component');
-                    ylabel('Units');
-                else
-                    text(0.5, 0.5, sprintf('ICA Components\nNot Available'), ...
-                         'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
-                         'Units', 'normalized');
-                    title('');
+                switch basis_type
+                    case 'difference'
+                        % Show signal - noise/ntrials_avg
+                        plot_matrix = cSb - cNb / ntrials_avg;
+                        plot_title = sprintf('cSb - cNb/%.1f (difference)', ntrials_avg);
+
+                    case 'noise'
+                        % Show noise covariance
+                        plot_matrix = cNb;
+                        plot_title = 'Noise Covariance (cNb)';
+
+                    case 'pca'
+                        % Show covariance of trial-averaged data
+                        trial_avg_demeaned = trial_avg - results.unit_means;
+                        plot_matrix = cov(trial_avg_demeaned');
+                        plot_title = 'Trial-Avg Data Covariance';
+
+                    otherwise
+                        % Default: signal covariance (for 'signal' and others)
+                        plot_matrix = cSb;
+                        plot_title = 'Signal Covariance (cSb)';
                 end
             else
-                text(0.5, 0.5, sprintf('V=%d\n(No Matrix to Show)', V), ...
-                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
-                     'Units', 'normalized');
-                title('');
+                % Custom basis matrix
+                plot_matrix = cSb;
+                plot_title = 'Signal Covariance (cSb)';
             end
-        elseif isnumeric(V)
-            % Handle case where V is a matrix
-            text(0.5, 0.5, sprintf('User-Supplied Basis\nShape: [%dx%d]', size(V, 1), size(V, 2)), ...
-                 'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
-                 'Units', 'normalized');
-            title('User-Supplied Basis');
         else
-            % Handle any other case
-            text(0.5, 0.5, 'No Basis Information Available', ...
-                 'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
-                 'Units', 'normalized');
-            title('');
+            % No basis specified, use signal
+            plot_matrix = cSb;
+            plot_title = 'Signal Covariance (cSb)';
         end
 
-        % Plot 2: Full basis matrix (top middle-left)
-        subplot(3, 4, 2);
-        basis_max = max(abs(results.fullbasis(:)));
-        imagesc(results.fullbasis, [-basis_max, basis_max]);
+        if has_nans
+            matrix_max = nanmax(abs(plot_matrix(:)));
+        else
+            matrix_max = max(abs(plot_matrix(:)));
+        end
+        if matrix_max > 0
+            imagesc(plot_matrix, [-matrix_max, matrix_max]);
+        else
+            imagesc(plot_matrix);
+        end
+        colormap(gca, redblue);
+        colorbar;
+        title(plot_title);
+        xlabel('Units');
+        ylabel('Units');
+        axis equal tight;
+    else
+        text(0.5, 0.5, 'Covariance\nNot Available', ...
+             'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+             'Units', 'normalized');
+    end
+
+    % =====================================================================
+    % Plot 2: Full basis matrix
+    % =====================================================================
+    subplot(4, 4, 2);
+    if isfield(results, 'fullbasis')
+        if has_nans
+            basis_max = nanmax(abs(results.fullbasis(:)));
+        else
+            basis_max = max(abs(results.fullbasis(:)));
+        end
+        if basis_max > 0
+            imagesc(results.fullbasis, [-basis_max, basis_max]);
+        else
+            imagesc(results.fullbasis);
+        end
         colormap(gca, redblue);
         colorbar;
         title('Full Basis Matrix');
         xlabel('Dimension');
         ylabel('Units');
-        
-        % Plot 3: Magnitude spectrum (top middle)
-        subplot(3, 4, 3);
+        axis square;
+    else
+        text(0.5, 0.5, 'Basis\nNot Available', ...
+             'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+             'Units', 'normalized');
+    end
 
-        % Determine labels based on ranking method
-        if isfield(results, 'opt') && isfield(results.opt, 'ranking')
-            ranking = results.opt.ranking;
+    % =====================================================================
+    % Plot 3: Signal variance spectrum (or PCA eigenvalues for PCA basis)
+    % =====================================================================
+    subplot(4, 4, 3);
+
+    % Check if we're using PCA basis and have eigenvalues
+    use_pca_eigenvalues = false;
+    if isfield(opt, 'basis') && ischar(opt.basis) && strcmp(opt.basis, 'pca')
+        if isfield(results, 'basis_eigenvalues') && ~isempty(results.basis_eigenvalues)
+            use_pca_eigenvalues = true;
+        end
+    end
+
+    % Determine if we should use log spacing (more than 50 units)
+    use_log_x = nunits > 50;
+
+    if use_pca_eigenvalues
+        % For PCA basis: show PCA eigenvalues
+        pca_evals = results.basis_eigenvalues;
+        if use_log_x
+            semilogx(1:length(pca_evals), pca_evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5]);
         else
-            ranking = 'signal_variance';  % default
+            plot(1:length(pca_evals), pca_evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5]);
         end
-
-        % Define labels for different ranking methods
-        if strcmp(ranking, 'eigenvalue')
-            legend_label = 'Eigenvalues';
-            ylabel_str = 'Eigenvalue';
-            title_str = 'Eigenspectrum (decreasing)';
-        elseif strcmp(ranking, 'eigenvalue_asc')
-            legend_label = 'Eigenvalues';
-            ylabel_str = 'Eigenvalue';
-            title_str = 'Eigenspectrum (increasing)';
-        elseif strcmp(ranking, 'signal_variance')
-            legend_label = 'Signal Variance';
-            ylabel_str = 'Signal Variance';
-            title_str = 'Signal Variance Spectrum';
-        elseif strcmp(ranking, 'snr')
-            legend_label = 'Noise-Ceiling SNR';
-            ylabel_str = 'NCSNR';
-            title_str = 'NCSNR Spectrum';
-        elseif strcmp(ranking, 'signal_specificity')
-            legend_label = 'Signal% - Noise%';
-            ylabel_str = 'Signal% - Noise%';
-            title_str = 'Signal Specificity Spectrum';
-        else
-            legend_label = 'Magnitude';
-            ylabel_str = 'Magnitude';
-            title_str = 'Magnitude Spectrum';
-        end
-
-        % Get eigenvalues from results - try multiple sources
-        S_local = [];
-        if isfield(results, 'mags') && ~isempty(results.mags)
-            S_local = results.mags(:);  % Primary source: magnitude thresholding mode
-        elseif exist('S', 'var') && ~isempty(S)
-            S_local = S(:);  % Secondary source: from the computation above
-        else
-            % Try to compute eigenvalues from available data
-            % This might happen in cross-validation mode where mags is not set
-            if isfield(results, 'fullbasis') && ~isempty(results.fullbasis)
-                % We have the basis but not the eigenvalues
-                % Show a placeholder message
-                text(0.5, 0.5, sprintf('Magnitude spectrum not available\nin cross-validation mode'), ...
-                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
-                     'Units', 'normalized');
-                S_local = [];  % Mark as unavailable
-            else
-                text(0.5, 0.5, sprintf('Magnitude spectrum not available\n(no basis data)'), ...
-                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
-                     'Units', 'normalized');
-                S_local = [];  % Mark as unavailable
-            end
-        end
-
-        % Plot magnitude spectrum if data is available
-        if ~isempty(S_local)
-            % Clear any previous plots and plot the spectrum
-            cla;
-            h_eigen = plot(1:length(S_local), S_local, 'LineWidth', 1, 'Color', 'blue');
-            set(h_eigen, 'DisplayName', legend_label);
-
-            % Set axis limits immediately after main plot
-            if length(S_local) > 1
-                xlim([0.5, length(S_local) + 0.5]);
-            else
-                xlim([0.5, 1.5]);
-            end
-
-            if max(S_local) > min(S_local)
-                y_range = max(S_local) - min(S_local);
-                ylim([min(S_local) - 0.1*y_range, max(S_local) + 0.1*y_range]);
-            end
-        end
-        
         hold on;
-        
-        % Add threshold indicators based on mode
-        cv_mode = 0;  % default
-        if isfield(opt, 'cv_mode')
-            cv_mode = opt.cv_mode;
-        end
-        
-        cv_threshold_per = 'unit';  % default
-        if isfield(opt, 'cv_threshold_per')
-            cv_threshold_per = opt.cv_threshold_per;
-        end
-            
-        % Add threshold indicators based on mode
-        if cv_mode >= 0  % Cross-validation mode
-            if strcmp(cv_threshold_per, 'population')
-                % Single line for population threshold
-                if isnumeric(best_threshold) && length(best_threshold) > 1
-                    best_threshold = best_threshold(1);  % Take first value if array
-                end
-                if isnumeric(best_threshold) && best_threshold > 0
-                    xline(best_threshold, 'r--', 'LineWidth', 1, 'HandleVisibility', 'off');
-                end
-            else  % Unit mode
-                % Mean line for unit-specific thresholds
-                if isnumeric(best_threshold) && length(best_threshold) > 1
-                    mean_threshold = mean(best_threshold);
-                    xline(mean_threshold, 'r--', 'LineWidth', 1, 'HandleVisibility', 'off');
-                    % Add asterisks at the top for each unit's threshold
-                    unique_thresholds = unique(best_threshold);
-                    y_max = max(S);
-                    for i = 1:length(unique_thresholds)
-                        thresh = unique_thresholds(i);
-                        if thresh <= length(S)
-                            plot(thresh, y_max, 'r*', 'MarkerSize', 5, 'HandleVisibility', 'off');
-                        end
-                    end
-                end
-            end
-        else  % Magnitude thresholding mode - show included dimensions
-            mag_type = 0;  % default
-            if isfield(opt, 'mag_type')
-                mag_type = opt.mag_type;
-            end
-            
-            if isnumeric(best_threshold) && length(best_threshold) > 0
-                % Add circles for included dimensions 
-                valid_indices = best_threshold(best_threshold <= length(S));
-                if ~isempty(valid_indices)
-                    plot(valid_indices, S(valid_indices), 'ro', 'MarkerSize', 4, 'HandleVisibility', 'off');
-                end
-                % Show vertical line for number of dimensions retained
-                threshold_len = length(best_threshold);
-                if threshold_len <= length(S)
-                    xline(threshold_len, 'r--', 'LineWidth', 1, 'HandleVisibility', 'off');
-                end
-            end
-        end
-        
-        % Show truncated dimensions if truncate > 0
-        if isfield(opt, 'truncate') && opt.truncate > 0
-            truncate_val = opt.truncate;
-            % Highlight truncated dimensions in red
-            truncate_range = min(truncate_val, length(S_local));
-            if truncate_range > 0
-                plot(1:truncate_range, S_local(1:truncate_range), 'rx', 'MarkerSize', 6, ...
-                    'DisplayName', sprintf('Truncated dims (first %d)', truncate_range));
+
+        % Add threshold indicators
+        if isfield(results, 'best_threshold')
+            if isscalar(results.best_threshold) && results.best_threshold > 0
+                xline(results.best_threshold, 'r--', 'LineWidth', 1.5, 'Label', sprintf('Thresh: %d', results.best_threshold));
+            elseif ~isscalar(results.best_threshold)
+                mean_thresh = mean(results.best_threshold);
+                xline(mean_thresh, 'r--', 'LineWidth', 1.5, 'Label', sprintf('Mean: %.1f', mean_thresh));
             end
         end
 
-        % Set labels
         xlabel('Dimension');
-        ylabel(ylabel_str);
-        title(sprintf('Denoising Basis\n%s', title_str));
+        ylabel('PCA Eigenvalue');
+        title('PCA Eigenspectrum');
         grid on;
-        legend;
 
-        % Plot 4: Signal and noise variances with NCSNR (top right)
-        subplot(3, 4, 4);
-        yyaxis left;
-        plot(sigvars, '-', 'LineWidth', 1, 'Color', 'blue', 'DisplayName', 'Sig. var');
+    elseif isfield(results, 'signal_proj_viz')
+        % Use original order (before ranking)
+        signal_vars = results.signal_proj_viz;
+        if use_log_x
+            semilogx(1:length(signal_vars), signal_vars, 'LineWidth', 1.5, 'Color', 'blue');
+        else
+            plot(1:length(signal_vars), signal_vars, 'LineWidth', 1.5, 'Color', 'blue');
+        end
         hold on;
-        plot(noisevars, '-', 'LineWidth', 1, 'Color', [1 0.5 0], 'DisplayName', 'Noise var');  % Solid orange
 
-        % Show truncated dimensions if truncate > 0
-        if isfield(opt, 'truncate') && opt.truncate > 0
-            truncate_val = opt.truncate;
-            % Highlight truncated dimensions in red
-            truncate_range = min(truncate_val, length(sigvars));
-            if truncate_range > 0
-                plot(1:truncate_range, sigvars(1:truncate_range), 'rx', 'MarkerSize', 6, ...
-                    'DisplayName', sprintf('Truncated dims (first %d)', truncate_range));
+        % Add threshold indicators
+        if isfield(results, 'best_threshold')
+            if isscalar(results.best_threshold) && results.best_threshold > 0
+                xline(results.best_threshold, 'r--', 'LineWidth', 1.5, 'Label', sprintf('Thresh: %d', results.best_threshold));
+            elseif ~isscalar(results.best_threshold)
+                mean_thresh = mean(results.best_threshold);
+                xline(mean_thresh, 'r--', 'LineWidth', 1.5, 'Label', sprintf('Mean: %.1f', mean_thresh));
             end
         end
-        
-        % Handle thresholds based on mode
-        if cv_mode >= 0  % Cross-validation mode
-            if isnumeric(best_threshold) && length(best_threshold) > 0
-                if length(best_threshold) > 1
-                    threshold_val = mean(best_threshold);
-                    xline(threshold_val, 'r--', 'LineWidth', 1, ...
-                          'DisplayName', sprintf('Mean thresh: %.1f dims', threshold_val));
+
+        xlabel('Dimension');
+        ylabel('Signal Variance');
+        title('Signal Variance Spectrum');
+        grid on;
+    else
+        text(0.5, 0.5, 'Signal Variance\nNot Available', ...
+             'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+             'Units', 'normalized');
+    end
+
+    % =====================================================================
+    % Plot 4: Signal vs Noise variance
+    % =====================================================================
+    subplot(4, 4, 4);
+    if isfield(results, 'signalvar') && isfield(results, 'noisevar')
+        if ~iscell(results.signalvar)
+            % Global or averaged
+            % Left y-axis for variance
+            yyaxis left;
+            if use_log_x
+                semilogx(1:length(results.signalvar), results.signalvar, '-', 'LineWidth', 1.5, 'Color', 'blue', 'DisplayName', 'Signal var');
+                hold on;
+                semilogx(1:length(results.noisevar), results.noisevar, '-', 'LineWidth', 1.5, 'Color', [1 0.5 0], 'DisplayName', 'Noise var');
+            else
+                plot(results.signalvar, '-', 'LineWidth', 1.5, 'Color', 'blue', 'DisplayName', 'Signal var');
+                hold on;
+                plot(results.noisevar, '-', 'LineWidth', 1.5, 'Color', [1 0.5 0], 'DisplayName', 'Noise var');
+            end
+            ylabel('Variance');
+
+            % Right y-axis for NCSNR
+            yyaxis right;
+            ncsnr_trace = sqrt(results.signalvar) ./ sqrt(results.noisevar + eps);
+            if use_log_x
+                semilogx(1:length(ncsnr_trace), ncsnr_trace, '-', 'LineWidth', 1.5, 'Color', 'magenta', 'DisplayName', 'NCSNR');
+            else
+                plot(ncsnr_trace, '-', 'LineWidth', 1.5, 'Color', 'magenta', 'DisplayName', 'NCSNR');
+            end
+            ylabel('NCSNR');
+
+            % Add threshold (on left axis)
+            yyaxis left;
+            if isfield(results, 'best_threshold')
+                if isscalar(results.best_threshold)
+                    xline(results.best_threshold, 'r--', 'LineWidth', 1, 'DisplayName', 'Threshold');
                 else
-                    xline(best_threshold, 'r--', 'LineWidth', 1, ...
-                          'DisplayName', sprintf('Thresh: %d dims', best_threshold));
+                    xline(mean(results.best_threshold), 'r--', 'LineWidth', 1, 'DisplayName', 'Mean Threshold');
                 end
             end
-        else  % Magnitude thresholding mode
-            if isnumeric(best_threshold) && length(best_threshold) > 0
-                threshold_len = length(best_threshold);
-                xline(threshold_len, 'r--', 'LineWidth', 1, ...
-                      'DisplayName', sprintf('Dims retained: %d', threshold_len));
-                % Add circles for included dimensions
-                if mag_type == 0
-                    plot(best_threshold, sigvars(best_threshold), 'ro', 'MarkerSize', 4, ...
-                         'DisplayName', 'Included dimensions');
-                end
-            end
-        end
-        
-        ylabel('Variance');
-        
-        % Add NCSNR on secondary y-axis
-        yyaxis right;
-        plot(ncsnrs, 'LineWidth', 1, 'Color', 'magenta', 'DisplayName', 'NCSNR');
-        ylabel('NCSNR');
-        
-        xlabel('Dimension');
-        title(sprintf('Signal and Noise Variance for \nData Projected into Basis'));
-        grid on;
-        legend;
 
-        % Plot 5: Cross-validation results (first subplot in middle row)
-        subplot(3, 4, 5);
-        if isfield(results, 'cv_scores') && isfield(opt, 'cv_mode') && opt.cv_mode > -1
-            cv_data = mean(results.cv_scores, 2);  % Average over trials
-            
-            % Get thresholds, handling both list and array types
-            if isfield(opt, 'cv_thresholds')
-                cv_thresholds = opt.cv_thresholds;
-            else
-                cv_thresholds = 1:size(results.cv_scores, 1);
-            end
-            
-            % Truncate thresholds that exceed data dimensionality
-            max_dim = size(results.cv_scores, 1);
-            valid_mask = cv_thresholds <= max_dim;
-            thresholds = cv_thresholds(valid_mask);
-            cv_data = cv_data(valid_mask, :);
-            
-            % Z-score the data (MATCH PYTHON: axis=0 means along columns in MATLAB)
-            cv_data = zscore(cv_data, 1, 1);  % Z-score along columns (axis=0 in Python)
-
-            % Plot without extent - use default pixel coordinates with 'nearest' interpolation
-            imagesc(cv_data');
-            colorbar;
-
-            % Update xlabel based on whether truncation is used
-            if isfield(opt, 'truncate') && opt.truncate > 0
-                xlabel(sprintf('PC threshold (starting from PC %d)', opt.truncate));
-            else
-                xlabel('PC exclusion threshold');
-            end
-            ylabel('Units');
-            title('Cross-validation scores (z)');
-            
-            % Set x-ticks to show actual threshold values
-            step = max(floor(length(thresholds) / 10), 1);  % Show ~10 ticks or less
-            tick_positions = 1:step:length(thresholds);
-            set(gca, 'XTick', tick_positions, 'XTickLabel', thresholds(tick_positions));
-            
-            if strcmp(opt.cv_threshold_per, 'unit')
-                if isnumeric(best_threshold) && length(best_threshold) == nunits
-                    % For each unit, find the threshold index that gives maximum CV score
-                    unit_indices = 1:nunits;
-                    threshold_positions = [];
-                    
-                    % Check if unit_groups are being used
-                    if isfield(opt, 'unit_groups')
-                        unit_groups = opt.unit_groups;
-                    else
-                        unit_groups = (0:nunits-1)';
-                    end
-                    
-                    if isfield(opt, 'unit_groups') && ~isequal(unit_groups, (0:nunits-1)')
-                        % Unit groups are being used - show group-based thresholds
-                        unique_groups = unique(unit_groups);
-                        
-                        for unit_idx = 1:nunits
-                            % Find which group this unit belongs to
-                            unit_group = unit_groups(unit_idx);
-                            
-                            % Get all units in this group
-                            group_mask = unit_groups == unit_group;
-                            
-                            % Average CV scores across units in this group
-                            group_cv_scores = mean(cv_data(:, group_mask), 2);  % Average across group units
-                            
-                            % Find threshold index with maximum group score
-                            [~, max_thresh_idx] = max(group_cv_scores);
-                            
-                            % Position at center of that threshold's cell
-                            threshold_positions(end+1) = max_thresh_idx;
-                        end
-                    else
-                        % No unit grouping - use individual unit's maximum CV score
-                        for unit_idx = 1:nunits
-                            % Get CV scores for this unit across all thresholds
-                            unit_cv_scores = cv_data(:, unit_idx);  % cv_data shape: (n_thresholds, n_units)
-                            
-                            % Find threshold index with maximum score
-                            [~, max_thresh_idx] = max(unit_cv_scores);
-                            
-                            % Position at center of that threshold's cell
-                            threshold_positions(end+1) = max_thresh_idx;
-                        end
-                    end
-                    
-                    hold on;
-                    % In MATLAB, imagesc displays matrix elements centered at integer coordinates (pixel indices)
-                    plot(threshold_positions, unit_indices, 'r.', 'MarkerSize', 8);
-                end
-            end
+            xlabel('Dimension');
+            title('Signal and Noise Variance');
+            legend('Location', 'best');
+            grid on;
         else
-            text(0.5, 0.5, sprintf('No Cross-validation\nScores Available'), ...
+            text(0.5, 0.5, 'Per-Unit Variance\n(Averaged across units)', ...
                  'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
                  'Units', 'normalized');
-            title('Cross-validation scores');
         end
+    else
+        text(0.5, 0.5, 'Variance Info\nNot Available', ...
+             'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+             'Units', 'normalized');
+    end
 
-        % Plot 6-8: Raw data, denoised data, noise (rest of middle row)
-        all_data = [raw_data(:); denoised_data(:); noise(:)];
-        max_abs_val = max(abs(all_data));
-        data_clim = [-max_abs_val, max_abs_val];
-        
-        % Raw data
-        subplot(3, 4, 6);
-        imagesc(raw_data, data_clim);
-        colormap(gca, redblue);
-        colorbar;
-        title('Input Data (trial-averaged)');
-        xlabel('Conditions');
-        ylabel('Units');
+    % =====================================================================
+    % Plot 5: Objective function
+    % =====================================================================
+    subplot(4, 4, 5);
+    if isfield(results, 'objective')
+        hold on;
 
-        % Denoised data
-        subplot(3, 4, 7);
-        imagesc(denoised_data, data_clim);
-        colormap(gca, redblue);
-        colorbar;
-        title('Data projected into basis');
-        xlabel('Conditions');
-        ylabel('Units');
-
-        % Noise
-        subplot(3, 4, 8);
-        imagesc(noise, data_clim);
-        colormap(gca, redblue);
-        colorbar;
-        title('Residual');
-        xlabel('Conditions');
-        ylabel('Units');
-
-        % Plot denoising matrix (first subplot in bottom row)
-        subplot(3, 4, 9);
-        denoiser_max = max(abs(results.denoiser(:)));
-        denoiser_clim = [-denoiser_max, denoiser_max];
-        imagesc(results.denoiser, denoiser_clim);
-        colormap(gca, redblue);
-        colorbar;
-        title('Optimal Basis Matrix');
-        xlabel('Units');
-        ylabel('Units');
-
-        % Compute R2 and correlations for bottom row
-        if nargin < 3 || isempty(test_data)
-            % Use leave-one-out cross-validation on training data
-            raw_r2_per_unit = zeros(ntrials, nunits);
-            denoised_r2_per_unit = zeros(ntrials, nunits);
-            raw_corr_per_unit = zeros(ntrials, nunits);
-            denoised_corr_per_unit = zeros(ntrials, nunits);
-
-            for tr = 1:ntrials
-                train_trials = setdiff(1:ntrials, tr);
-                train_avg = mean(data(:, :, train_trials), 3);
-                test_trial = data(:, :, tr);
-                
-                for v = 1:nunits
-                    raw_r2_per_unit(tr, v) = compute_r2(test_trial(v, :), train_avg(v, :));
-                    raw_corr_per_unit(tr, v) = corr(test_trial(v, :)', train_avg(v, :)');
-                end
-                
-                % Demean before denoising for consistent handling
-                if isfield(results, 'unit_means')
-                    train_avg_demeaned = train_avg - results.unit_means;
-                    test_trial_demeaned = test_trial - results.unit_means;
+        % Check if unit-specific objectives are available
+        if isfield(results, 'unit_objectives') && ~isempty(results.unit_objectives)
+            % Unit-specific mode: plot all unit curves
+            for u = 1:length(results.unit_objectives)
+                curve_u = results.unit_objectives{u};
+                if use_log_x
+                    semilogx(1:length(curve_u), curve_u, 'LineWidth', 0.5, 'Color', [0.5 0.5 0.5 0.3]);
                 else
-                    train_avg_demeaned = train_avg;
-                    test_trial_demeaned = test_trial;
-                end
-                train_avg_denoised = (train_avg_demeaned' * results.denoiser)';
-                test_trial_denoised = (test_trial_demeaned' * results.denoiser)';
-                if isfield(results, 'unit_means')
-                    train_avg_denoised = train_avg_denoised + results.unit_means;
-                    test_trial_denoised = test_trial_denoised + results.unit_means;
-                end
-                    
-                for v = 1:nunits
-                    denoised_r2_per_unit(tr, v) = compute_r2(test_trial(v, :), train_avg_denoised(v, :));
-                    denoised_corr_per_unit(tr, v) = corr(test_trial(v, :)', train_avg_denoised(v, :)');
+                    plot(0:length(curve_u)-1, curve_u, 'LineWidth', 0.5, 'Color', [0.5 0.5 0.5 0.3]);
                 end
             end
+
+            % Plot population average as thick line
+            if use_log_x
+                semilogx(1:length(results.objective), results.objective, 'LineWidth', 2, 'Color', [0.3 0.7 0.3]);
+            else
+                plot(0:length(results.objective)-1, results.objective, 'LineWidth', 2, 'Color', [0.3 0.7 0.3]);
+            end
+
+            % Mark each unit's chosen threshold
+            if isfield(results, 'best_threshold')
+                x_thresh = [];
+                y_thresh = [];
+                for u = 1:length(results.unit_objectives)
+                    k_u = results.best_threshold(u);
+                    curve_u = results.unit_objectives{u};
+                    if k_u > 0 && k_u <= length(curve_u)
+                        if use_log_x
+                            x_thresh(end+1) = k_u + 1;  % 1-indexed for log plot
+                        else
+                            x_thresh(end+1) = k_u;
+                        end
+                        y_thresh(end+1) = curve_u(k_u+1);
+                    end
+                end
+                if ~isempty(x_thresh)
+                    scatter(x_thresh, y_thresh, 20, [1 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+                end
+            end
+
+            title('Objective Function (unit-specific)');
         else
-            % Use provided test data
-            if ndims(test_data) > 2
-                test_avg = mean(test_data, 3);
+            % Global mode: single curve
+            if use_log_x
+                semilogx(1:length(results.objective), results.objective, 'LineWidth', 1.5, 'Color', [0.3 0.7 0.3]);
             else
-                test_avg = test_data;
+                plot(0:length(results.objective)-1, results.objective, 'LineWidth', 1.5, 'Color', [0.3 0.7 0.3]);
             end
-            train_avg = mean(data, 3);
-            
-            raw_r2_per_unit = zeros(1, nunits);
-            denoised_r2_per_unit = zeros(1, nunits);
-            raw_corr_per_unit = zeros(1, nunits);
-            denoised_corr_per_unit = zeros(1, nunits);
-            
-            for v = 1:nunits
-                raw_r2_per_unit(1, v) = compute_r2(test_avg(v, :), train_avg(v, :));
-                raw_corr_per_unit(1, v) = corr(test_avg(v, :)', train_avg(v, :)');
-            end
-            
-            % Demean before denoising for consistent handling
-            if isfield(results, 'unit_means')
-                train_avg_demeaned = train_avg - results.unit_means;
-                test_avg_demeaned = test_avg - results.unit_means;
+
+            % Mark maximum
+            [~, max_idx] = max(results.objective);
+            if use_log_x
+                plot(max_idx, results.objective(max_idx), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
             else
-                train_avg_demeaned = train_avg;
-                test_avg_demeaned = test_avg;
+                plot(max_idx-1, results.objective(max_idx), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
             end
-            train_avg_denoised = (train_avg_demeaned' * results.denoiser)';
-            test_avg_denoised = (test_avg_demeaned' * results.denoiser)';
-            if isfield(results, 'unit_means')
-                train_avg_denoised = train_avg_denoised + results.unit_means;
-                test_avg_denoised = test_avg_denoised + results.unit_means;
-            end
-                
-            for v = 1:nunits
-                denoised_r2_per_unit(1, v) = compute_r2(test_avg(v, :), train_avg_denoised(v, :));
-                denoised_corr_per_unit(1, v) = corr(test_avg(v, :)', train_avg_denoised(v, :)');
-            end
+
+            title('Objective Function');
         end
 
-        % Compute mean and SEM
-        raw_r2_mean = mean(raw_r2_per_unit, 1);
-        raw_r2_sem = std(raw_r2_per_unit, 0, 1) / sqrt(size(raw_r2_per_unit, 1));
-        denoised_r2_mean = mean(denoised_r2_per_unit, 1);
-        denoised_r2_sem = std(denoised_r2_per_unit, 0, 1) / sqrt(size(denoised_r2_per_unit, 1));
+        xlabel('Number of Dimensions');
 
-        raw_corr_mean = mean(raw_corr_per_unit, 1);
-        raw_corr_sem = std(raw_corr_per_unit, 0, 1) / sqrt(size(raw_corr_per_unit, 1));
-        denoised_corr_mean = mean(denoised_corr_per_unit, 1);
-        denoised_corr_sem = std(denoised_corr_per_unit, 0, 1) / sqrt(size(denoised_corr_per_unit, 1));
-
-        % Plot trial-averaged and denoised traces similar to EEG notebook
-        % Get trial-averaged data
-        trial_avg_full = mean(data, 3);  % (nunits x nconds)
-        denoised_full = results.denoiseddata;
-
-        % If denoised data is 3D, average it
-        if ndims(denoised_full) == 3
-            denoised_full = mean(denoised_full, 3);
+        % Set ylabel based on criterion
+        if strcmp(criterion, 'variance')
+            ylabel('Cumulative Variance');
+        else
+            ylabel('Cumulative Signal - Noise/ntrials');
         end
 
-        % Calculate mean response across conditions for rainbow coloring
-        cond_means = mean(trial_avg_full, 1);  % Mean across units for each condition
-        [~, sorted_cond_indices] = sort(cond_means);
-        colors_rainbow = jet(nconds);
-
-        % Create color array where each condition gets its color based on rank
-        trace_colors = zeros(nconds, 3);
-        for rank = 1:nconds
-            cond_idx = sorted_cond_indices(rank);
-            trace_colors(cond_idx, :) = colors_rainbow(rank, :);
-        end
-
-        % Plot trial-averaged traces
-        subplot(3, 4, 10);
-        hold on;
-        x_units = 0:nunits-1;  % 0-indexed to match Python
-        for cond_idx = 1:nconds
-            plot(x_units, trial_avg_full(:, cond_idx), 'Color', trace_colors(cond_idx, :), ...
-                'LineWidth', 0.5);
-        end
-        xlabel('Units');
-        ylabel('Activity');
-        title(sprintf('Trial-Averaged Traces\n(rainbow: conditions by mean response)'));
         grid on;
-        xlim([min(x_units), max(x_units)]);
+    else
+        text(0.5, 0.5, 'Objective\nNot Available', ...
+             'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+             'Units', 'normalized');
+    end
 
-        % Plot denoised traces
-        subplot(3, 4, 11);
-        hold on;
-        for cond_idx = 1:nconds
-            plot(x_units, denoised_full(:, cond_idx), 'Color', trace_colors(cond_idx, :), ...
-                'LineWidth', 0.5);
-        end
-        xlabel('Units');
-        ylabel('Activity');
-        title(sprintf('PSN Denoised Traces\n(same condition coloring)'));
-        grid on;
-        xlim([min(x_units), max(x_units)]);
+    % =====================================================================
+    % Plot 6-8: Raw, Denoised, Noise
+    % =====================================================================
+    all_data = [trial_avg(:); denoised(:); noise(:)];
+    if has_nans
+        max_abs_val = nanmax(abs(all_data));
+    else
+        max_abs_val = max(abs(all_data));
+    end
+    if max_abs_val > 0
+        data_clim = [-max_abs_val, max_abs_val];
+    else
+        data_clim = [-1, 1];  % Default if all zeros
+    end
 
-        % Match y-axis limits across both plots
-        all_trace_data = [trial_avg_full(:); denoised_full(:)];
+    subplot(4, 4, 6);
+    imagesc(trial_avg, data_clim);
+    colormap(gca, redblue);
+    colorbar;
+    if has_nans
+        title('Input Data (trial-averaged, with NaNs)');
+    else
+        title('Input Data (trial-averaged)');
+    end
+    xlabel('Conditions');
+    ylabel('Units');
+
+    subplot(4, 4, 7);
+    imagesc(denoised, data_clim);
+    colormap(gca, redblue);
+    colorbar;
+    title('PSN Denoised Data');
+    xlabel('Conditions');
+    ylabel('Units');
+
+    subplot(4, 4, 8);
+    imagesc(noise, data_clim);
+    colormap(gca, redblue);
+    colorbar;
+    if has_nans
+        title('Residual (Noise, with NaNs)');
+    else
+        title('Residual (Noise)');
+    end
+    xlabel('Conditions');
+    ylabel('Units');
+
+    % =====================================================================
+    % Plot 9: Denoiser matrix
+    % =====================================================================
+    subplot(4, 4, 9);
+    if has_nans
+        denoiser_max = nanmax(abs(results.denoiser(:)));
+    else
+        denoiser_max = max(abs(results.denoiser(:)));
+    end
+    if denoiser_max > 0
+        imagesc(results.denoiser, [-denoiser_max, denoiser_max]);
+    else
+        imagesc(results.denoiser);
+    end
+    colormap(gca, redblue);
+    colorbar;
+    title('Denoiser Matrix');
+    xlabel('Units');
+    ylabel('Units');
+    axis square;
+
+    % =====================================================================
+    % Plot 10-11: Traces
+    % =====================================================================
+    % Color conditions by mean response (handle NaNs)
+    cond_means = nanmean(trial_avg, 1);
+    [~, sorted_indices] = sort(cond_means);
+    colors = jet(nconds);
+    trace_colors = zeros(nconds, 3);
+    for rank = 1:nconds
+        cond_idx = sorted_indices(rank);
+        trace_colors(cond_idx, :) = colors(rank, :);
+    end
+
+    % Trial-averaged traces
+    subplot(4, 4, 10);
+    hold on;
+    x_units = 0:nunits-1;
+    for c = 1:nconds
+        plot(x_units, trial_avg(:, c), 'Color', trace_colors(c, :), 'LineWidth', 0.5);
+    end
+    xlabel('Units');
+    ylabel('Activity');
+    title('Trial-Averaged Traces');
+    grid on;
+    xlim([min(x_units), max(x_units)]);
+
+    % Denoised traces
+    subplot(4, 4, 11);
+    hold on;
+    for c = 1:nconds
+        plot(x_units, denoised(:, c), 'Color', trace_colors(c, :), 'LineWidth', 0.5);
+    end
+    xlabel('Units');
+    ylabel('Activity');
+    title('PSN Denoised Traces');
+    grid on;
+    xlim([min(x_units), max(x_units)]);
+
+    % Match y-limits (handle NaNs)
+    all_trace_data = [trial_avg(:); denoised(:)];
+    if has_nans
+        y_min = nanmin(all_trace_data);
+        y_max = nanmax(all_trace_data);
+    else
         y_min = min(all_trace_data);
         y_max = max(all_trace_data);
-        y_range = y_max - y_min;
-        y_margin = y_range * 0.05;
-
-        subplot(3, 4, 10);
-        ylim([y_min - y_margin, y_max + y_margin]);
-
-        subplot(3, 4, 11);
-        ylim([y_min - y_margin, y_max + y_margin]);
-
-        % Add split-half correlation comparison plot
-        subplot(3, 4, 12);
-
-        % Split trials in half
-        half_idx = floor(ntrials / 2);
-        data_A = data(:, :, 1:half_idx);
-        data_B = data(:, :, half_idx+1:end);
-
-        % Compute trial averages for each split
-        trial_avg_A = mean(data_A, 3);  % (nunits x nconds)
-        trial_avg_B = mean(data_B, 3);
-
-        % Denoise each split separately
-        denoiser = results.denoiser;
-        unit_means = results.unit_means;
-
-        % Denoise split A
-        trial_avg_A_demeaned = trial_avg_A - unit_means;
-        denoised_A = (trial_avg_A_demeaned' * denoiser)' + unit_means;
-
-        % Denoise split B
-        trial_avg_B_demeaned = trial_avg_B - unit_means;
-        denoised_B = (trial_avg_B_demeaned' * denoiser)' + unit_means;
-
-        % Compute correlations for each unit
-        corr_tavg_tavg = zeros(nunits, 1);
-        corr_cross_AB = zeros(nunits, 1);
-        corr_cross_BA = zeros(nunits, 1);
-        corr_dn_dn = zeros(nunits, 1);
-
-        for unit_idx = 1:nunits
-            % Trial avg vs trial avg
-            if std(trial_avg_A(unit_idx, :)) > 0 && std(trial_avg_B(unit_idx, :)) > 0
-                corr_tavg_tavg(unit_idx) = corr(trial_avg_A(unit_idx, :)', trial_avg_B(unit_idx, :)');
-            else
-                corr_tavg_tavg(unit_idx) = NaN;
-            end
-
-            % Cross-method: trial avg A vs denoised B
-            if std(trial_avg_A(unit_idx, :)) > 0 && std(denoised_B(unit_idx, :)) > 0
-                corr_cross_AB(unit_idx) = corr(trial_avg_A(unit_idx, :)', denoised_B(unit_idx, :)');
-            else
-                corr_cross_AB(unit_idx) = NaN;
-            end
-
-            % Cross-method: denoised A vs trial avg B
-            if std(denoised_A(unit_idx, :)) > 0 && std(trial_avg_B(unit_idx, :)) > 0
-                corr_cross_BA(unit_idx) = corr(denoised_A(unit_idx, :)', trial_avg_B(unit_idx, :)');
-            else
-                corr_cross_BA(unit_idx) = NaN;
-            end
-
-            % Denoised vs denoised
-            if std(denoised_A(unit_idx, :)) > 0 && std(denoised_B(unit_idx, :)) > 0
-                corr_dn_dn(unit_idx) = corr(denoised_A(unit_idx, :)', denoised_B(unit_idx, :)');
-            else
-                corr_dn_dn(unit_idx) = NaN;
-            end
-        end
-
-        % Average the two cross-method correlations
-        corr_cross = (corr_cross_AB + corr_cross_BA) / 2;
-
-        % Three x positions
-        x_positions = [1, 2, 3];
-        labels = {'TAvg vs TAvg', 'TAvg vs Denoised', 'Denoised vs Denoised'};
-
-        % Add jitter
-        jitter = 0.08;
-        rng(42);  % Set seed for reproducibility
-        x_jitter = (rand(nunits, 1) - 0.5) * 2 * jitter;
-
-        hold on;
-
-        % Plot connecting lines for each unit
-        for unit_idx = 1:nunits
-            values = [corr_tavg_tavg(unit_idx), corr_cross(unit_idx), corr_dn_dn(unit_idx)];
-            if ~any(isnan(values))
-                x_vals = x_positions + x_jitter(unit_idx);
-                plot(x_vals, values, 'Color', [0.5 0.5 0.5], 'LineWidth', 0.3);
-            end
-        end
-
-        % Plot individual dots
-        scatter(x_positions(1) + x_jitter, corr_tavg_tavg, 15, 'blue', 'filled', 'MarkerFaceAlpha', 0.4);
-        scatter(x_positions(2) + x_jitter, corr_cross, 15, [1 0.84 0], 'filled', 'MarkerFaceAlpha', 0.4);  % Gold
-        scatter(x_positions(3) + x_jitter, corr_dn_dn, 15, [0.5 0.8 0.3], 'filled', 'MarkerFaceAlpha', 0.4);  % Lime green
-
-        % Compute means (excluding NaN)
-        mean_tavg_tavg = nanmean(corr_tavg_tavg);
-        mean_cross = nanmean(corr_cross);
-        mean_dn_dn = nanmean(corr_dn_dn);
-
-        % Plot mean dots (larger, with edge)
-        scatter(x_positions(1), mean_tavg_tavg, 100, 'blue', 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
-        scatter(x_positions(2), mean_cross, 100, [1 0.84 0], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
-        scatter(x_positions(3), mean_dn_dn, 100, [0.2 0.6 0.2], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
-
-        % Add mean values as text above the dots
-        y_text_offset = 0.08;
-        text(x_positions(1), mean_tavg_tavg + y_text_offset, sprintf('%.3f', mean_tavg_tavg), ...
-            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
-        text(x_positions(2), mean_cross + y_text_offset, sprintf('%.3f', mean_cross), ...
-            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
-        text(x_positions(3), mean_dn_dn + y_text_offset, sprintf('%.3f', mean_dn_dn), ...
-            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
-
-        % Formatting
-        set(gca, 'XTick', x_positions);
-        set(gca, 'XTickLabel', labels);
-        set(gca, 'XTickLabelRotation', 0);
-        set(gca, 'FontSize', 7);
-        ylabel('Pearson r');
-        title(sprintf('Split-Half Reliability (%d units)\nSplit: %d vs %d trials', nunits, size(data_A, 3), size(data_B, 3)));
-        grid on;
-        xlim([0.5, 3.5]);
-
-        % Set y-axis limits based on data range
-        all_corr_values = [corr_tavg_tavg; corr_cross; corr_dn_dn];
-        valid_corr_values = all_corr_values(~isnan(all_corr_values));
-        if ~isempty(valid_corr_values)
-            y_min_corr = min(valid_corr_values);
-            y_max_corr = max(valid_corr_values);
-            y_range_corr = y_max_corr - y_min_corr;
-            y_padding = max(0.1, y_range_corr * 0.15);
-            ylim([y_min_corr - y_padding, y_max_corr + y_padding]);
-        else
-            ylim([-1, 1]);
-        end
-
-        yline(0, 'k-', 'LineWidth', 1);
     end
+    y_range = y_max - y_min;
+    y_margin = y_range * 0.05;
+
+    subplot(4, 4, 10);
+    ylim([y_min - y_margin, y_max + y_margin]);
+    subplot(4, 4, 11);
+    ylim([y_min - y_margin, y_max + y_margin]);
+
+    % =====================================================================
+    % Plot 12: Split-half reliability
+    % =====================================================================
+    subplot(4, 4, 12);
+
+    % Split trials
+    half_idx = floor(ntrials / 2);
+    data_A = data(:, :, 1:half_idx);
+    data_B = data(:, :, half_idx+1:end);
+
+    % Trial averages (use nanmean to handle NaNs)
+    if has_nans
+        tavg_A = nanmean(data_A, 3);
+        tavg_B = nanmean(data_B, 3);
+    else
+        tavg_A = mean(data_A, 3);
+        tavg_B = mean(data_B, 3);
+    end
+
+    % Denoise both splits
+    denoiser = results.denoiser;
+    unit_means = results.unit_means;
+
+    % Handle symmetric vs non-symmetric denoiser
+    if strcmp(threshold_method, 'global')
+        % Symmetric: standard multiplication
+        dn_A = denoiser * (tavg_A - unit_means) + unit_means;
+        dn_B = denoiser * (tavg_B - unit_means) + unit_means;
+    else
+        % Non-symmetric: transpose multiplication
+        dn_A = denoiser' * (tavg_A - unit_means) + unit_means;
+        dn_B = denoiser' * (tavg_B - unit_means) + unit_means;
+    end
+
+    % Compute correlations
+    corr_tavg = zeros(nunits, 1);
+    corr_cross = zeros(nunits, 1);
+    corr_dn = zeros(nunits, 1);
+
+    for u = 1:nunits
+        if std(tavg_A(u,:)) > 0 && std(tavg_B(u,:)) > 0
+            corr_tavg(u) = corr(tavg_A(u,:)', tavg_B(u,:)');
+        else
+            corr_tavg(u) = NaN;
+        end
+
+        % Cross-method (average both directions)
+        if std(tavg_A(u,:)) > 0 && std(dn_B(u,:)) > 0 && std(dn_A(u,:)) > 0 && std(tavg_B(u,:)) > 0
+            corr_cross(u) = (corr(tavg_A(u,:)', dn_B(u,:)') + corr(dn_A(u,:)', tavg_B(u,:)')) / 2;
+        else
+            corr_cross(u) = NaN;
+        end
+
+        if std(dn_A(u,:)) > 0 && std(dn_B(u,:)) > 0
+            corr_dn(u) = corr(dn_A(u,:)', dn_B(u,:)');
+        else
+            corr_dn(u) = NaN;
+        end
+    end
+
+    % Plot
+    x_positions = [1, 2, 3];
+    labels = {'TAvg vs TAvg', 'TAvg vs Denoised', 'Denoised vs Denoised'};
+
+    % Add jitter
+    rng(42);
+    x_jitter = (rand(nunits, 1) - 0.5) * 0.16;
+
+    hold on;
+
+    % Connecting lines
+    for u = 1:nunits
+        values = [corr_tavg(u), corr_cross(u), corr_dn(u)];
+        if ~any(isnan(values))
+            plot(x_positions + x_jitter(u), values, 'Color', [0.5 0.5 0.5], 'LineWidth', 0.3);
+        end
+    end
+
+    % Scatter points
+    scatter(x_positions(1) + x_jitter, corr_tavg, 15, 'blue', 'filled', 'MarkerFaceAlpha', 0.4);
+    scatter(x_positions(2) + x_jitter, corr_cross, 15, [1 0.84 0], 'filled', 'MarkerFaceAlpha', 0.4);
+    scatter(x_positions(3) + x_jitter, corr_dn, 15, [0.5 0.8 0.3], 'filled', 'MarkerFaceAlpha', 0.4);
+
+    % Means
+    mean_tavg = nanmean(corr_tavg);
+    mean_cross = nanmean(corr_cross);
+    mean_dn = nanmean(corr_dn);
+
+    scatter(x_positions(1), mean_tavg, 100, 'blue', 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+    scatter(x_positions(2), mean_cross, 100, [1 0.84 0], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+    scatter(x_positions(3), mean_dn, 100, [0.2 0.6 0.2], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+
+    % Labels
+    y_offset = 0.08;
+    text(x_positions(1), mean_tavg + y_offset, sprintf('%.3f', mean_tavg), ...
+        'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+    text(x_positions(2), mean_cross + y_offset, sprintf('%.3f', mean_cross), ...
+        'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+    text(x_positions(3), mean_dn + y_offset, sprintf('%.3f', mean_dn), ...
+        'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+
+    set(gca, 'XTick', x_positions, 'XTickLabel', labels, 'XTickLabelRotation', 0, 'FontSize', 7);
+    ylabel('Pearson r');
+    if has_nans
+        % Count actual valid trials per split
+        valid_A = sum(~any(isnan(data_A), 1), 3);
+        valid_B = sum(~any(isnan(data_B), 1), 3);
+        avg_valid_A = mean(valid_A(valid_A > 0));
+        avg_valid_B = mean(valid_B(valid_B > 0));
+        title(sprintf('Split-Half Reliability\n(%.1f vs %.1f avg trials)', avg_valid_A, avg_valid_B));
+    else
+        title(sprintf('Split-Half Reliability\n(%d vs %d trials)', size(data_A,3), size(data_B,3)));
+    end
+    grid on;
+    xlim([0.5, 3.5]);
+    yline(0, 'k-', 'LineWidth', 1);
+
+    % Set y-limits
+    all_corr = [corr_tavg; corr_cross; corr_dn];
+    valid_corr = all_corr(~isnan(all_corr));
+    if ~isempty(valid_corr)
+        y_min_c = min(valid_corr);
+        y_max_c = max(valid_corr);
+        y_range_c = y_max_c - y_min_c;
+        y_pad = max(0.1, y_range_c * 0.15);
+        ylim([y_min_c - y_pad, y_max_c + y_pad]);
+    else
+        ylim([-1, 1]);
+    end
+
+    % =====================================================================
+    % Plot 13-16: Signal/Noise Diagnostics
+    % =====================================================================
+
+    % Extract signal/noise variance data
+    if isfield(results, 'svnv_before') && isfield(results, 'svnv_after')
+        sv_before = results.svnv_before(:, 1);
+        nv_before = results.svnv_before(:, 2);
+        sv_after = results.svnv_after(:, 1);
+        nv_after = results.svnv_after(:, 2);
+
+        % Compute noise-corrected SNR (ncsnr)
+        ncsnr_before = sqrt(sv_before) ./ sqrt(nv_before + eps);
+        ncsnr_after = sqrt(sv_after) ./ sqrt(nv_after + eps);
+
+        % Compute noise ceiling percentage (use ntrials_avg for NaN data)
+        noiseceiling_before = 100 * (ncsnr_before.^2 ./ (ncsnr_before.^2 + 1/ntrials_avg));
+        noiseceiling_after = 100 * (ncsnr_after.^2 ./ (ncsnr_after.^2 + 1/ntrials_avg));
+
+        % Define x positions
+        x_before = 1;
+        x_after = 2;
+        x_jitter_diag = (rand(nunits, 1) - 0.5) * 0.1;
+
+        % Plot 13: Signal Variance
+        subplot(4, 4, 13);
+        hold on;
+        for u = 1:nunits
+            plot([x_before, x_after] + x_jitter_diag(u), [sv_before(u), sv_after(u)], ...
+                'Color', [0.7 0.7 0.7], 'LineWidth', 0.5);
+        end
+        scatter(x_before + x_jitter_diag, sv_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(x_after + x_jitter_diag, sv_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+
+        mean_sv_before = mean(sv_before);
+        mean_sv_after = mean(sv_after);
+        scatter(x_before, mean_sv_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+        scatter(x_after, mean_sv_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+
+        % Calculate y_offset dynamically
+        y_range_sv = max([sv_before; sv_after]) - min([sv_before; sv_after]);
+        y_offset_sv = y_range_sv * 0.08;
+
+        text(x_before, mean_sv_before + y_offset_sv, sprintf('%.3f', mean_sv_before), ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+        text(x_after, mean_sv_after + y_offset_sv, sprintf('%.3f', mean_sv_after), ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+
+        xlim([0.5, 2.5]);
+        set(gca, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
+        ylabel('Signal Variance');
+        title('Signal Variance');
+        grid on;
+
+        % Plot 14: Noise Variance
+        subplot(4, 4, 14);
+        hold on;
+        for u = 1:nunits
+            plot([x_before, x_after] + x_jitter_diag(u), [nv_before(u), nv_after(u)], ...
+                'Color', [0.7 0.7 0.7], 'LineWidth', 0.5);
+        end
+        scatter(x_before + x_jitter_diag, nv_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(x_after + x_jitter_diag, nv_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+
+        mean_nv_before = mean(nv_before);
+        mean_nv_after = mean(nv_after);
+        scatter(x_before, mean_nv_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+        scatter(x_after, mean_nv_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+
+        % Calculate y_offset dynamically
+        y_range_nv = max([nv_before; nv_after]) - min([nv_before; nv_after]);
+        y_offset_nv = y_range_nv * 0.08;
+
+        text(x_before, mean_nv_before + y_offset_nv, sprintf('%.3f', mean_nv_before), ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+        text(x_after, mean_nv_after + y_offset_nv, sprintf('%.3f', mean_nv_after), ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+
+        xlim([0.5, 2.5]);
+        set(gca, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
+        ylabel('Noise Variance');
+        title('Noise Variance');
+        grid on;
+
+        % Set unified ylims for both signal and noise variance plots
+        % Based on whichever has the bigger range
+        % Start at 0 (or slightly below) since variance is non-negative
+        all_sv_vals = [sv_before; sv_after];
+        all_nv_vals = [nv_before; nv_after];
+        all_variance_vals = [all_sv_vals; all_nv_vals];
+        y_max_unified = max(all_variance_vals);
+        y_pad_unified = y_max_unified * 0.05;  % 5% padding at bottom
+        unified_ylim = [-y_pad_unified, y_max_unified + y_max_unified * 0.15];
+
+        % Apply unified limits to both subplots
+        subplot(4, 4, 13);
+        ylim(unified_ylim);
+        yline(0, 'k--', 'LineWidth', 0.5);
+
+        subplot(4, 4, 14);
+        ylim(unified_ylim);
+        yline(0, 'k--', 'LineWidth', 0.5);
+
+        % Plot 15: NCSNR
+        subplot(4, 4, 15);
+        hold on;
+        for u = 1:nunits
+            plot([x_before, x_after] + x_jitter_diag(u), [ncsnr_before(u), ncsnr_after(u)], ...
+                'Color', [0.7 0.7 0.7], 'LineWidth', 0.5);
+        end
+        scatter(x_before + x_jitter_diag, ncsnr_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(x_after + x_jitter_diag, ncsnr_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+
+        mean_ncsnr_before = mean(ncsnr_before);
+        mean_ncsnr_after = mean(ncsnr_after);
+        scatter(x_before, mean_ncsnr_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+        scatter(x_after, mean_ncsnr_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+
+        % Calculate y_offset dynamically
+        y_range_ncsnr = max([ncsnr_before; ncsnr_after]) - min([ncsnr_before; ncsnr_after]);
+        y_offset_ncsnr = y_range_ncsnr * 0.08;
+
+        text(x_before, mean_ncsnr_before + y_offset_ncsnr, sprintf('%.3f', mean_ncsnr_before), ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+        text(x_after, mean_ncsnr_after + y_offset_ncsnr, sprintf('%.3f', mean_ncsnr_after), ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+
+        % Set ylims with padding
+        % Start at 0 (or slightly below) since NCSNR is non-negative
+        all_ncsnr_vals = [ncsnr_before; ncsnr_after];
+        y_max_ncsnr = max(all_ncsnr_vals);
+        y_pad_ncsnr_bottom = y_max_ncsnr * 0.05;  % 5% padding at bottom
+        y_pad_ncsnr_top = y_max_ncsnr * 0.15;  % 15% padding at top
+        ylim([-y_pad_ncsnr_bottom, y_max_ncsnr + y_pad_ncsnr_top]);
+        yline(0, 'k--', 'LineWidth', 0.5);
+
+        xlim([0.5, 2.5]);
+        set(gca, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
+        ylabel('NCSNR');
+        title('Noise Ceiling SNR (NCSNR)');
+        grid on;
+
+        % Plot 16: Noise Ceiling %
+        subplot(4, 4, 16);
+        hold on;
+        for u = 1:nunits
+            plot([x_before, x_after] + x_jitter_diag(u), [noiseceiling_before(u), noiseceiling_after(u)], ...
+                'Color', [0.7 0.7 0.7], 'LineWidth', 0.5);
+        end
+        scatter(x_before + x_jitter_diag, noiseceiling_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(x_after + x_jitter_diag, noiseceiling_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+
+        mean_nc_before = mean(noiseceiling_before);
+        mean_nc_after = mean(noiseceiling_after);
+        scatter(x_before, mean_nc_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+        scatter(x_after, mean_nc_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+
+        % Fixed y_offset for noise ceiling (percentage scale 0-100)
+        y_offset_nc = 100 * 0.08;
+
+        text(x_before, mean_nc_before + y_offset_nc, sprintf('%.3f', mean_nc_before), ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+        text(x_after, mean_nc_after + y_offset_nc, sprintf('%.3f', mean_nc_after), ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+
+        xlim([0.5, 2.5]);
+        ylim([0, 100]);
+        yline(0, 'k--', 'LineWidth', 0.5);
+
+        set(gca, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
+        ylabel('Noise Ceiling (%)');
+        if has_nans
+            title(sprintf('Noise Ceiling Percentage (%.1f avg trials)', ntrials_avg));
+        else
+            title(sprintf('Noise Ceiling Percentage (%d trials)', ntrials));
+        end
+        grid on;
+    end
+
 end
 
-% Helper function to compute noise ceiling
-function [noiseceiling, ncsnr, signalvar, noisevar] = compute_noise_ceiling(data_in)
-    % noisevar: mean variance across trials for each unit
-    noisevar = mean(std(data_in, 0, 3) .^ 2, 2);
-
-    % datavar: variance of the trial means across conditions for each unit
-    datavar = std(mean(data_in, 3), 0, 2) .^ 2;
-
-    % signalvar: signal variance, obtained by subtracting noise variance from data variance
-    signalvar = max(datavar - noisevar / size(data_in, 3), 0);  % Ensure non-negative variance
-
-    % ncsnr: signal-to-noise ratio (SNR) for each unit
-    ncsnr = sqrt(signalvar) ./ sqrt(noisevar);
-
-    % noiseceiling: percentage noise ceiling based on SNR
-    noiseceiling = 100 * (ncsnr .^ 2 ./ (ncsnr .^ 2 + 1 / size(data_in, 3)));
-end
-
-% Helper function to compute R2 score
-function r2 = compute_r2(y_true, y_pred)
-    residual_ss = sum((y_true - y_pred) .^ 2);
-    total_ss = sum((y_true - mean(y_true)) .^ 2);
-    r2 = 1 - (residual_ss / total_ss);
-end
-
-% Red-Blue colormap function
+% Red-Blue colormap
 function cmap = redblue
-    % Create a red-blue colormap similar to Python's RdBu_r
     n = 256;
     cmap = zeros(n, 3);
-    
-    % Blue to white to red
     mid = ceil(n/2);
-    
-    % Blue to white (first half)
-    cmap(1:mid, 1) = linspace(0, 1, mid);      % Red component
-    cmap(1:mid, 2) = linspace(0, 1, mid);      % Green component  
-    cmap(1:mid, 3) = ones(mid, 1);             % Blue component (full)
-    
-    % White to red (second half)
-    cmap(mid+1:n, 1) = ones(n-mid, 1);         % Red component (full)
-    cmap(mid+1:n, 2) = linspace(1, 0, n-mid);  % Green component
-    cmap(mid+1:n, 3) = linspace(1, 0, n-mid);  % Blue component
+
+    % Blue to white
+    cmap(1:mid, 1) = linspace(0, 1, mid);
+    cmap(1:mid, 2) = linspace(0, 1, mid);
+    cmap(1:mid, 3) = ones(mid, 1);
+
+    % White to red
+    cmap(mid+1:n, 1) = ones(n-mid, 1);
+    cmap(mid+1:n, 2) = linspace(1, 0, n-mid);
+    cmap(mid+1:n, 3) = linspace(1, 0, n-mid);
 end
