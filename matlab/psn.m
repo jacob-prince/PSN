@@ -75,6 +75,13 @@ function [results] = psn(varargin)
 %     'unit'   -> unit-specific ordering of basis vectors, unit-specific thresholds
 %     Default: 'hybrid'.
 %
+%   <basis_ordering> (optional) - string. How to set the initial global order of basis vectors:
+%     'eigenvalues'    -> use descending order of eigenvalues (if available)
+%     'signalvariance' -> measure signal variance and use descending order of signal variance
+%     Default: 'eigenvalues'.
+%     (Note that when <basis> is B or 'random', eigenvalues are not available, so we
+%      necessarily fall back to 'signalvariance'.)
+%
 %   <variance_threshold> (optional) - scalar in [0,1]. Fraction used
 %     when <criterion> is 'variance' or 'variance_eigenvalues'.
 %     Default: 0.99.
@@ -337,23 +344,30 @@ basis_eigenvalues_viz = basis_eigenvalues;  % Save original order for visualizat
 % =========================================================================
 % STEP 6: Rank basis dimensions (global ordering)
 % =========================================================================
-% We order the basis dimensions according to their importance.
-% - For difference basis + prediction criterion: rank by eigenvalues
-% - Otherwise: rank by signal variance
+% We order the basis dimensions according to their importance based on basis_ordering:
+% - 'eigenvalues': rank by eigenvalues (if available)
+% - 'signalvariance': rank by signal variance
 
 if opt.wantverbose
     fprintf('PSN: Ranking basis dimensions globally...\n');
 end
 
-use_diff_basis = ischar(opt.basis) && strcmp(opt.basis, 'difference');
-use_prediction = strcmp(opt.criterion, 'prediction');
-
-if use_diff_basis && use_prediction && ~isempty(basis_eigenvalues)
-    % Fast path: difference basis eigenvalues ARE signal - noise/ntrials
+if strcmp(opt.basis_ordering, 'eigenvalues') && ~isempty(basis_eigenvalues)
+    % Use eigenvalue-based ranking
     [~, sort_idx_global] = sort(basis_eigenvalues, 'descend');
+    if opt.wantverbose
+        fprintf('PSN: Using eigenvalue-based ordering\n');
+    end
 else
-    % Default: rank by signal variance
+    % Use signal variance-based ranking (or fallback when eigenvalues unavailable)
     [~, sort_idx_global] = sort(signal_proj, 'descend');
+    if opt.wantverbose
+        if strcmp(opt.basis_ordering, 'eigenvalues')
+            fprintf('PSN: Eigenvalues unavailable, falling back to signal variance ordering\n');
+        else
+            fprintf('PSN: Using signal variance ordering\n');
+        end
+    end
 end
 
 % Reorder basis and projections according to global ranking
@@ -664,6 +678,9 @@ function opt = set_default_options(opt, nunits)
     if isfield(opt, 'threshold_method') && isstring(opt.threshold_method)
         opt.threshold_method = char(opt.threshold_method);
     end
+    if isfield(opt, 'basis_ordering') && isstring(opt.basis_ordering)
+        opt.basis_ordering = char(opt.basis_ordering);
+    end
 
     if ~isfield(opt, 'basis')
         opt.basis = 'signal';
@@ -675,6 +692,10 @@ function opt = set_default_options(opt, nunits)
 
     if ~isfield(opt, 'threshold_method')
         opt.threshold_method = 'hybrid';
+    end
+
+    if ~isfield(opt, 'basis_ordering')
+        opt.basis_ordering = 'eigenvalues';
     end
 
     if ~isfield(opt, 'variance_threshold')
@@ -729,6 +750,11 @@ function validate_options(opt, nunits)
     valid_methods = {'global', 'hybrid', 'unit'};
     if ~ismember(opt.threshold_method, valid_methods)
         error('threshold_method must be one of: %s', strjoin(valid_methods, ', '));
+    end
+
+    valid_orderings = {'eigenvalues', 'signalvariance'};
+    if ~ismember(opt.basis_ordering, valid_orderings)
+        error('basis_ordering must be one of: %s', strjoin(valid_orderings, ', '));
     end
 
     if opt.variance_threshold < 0 || opt.variance_threshold > 1
