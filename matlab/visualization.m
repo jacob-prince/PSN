@@ -48,6 +48,13 @@ function visualization(data, results)
         criterion = 'unknown';
     end
 
+    % Extract basis_ordering
+    if isfield(opt, 'basis_ordering')
+        basis_ordering = opt.basis_ordering;
+    else
+        basis_ordering = 'eigenvalues';  % default
+    end
+
     % Check for NaNs and compute average number of trials
     has_nans = any(isnan(data(:)));
     if has_nans
@@ -60,13 +67,13 @@ function visualization(data, results)
         ntrials_avg = ntrials;
     end
 
-    % Create title
+    % Create title (order: Basis, Criterion, Method to match API)
     if has_nans
-        title_text = sprintf('Data: %d units × %d conditions × %d max trials (avg %.1f)  |  Basis: %s  |  Method: %s  |  Criterion: %s', ...
-                            nunits, nconds, ntrials, ntrials_avg, basis_desc, threshold_method, criterion);
+        title_text = sprintf('Data: %d units × %d conditions × %d max trials (avg %.1f)  |  Basis: %s  |  Criterion: %s  |  Method: %s', ...
+                            nunits, nconds, ntrials, ntrials_avg, basis_desc, criterion, threshold_method);
     else
-        title_text = sprintf('Data: %d units × %d conditions × %d trials  |  Basis: %s  |  Method: %s  |  Criterion: %s', ...
-                            nunits, nconds, ntrials, basis_desc, threshold_method, criterion);
+        title_text = sprintf('Data: %d units × %d conditions × %d trials  |  Basis: %s  |  Criterion: %s  |  Method: %s', ...
+                            nunits, nconds, ntrials, basis_desc, criterion, threshold_method);
     end
     sgtitle(title_text, 'FontSize', 12, 'FontWeight', 'bold');
 
@@ -87,55 +94,50 @@ function visualization(data, results)
         cSb = results.gsn_result.cSb;
         cNb = results.gsn_result.cNb;
 
-        % Determine which matrix to show based on basis type
+        % Determine which matrix based on basis type
         if isfield(opt, 'basis')
             basis_type = opt.basis;
             if ischar(basis_type) || isstring(basis_type)
                 basis_type = char(basis_type);
-
                 switch basis_type
                     case 'difference'
-                        % Show signal - noise/ntrials_avg
-                        plot_matrix = cSb - cNb / ntrials_avg;
+                        plot_matrix_1 = cSb - cNb / ntrials_avg;
                         plot_title = sprintf('cSb - cNb/%.1f (difference)', ntrials_avg);
-
                     case 'noise'
-                        % Show noise covariance
-                        plot_matrix = cNb;
+                        plot_matrix_1 = cNb;
                         plot_title = 'Noise Covariance (cNb)';
-
                     case 'pca'
-                        % Show covariance of trial-averaged data
                         trial_avg_demeaned = trial_avg - results.unit_means;
-                        plot_matrix = cov(trial_avg_demeaned');
+                        plot_matrix_1 = cov(trial_avg_demeaned');
                         plot_title = 'Trial-Avg Data Covariance';
-
                     otherwise
-                        % Default: signal covariance (for 'signal' and others)
-                        plot_matrix = cSb;
+                        plot_matrix_1 = cSb;
                         plot_title = 'Signal Covariance (cSb)';
                 end
             else
-                % Custom basis matrix
-                plot_matrix = cSb;
+                plot_matrix_1 = cSb;
                 plot_title = 'Signal Covariance (cSb)';
             end
         else
-            % No basis specified, use signal
-            plot_matrix = cSb;
+            plot_matrix_1 = cSb;
             plot_title = 'Signal Covariance (cSb)';
         end
 
+        % Compute z-score based colorbar limits (±3 SD)
         if has_nans
-            matrix_max = nanmax(abs(plot_matrix(:)));
+            data_mean = nanmean(plot_matrix_1(:));
+            data_std = nanstd(plot_matrix_1(:));
         else
-            matrix_max = max(abs(plot_matrix(:)));
+            data_mean = mean(plot_matrix_1(:));
+            data_std = std(plot_matrix_1(:));
         end
-        if matrix_max > 0
-            imagesc(plot_matrix, [-matrix_max, matrix_max]);
+        if data_std > 0
+            clim_1 = [data_mean - 3*data_std, data_mean + 3*data_std];
         else
-            imagesc(plot_matrix);
+            clim_1 = [data_mean - 1, data_mean + 1];
         end
+
+        imagesc(plot_matrix_1, clim_1);
         colormap(gca, redblue);
         colorbar;
         title(plot_title);
@@ -149,26 +151,42 @@ function visualization(data, results)
     end
 
     % =====================================================================
-    % Plot 2: Full basis matrix
+    % Plot 2: Top 5 PCs as vertical line plots
     % =====================================================================
     subplot(4, 4, 2);
     if isfield(results, 'fullbasis')
-        if has_nans
-            basis_max = nanmax(abs(results.fullbasis(:)));
+        num_pcs = min(5, size(results.fullbasis, 2));
+
+        % Normalize each PC for visualization
+        hold on;
+        y_units = 1:nunits;
+        colors = lines(num_pcs);
+
+        % Find max absolute loading across top 5 PCs for scaling
+        max_loading = max(abs(results.fullbasis(:, 1:num_pcs)), [], 'all');
+        if max_loading > 0
+            scale_factor = 0.4 / max_loading;  % Scale to fit within 0.4 x-units
         else
-            basis_max = max(abs(results.fullbasis(:)));
+            scale_factor = 1;
         end
-        if basis_max > 0
-            imagesc(results.fullbasis, [-basis_max, basis_max]);
-        else
-            imagesc(results.fullbasis);
+
+        for pc = 1:num_pcs
+            % Center each PC at position pc, with loadings as horizontal deviations
+            x_vals = pc + results.fullbasis(:, pc) * scale_factor;
+            plot(x_vals, y_units, 'LineWidth', 1.5, 'Color', colors(pc, :));
+
+            % Add vertical reference line at center
+            plot([pc, pc], [1, nunits], 'k--', 'LineWidth', 0.5);
         end
-        colormap(gca, redblue);
-        colorbar;
-        title('Full Basis Matrix');
-        xlabel('Dimension');
+        hold off;
+
+        xlabel('Principal Component');
         ylabel('Units');
-        axis square;
+        title('Top 5 Basis Dimensions');
+        xlim([0.5, num_pcs + 0.5]);
+        ylim([1, nunits]);
+        set(gca, 'XTick', 1:num_pcs);
+        grid on;
     else
         text(0.5, 0.5, 'Basis\nNot Available', ...
              'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
@@ -176,28 +194,27 @@ function visualization(data, results)
     end
 
     % =====================================================================
-    % Plot 3: Signal variance spectrum (or PCA eigenvalues for PCA basis)
+    % Plot 3: Global dimension ranking (eigenvalues or signal variance)
     % =====================================================================
+    % This subplot shows what was actually used for global dimension ranking
+    % NOTE: Shows SORTED values (descending order used for ranking)
     subplot(4, 4, 3);
-
-    % Check if we're using PCA basis and have eigenvalues
-    use_pca_eigenvalues = false;
-    if isfield(opt, 'basis') && ischar(opt.basis) && strcmp(opt.basis, 'pca')
-        if isfield(results, 'basis_eigenvalues') && ~isempty(results.basis_eigenvalues)
-            use_pca_eigenvalues = true;
-        end
-    end
 
     % Determine if we should use log spacing (more than 50 units)
     use_log_x = nunits > 50;
 
-    if use_pca_eigenvalues
-        % For PCA basis: show PCA eigenvalues
-        pca_evals = results.basis_eigenvalues;
+    % Check if eigenvalues were used for ranking (and are available)
+    use_eigenvalues = strcmp(basis_ordering, 'eigenvalues') && ...
+                      isfield(results, 'basis_eigenvalues') && ...
+                      ~isempty(results.basis_eigenvalues);
+
+    if use_eigenvalues
+        % Show eigenvalues (SORTED - what was actually used for ranking)
+        evals = results.basis_eigenvalues;  % Already sorted in descending order
         if use_log_x
-            semilogx(1:length(pca_evals), pca_evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5]);
+            semilogx(1:length(evals), evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5]);
         else
-            plot(1:length(pca_evals), pca_evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5]);
+            plot(1:length(evals), evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5]);
         end
         hold on;
 
@@ -212,13 +229,13 @@ function visualization(data, results)
         end
 
         xlabel('Dimension');
-        ylabel('PCA Eigenvalue');
-        title('PCA Eigenspectrum');
+        ylabel('Eigenvalue');
+        title('Basis Eigenvalues (sorted, used for ranking)');
         grid on;
 
-    elseif isfield(results, 'signal_proj_viz')
-        % Use original order (before ranking)
-        signal_vars = results.signal_proj_viz;
+    elseif isfield(results, 'signalvar')
+        % Show signal variance (SORTED - what was actually used for ranking)
+        signal_vars = results.signalvar;  % Already sorted in descending order
         if use_log_x
             semilogx(1:length(signal_vars), signal_vars, 'LineWidth', 1.5, 'Color', 'blue');
         else
@@ -238,10 +255,10 @@ function visualization(data, results)
 
         xlabel('Dimension');
         ylabel('Signal Variance');
-        title('Signal Variance Spectrum');
+        title('Signal Variance Spectrum (sorted, used for ranking)');
         grid on;
     else
-        text(0.5, 0.5, 'Signal Variance\nNot Available', ...
+        text(0.5, 0.5, 'Ranking Info\nNot Available', ...
              'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
              'Units', 'normalized');
     end
@@ -313,19 +330,11 @@ function visualization(data, results)
             % Unit-specific mode: plot all unit curves
             for u = 1:length(results.unit_objectives)
                 curve_u = results.unit_objectives{u};
-                if use_log_x
-                    semilogx(1:length(curve_u), curve_u, 'LineWidth', 0.5, 'Color', [0.5 0.5 0.5 0.3]);
-                else
-                    plot(0:length(curve_u)-1, curve_u, 'LineWidth', 0.5, 'Color', [0.5 0.5 0.5 0.3]);
-                end
+                plot(0:length(curve_u)-1, curve_u, 'LineWidth', 0.5, 'Color', [0.5 0.5 0.5 0.3]);
             end
 
             % Plot population average as thick line
-            if use_log_x
-                semilogx(1:length(results.objective), results.objective, 'LineWidth', 2, 'Color', [0.3 0.7 0.3]);
-            else
-                plot(0:length(results.objective)-1, results.objective, 'LineWidth', 2, 'Color', [0.3 0.7 0.3]);
-            end
+            plot(0:length(results.objective)-1, results.objective, 'LineWidth', 2, 'Color', [0.3 0.7 0.3]);
 
             % Mark each unit's chosen threshold
             if isfield(results, 'best_threshold')
@@ -335,11 +344,7 @@ function visualization(data, results)
                     k_u = results.best_threshold(u);
                     curve_u = results.unit_objectives{u};
                     if k_u > 0 && k_u <= length(curve_u)
-                        if use_log_x
-                            x_thresh(end+1) = k_u + 1;  % 1-indexed for log plot
-                        else
-                            x_thresh(end+1) = k_u;
-                        end
+                        x_thresh(end+1) = k_u;
                         y_thresh(end+1) = curve_u(k_u+1);
                     end
                 end
@@ -351,21 +356,18 @@ function visualization(data, results)
             title('Objective Function (unit-specific)');
         else
             % Global mode: single curve
-            if use_log_x
-                semilogx(1:length(results.objective), results.objective, 'LineWidth', 1.5, 'Color', [0.3 0.7 0.3]);
-            else
-                plot(0:length(results.objective)-1, results.objective, 'LineWidth', 1.5, 'Color', [0.3 0.7 0.3]);
-            end
+            plot(0:length(results.objective)-1, results.objective, 'LineWidth', 1.5, 'Color', [0.3 0.7 0.3]);
 
             % Mark maximum
             [~, max_idx] = max(results.objective);
-            if use_log_x
-                plot(max_idx, results.objective(max_idx), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
-            else
-                plot(max_idx-1, results.objective(max_idx), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
-            end
+            plot(max_idx-1, results.objective(max_idx), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
 
             title('Objective Function');
+        end
+
+        % Set x-axis scale (log for high-dimensional data)
+        if use_log_x
+            set(gca, 'XScale', 'log');
         end
 
         xlabel('Number of Dimensions');
@@ -387,20 +389,20 @@ function visualization(data, results)
     % =====================================================================
     % Plot 6-8: Raw, Denoised, Noise
     % =====================================================================
-    all_data = [trial_avg(:); denoised(:); noise(:)];
-    if has_nans
-        max_abs_val = nanmax(abs(all_data));
-    else
-        max_abs_val = max(abs(all_data));
-    end
-    if max_abs_val > 0
-        data_clim = [-max_abs_val, max_abs_val];
-    else
-        data_clim = [-1, 1];  % Default if all zeros
-    end
 
+    % Plot 6: Raw trial-averaged data
     subplot(4, 4, 6);
-    imagesc(trial_avg, data_clim);
+    if has_nans
+        data_std = nanstd(trial_avg(:));
+    else
+        data_std = std(trial_avg(:));
+    end
+    if data_std > 0
+        clim_6 = 3*data_std * [-1, 1];  % Symmetric around 0
+    else
+        clim_6 = [-1, 1];
+    end
+    imagesc(trial_avg, clim_6);
     colormap(gca, redblue);
     colorbar;
     if has_nans
@@ -411,16 +413,38 @@ function visualization(data, results)
     xlabel('Conditions');
     ylabel('Units');
 
+    % Plot 7: Denoised data
     subplot(4, 4, 7);
-    imagesc(denoised, data_clim);
+    if has_nans
+        data_std = nanstd(denoised(:));
+    else
+        data_std = std(denoised(:));
+    end
+    if data_std > 0
+        clim_7 = 3*data_std * [-1, 1];  % Symmetric around 0
+    else
+        clim_7 = [-1, 1];
+    end
+    imagesc(denoised, clim_7);
     colormap(gca, redblue);
     colorbar;
     title('PSN Denoised Data');
     xlabel('Conditions');
     ylabel('Units');
 
+    % Plot 8: Noise (residual)
     subplot(4, 4, 8);
-    imagesc(noise, data_clim);
+    if has_nans
+        data_std = nanstd(noise(:));
+    else
+        data_std = std(noise(:));
+    end
+    if data_std > 0
+        clim_8 = 3*data_std * [-1, 1];  % Symmetric around 0
+    else
+        clim_8 = [-1, 1];
+    end
+    imagesc(noise, clim_8);
     colormap(gca, redblue);
     colorbar;
     if has_nans
@@ -436,15 +460,16 @@ function visualization(data, results)
     % =====================================================================
     subplot(4, 4, 9);
     if has_nans
-        denoiser_max = nanmax(abs(results.denoiser(:)));
+        data_std = nanstd(results.denoiser(:));
     else
-        denoiser_max = max(abs(results.denoiser(:)));
+        data_std = std(results.denoiser(:));
     end
-    if denoiser_max > 0
-        imagesc(results.denoiser, [-denoiser_max, denoiser_max]);
+    if data_std > 0
+        clim_9 = 3*data_std * [-1, 1];  % Symmetric around 0
     else
-        imagesc(results.denoiser);
+        clim_9 = [-1, 1];
     end
+    imagesc(results.denoiser, clim_9);
     colormap(gca, redblue);
     colorbar;
     title('Denoiser Matrix');
@@ -803,7 +828,7 @@ function visualization(data, results)
             'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
 
         xlim([0.5, 2.5]);
-        ylim([0, 100]);
+        ylim([-5, 100]);  % Add negative padding to make yline at 0 visible
         yline(0, 'k--', 'LineWidth', 0.5);
 
         set(gca, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
