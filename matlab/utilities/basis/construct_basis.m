@@ -1,0 +1,195 @@
+function [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_avg, has_nans)
+% CONSTRUCT_BASIS  Create the orthonormal basis for denoising
+%
+%   [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, ...)
+%   constructs an orthonormal basis for PSN denoising according to the
+%   specified basis type.
+%
+% -------------------------------------------------------------------------
+% Inputs:
+% -------------------------------------------------------------------------
+%
+% <cSb> - [nunits x nunits] symmetric signal covariance matrix from GSN
+%
+% <cNb> - [nunits x nunits] symmetric noise covariance matrix from GSN
+%
+% <basis_spec> - basis specifier. Either string or matrix:
+%   'signal'     - Eigenvectors of signal covariance (cSb)
+%   'difference' - Eigenvectors of cSb - cNb/ntrials_avg (emphasize signal-dominated directions)
+%   'noise'      - Eigenvectors of noise covariance (cNb)
+%   'pca'        - Standard PCA on trial-averaged data
+%   'random'     - Random orthonormal basis (uses fixed seed for reproducibility)
+%   B            - User-provided basis matrix [nunits x D] with orthonormal columns
+%
+% <data> - [nunits x nconds x ntrials] original data array
+%
+% <trial_avg> - [nunits x nconds] pre-computed trial-averaged data
+%
+% <unit_means> - [nunits x 1] mean response per unit
+%
+% <ntrials_avg> - scalar, average number of valid trials (handles NaN case correctly)
+%
+% <has_nans> - logical, whether data contains NaNs
+%
+% -------------------------------------------------------------------------
+% Returns:
+% -------------------------------------------------------------------------
+%
+% <basis> - [nunits x ndims] orthonormal basis vectors. Columns are sorted
+%   by descending eigenvalue magnitude (for eigenvalue-based methods) or
+%   left as provided (for custom/random bases)
+%
+% <basis_eigenvalues> - [ndims x 1] eigenvalues associated with basis, sorted
+%   to match basis columns. Empty ([]) for custom or random bases. For 'pca'
+%   basis, contains PCA eigenvalues for visualization only (not used for ranking)
+
+    nunits = size(data, 1);
+
+    if ischar(basis_spec) || isstring(basis_spec)
+        basis_spec = char(basis_spec);
+
+        switch basis_spec
+            case 'signal'
+                % Eigenvectors of signal covariance (GSN returns symmetric)
+                [basis_eigenvalues, basis] = eigh_descending_sym(cSb);
+
+            case 'difference'
+                % Eigenvectors of signal - scaled noise
+                % Eigenvalues encode the net benefit per dimension
+                % Use ntrials_avg to properly handle NaN case
+                A = cSb - cNb / ntrials_avg;
+                % Symmetrize derived matrix to handle numerical errors
+                A = (A + A') / 2;
+                [basis_eigenvalues, basis] = eigh_descending_sym(A);  % already symmetrized above
+
+            case 'noise'
+                % Eigenvectors of noise covariance (GSN returns symmetric)
+                [basis_eigenvalues, basis] = eigh_descending_sym(cNb);
+
+            case 'pca'
+                % Standard PCA on trial-averaged data
+                % Eigenvectors from empirical covariance, but treated exactly like signal basis
+                % in all subsequent ranking/thresholding (uses GSN signal_proj, not PCA eigenvalues).
+                % PCA eigenvalues are kept for visualization purposes only.
+                % Use pre-computed trial_avg to avoid redundant computation
+                trial_avg_demeaned = trial_avg - unit_means;
+                cov_matrix = cov(trial_avg_demeaned');  % cov() returns symmetric matrix
+                [basis_eigenvalues, basis] = eigh_descending_sym(cov_matrix);  % no symmetrization needed
+                % Note: PCA eigenvalues stored but NOT used for ranking/thresholding
+
+            case 'random'
+                % Random orthonormal basis (no meaningful eigenvalues)
+                % NOTE: This resets the global RNG state for reproducibility
+                % To avoid affecting other random operations, consider using a separate RandStream
+                rng('default');
+                rng(42);
+                [basis, ~] = qr(randn(nunits));
+                basis_eigenvalues = [];
+
+            otherwise
+                error('Unknown basis type: %s', basis_spec);
+        end
+
+    else
+        % User-provided custom basis (no eigenvalues available)
+        basis = basis_spec;
+
+        if size(basis, 1) ~= nunits
+            error('Custom basis must have %d rows (matching nunits)', nunits);
+        end
+        if size(basis, 2) < 1 || size(basis, 2) > nunits
+            error('Custom basis must have between 1 and %d columns', nunits);
+        end
+
+        basis = normalize_orthonormalize_basis(basis);
+        basis_eigenvalues = [];
+    end
+end
+
+
+function [evals_sorted, evecs_sorted] = eigh_descending_sym(matrix, do_symmetrize)
+% EIGH_DESCENDING_SYM  Compute eigendecomposition with consistent sorting
+%
+%   [evals_sorted, evecs_sorted] = eigh_descending_sym(matrix) computes
+%   the eigendecomposition of a symmetric matrix and returns eigenvalues
+%   and eigenvectors sorted by descending eigenvalue magnitude, with
+%   standardized eigenvector signs for reproducibility.
+%
+%   [evals_sorted, evecs_sorted] = eigh_descending_sym(matrix, do_symmetrize)
+%   optionally forces the matrix to be symmetric before eigendecomposition.
+%
+% -------------------------------------------------------------------------
+% Inputs:
+% -------------------------------------------------------------------------
+%
+% <matrix> - [n x n] numeric matrix (should be symmetric or nearly symmetric)
+%
+% <do_symmetrize> (optional) - logical. If true, enforces symmetry via
+%   (matrix + matrix')/2 before eigendecomposition. Default: false.
+%   Note: GSN returns symmetric cSb/cNb, so symmetrization is typically
+%   only needed for derived matrices like cSb - cNb/ntrials_avg
+%
+% -------------------------------------------------------------------------
+% Returns:
+% -------------------------------------------------------------------------
+%
+% <evals_sorted> - [n x 1] eigenvalues sorted in descending order
+%
+% <evecs_sorted> - [n x n] eigenvectors with columns sorted to match
+%   <evals_sorted>. Signs standardized so that the largest-magnitude
+%   element in each column is positive
+
+    if nargin < 2
+        do_symmetrize = false;
+    end
+
+    if do_symmetrize
+        matrix = (matrix + matrix') / 2;
+    end
+
+    % Compute eigendecomposition
+    [evecs, evals] = eig(matrix, 'vector');
+
+    % Sort by eigenvalue magnitude (descending)
+    [evals_sorted, order] = sort(evals, 'descend');
+    evecs_sorted = evecs(:, order);
+
+    % Deterministic sign: make largest-magnitude element positive
+    [~, piv] = max(abs(evecs_sorted), [], 1);
+    idx = sub2ind(size(evecs_sorted), piv, 1:size(evecs_sorted, 2));
+    sgn = sign(evecs_sorted(idx));
+    sgn(sgn == 0) = 1;
+    evecs_sorted = evecs_sorted .* sgn;
+end
+
+
+function basis = normalize_orthonormalize_basis(basis)
+% NORMALIZE_ORTHONORMALIZE_BASIS  Ensure basis has orthonormal columns
+%
+%   basis = normalize_orthonormalize_basis(basis) takes a matrix and
+%   ensures its columns are orthonormal (unit length and mutually orthogonal).
+%
+% -------------------------------------------------------------------------
+% Inputs:
+% -------------------------------------------------------------------------
+%
+% <basis> - [n x k] numeric matrix with k basis vectors as columns
+%
+% -------------------------------------------------------------------------
+% Returns:
+% -------------------------------------------------------------------------
+%
+% <basis> - [n x k] matrix with orthonormal columns. First normalizes each
+%   column to unit length, then checks orthogonality. If not orthogonal
+%   (Gram matrix not identity within tolerance 1e-10), applies QR
+%   decomposition to enforce orthonormality
+
+    norms = sqrt(sum(basis.^2, 1));
+    norms(norms == 0) = 1;
+    basis = basis ./ norms;
+
+    gram = basis' * basis;
+    if ~all(all(abs(gram - eye(size(gram))) < 1e-10))
+        [basis, ~] = qr(basis, 0);
+    end
+end

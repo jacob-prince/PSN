@@ -295,6 +295,49 @@ function test_combinations = generate_test_combinations()
     desc = 'unit_groups (all units in 1 group)';
     test_combinations{end+1} = struct('opts', opts, 'description', desc);
 
+    % Test basis_ordering with different basis types
+    fprintf('  Adding basis_ordering tests...\n');
+    orderings = {'eigenvalues', 'signalvariance'};
+    basis_with_evals = {'signal', 'difference', 'noise', 'pca'};
+
+    % Test ordering methods with bases that have eigenvalues
+    for b = 1:length(basis_with_evals)
+        for o = 1:length(orderings)
+            opts = struct();
+            opts.basis = basis_with_evals{b};
+            opts.threshold_method = 'global';
+            opts.criterion = 'prediction';
+            opts.basis_ordering = orderings{o};
+            opts.wantfig = false;
+            opts.wantverbose = false;
+
+            desc = sprintf('basis=%s, ordering=%s', basis_with_evals{b}, orderings{o});
+            test_combinations{end+1} = struct('opts', opts, 'description', desc);
+        end
+    end
+
+    % Test that eigenvalue ordering falls back to signalvariance for random basis
+    opts = struct();
+    opts.basis = 'random';
+    opts.threshold_method = 'global';
+    opts.criterion = 'prediction';
+    opts.basis_ordering = 'eigenvalues';  % Should fallback to signalvariance
+    opts.wantfig = false;
+    opts.wantverbose = false;
+    desc = 'basis=random, ordering=eigenvalues (fallback test)';
+    test_combinations{end+1} = struct('opts', opts, 'description', desc);
+
+    % Test that eigenvalue ordering falls back to signalvariance for custom basis
+    opts = struct();
+    opts.basis = custom_basis;
+    opts.threshold_method = 'global';
+    opts.criterion = 'prediction';
+    opts.basis_ordering = 'eigenvalues';  % Should fallback to signalvariance
+    opts.wantfig = false;
+    opts.wantverbose = false;
+    desc = 'basis=custom, ordering=eigenvalues (fallback test)';
+    test_combinations{end+1} = struct('opts', opts, 'description', desc);
+
     fprintf('  Generated %d test combinations\n', length(test_combinations));
 end
 
@@ -498,6 +541,11 @@ function test_invalid_inputs()
         'data', nan_condition_data, ...
         'opts', struct('wantfig', false, 'wantverbose', false), ...
         'description', 'Condition with all NaNs (no valid trials)');
+
+    % Invalid basis_ordering
+    invalid_cases{end+1} = struct(...
+        'opts', struct('basis_ordering', 'invalid_ordering', 'wantfig', false, 'wantverbose', false), ...
+        'description', 'Invalid basis_ordering');
 
     % Run invalid input tests
     n_total = length(invalid_cases);
