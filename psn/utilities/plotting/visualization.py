@@ -370,7 +370,7 @@ def plot_diagnostic_figures(data, results, test_data=None):
     ax6 = plt.subplot(4, 4, 6)
     data_std = np.nanstd(trial_avg) if has_nans else np.std(trial_avg)
     clim_6 = 3 * data_std * np.array([-1, 1]) if data_std > 0 else np.array([-1, 1])
-    im6 = ax6.imshow(trial_avg, vmin=clim_6[0], vmax=clim_6[1], cmap='RdBu_r', aspect='auto')
+    im6 = ax6.imshow(trial_avg, vmin=clim_6[0], vmax=clim_6[1], cmap='RdBu_r', aspect='auto', interpolation='none')
     plt.colorbar(im6, ax=ax6)
     title_6 = 'Input Data (trial-averaged, with NaNs)' if has_nans else 'Input Data (trial-averaged)'
     ax6.set_title(title_6)
@@ -381,7 +381,7 @@ def plot_diagnostic_figures(data, results, test_data=None):
     ax7 = plt.subplot(4, 4, 7)
     data_std = np.nanstd(denoised) if has_nans else np.std(denoised)
     clim_7 = 3 * data_std * np.array([-1, 1]) if data_std > 0 else np.array([-1, 1])
-    im7 = ax7.imshow(denoised, vmin=clim_7[0], vmax=clim_7[1], cmap='RdBu_r', aspect='auto')
+    im7 = ax7.imshow(denoised, vmin=clim_7[0], vmax=clim_7[1], cmap='RdBu_r', aspect='auto', interpolation='none')
     plt.colorbar(im7, ax=ax7)
     ax7.set_title('PSN Denoised Data')
     ax7.set_xlabel('Conditions')
@@ -391,7 +391,7 @@ def plot_diagnostic_figures(data, results, test_data=None):
     ax8 = plt.subplot(4, 4, 8)
     data_std = np.nanstd(noise) if has_nans else np.std(noise)
     clim_8 = 3 * data_std * np.array([-1, 1]) if data_std > 0 else np.array([-1, 1])
-    im8 = ax8.imshow(noise, vmin=clim_8[0], vmax=clim_8[1], cmap='RdBu_r', aspect='auto')
+    im8 = ax8.imshow(noise, vmin=clim_8[0], vmax=clim_8[1], cmap='RdBu_r', aspect='auto', interpolation='none')
     plt.colorbar(im8, ax=ax8)
     title_8 = 'Residual (Noise, with NaNs)' if has_nans else 'Residual (Noise)'
     ax8.set_title(title_8)
@@ -405,7 +405,7 @@ def plot_diagnostic_figures(data, results, test_data=None):
     denoiser = results['denoiser']
     data_std = np.nanstd(denoiser) if has_nans else np.std(denoiser)
     clim_9 = 3 * data_std * np.array([-1, 1]) if data_std > 0 else np.array([-1, 1])
-    im9 = ax9.imshow(denoiser, vmin=clim_9[0], vmax=clim_9[1], cmap='RdBu_r', aspect='equal')
+    im9 = ax9.imshow(denoiser, vmin=clim_9[0], vmax=clim_9[1], cmap='RdBu_r', aspect='equal', interpolation='none')
     plt.colorbar(im9, ax=ax9)
     ax9.set_title('Denoiser Matrix')
     ax9.set_xlabel('Units')
