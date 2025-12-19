@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from psn.simulate import generate_data, _adjust_alignment_gradient_descent
+from psn.utilities.simulation.simulate_data import generate_data, _adjust_alignment_gradient_descent
 
 
 class TestSimulateData:

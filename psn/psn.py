@@ -363,7 +363,7 @@ def psn(*args):
         basis_eigenvalues = basis_eigenvalues[sort_idx_global]
 
     # =========================================================================
-    # STEP 7: Select thresholds and build denoiser
+    # STEP 7: Select thresholds and build denoising matrix
     # =========================================================================
     # Determine how many dimensions to retain. This depends on threshold_method:
     #   - 'global': single threshold for all units (symmetric denoiser)

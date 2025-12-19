@@ -1,6 +1,10 @@
 # pre-compiled spectrum and models
 *.npy
 *.h5
+*.png
+*/z-old/*
+*.jpg
+*/debug/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -390,7 +390,7 @@ if ~isempty(basis_eigenvalues)
 end
 
 % =========================================================================
-% STEP 7: Select thresholds and build denoiser
+% STEP 7: Select thresholds and build denoising matrix
 % =========================================================================
 % Determine how many dimensions to retain. This depends on threshold_method:
 %   - 'global': single threshold for all units (symmetric denoiser)
