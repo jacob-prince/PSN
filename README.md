@@ -1,98 +1,241 @@
-**psn** is a library for Partitioning Signal and Noise. 
+# PSN: Partitioning Signal and Noise
 
-Note: as of Sept. 2025, PSN is still under development - the API and the algorithm are both subject to change.
+**PSN** is a library for denoising neural data by adaptively partitioning signal and noise.
 
-# 🚀 Getting Started with PSN
+> **Note:** As of December 2025, PSN is under active development. The API and algorithm are subject to change.
 
-## Python Installation
+## What is PSN?
 
-### Install and Test
+PSN (Partitioning Signal and Noise) is a method for denoising multi-trial neural data by:
+1. Projecting data into a low-dimensional basis (e.g., eigenvectors of signal covariance)
+2. Adaptively selecting how many dimensions to retain per unit
+3. Reconstructing denoised estimates that optimize signal recovery while minimizing noise
+
+PSN builds on [Generative Modeling of Signal and Noise (GSN)](https://github.com/cvnlab/GSN).
+
+---
+
+## Quick Start
+
+### Python
+
+#### Installation
 
 Optionally create a conda environment:
-
 ```bash
 conda create -n psn python=3.9
 conda activate psn
 ```
 
-Clone the repository and install PSN:
-
+Clone and install:
 ```bash
 git clone https://github.com/jacob-prince/PSN.git
 cd PSN
 pip install -e .
 ```
 
-Test your installation:
+#### Basic Usage
 
 ```python
 import numpy as np
-from psn import PSN
+from psn import psn
 
 # Generate test data (10 units, 25 conditions, 3 trials)
 np.random.seed(42)
 data = np.random.randn(10, 25, 3)
 
-# Apply PSN denoising using sklearn-style API
-denoiser = PSN()
-denoised_data = denoiser.fit_transform(data)
+# Apply PSN denoising with default settings
+results = psn(data)
 
-print("PSN installation successful!")
+# Access denoised data
+denoised_data = results['denoiseddata']  # Shape: (10, 25)
 print(f"Original shape: {data.shape}")
 print(f"Denoised shape: {denoised_data.shape}")
+print(f"Retained {results['best_threshold']} dimensions on average")
 ```
 
-### Explore Examples
+#### Using Presets
 
-Run the comprehensive examples:
+PSN provides three presets for common use cases:
 
-```bash
-python examples/sklearn_api_demo.py
+```python
+# Conservative: prioritizes retaining signal
+# Uses: basis='signal', criterion='variance', threshold_method='global'
+results = psn(data, 'conservative')
+
+# Standard: balances signal retention and out-of-sample generalization (default)
+# Uses: basis='signal', criterion='prediction', threshold_method='hybrid'
+results = psn(data, 'standard')
+
+# Aggressive: maximizes out-of-sample generalization with unit-specific adaptation
+# Uses: basis='difference', criterion='prediction', threshold_method='unit'
+results = psn(data, 'aggressive')
 ```
 
-## MATLAB Installation
+#### Custom Configuration
 
-### Clone and Setup
+```python
+# Customize PSN parameters using options dict
+opt = {
+    'basis': 'signal',              # 'signal', 'difference', 'pca', or custom matrix
+    'criterion': 'prediction',      # 'prediction', 'variance', or 'variance_eigenvalues'
+    'threshold_method': 'hybrid',   # 'global', 'hybrid', or 'unit'
+    'variance_threshold': 0.95,     # Used when criterion='variance'
+    'wantverbose': True,            # Print progress messages
+    'wantfig': True                 # Generate diagnostic figures
+}
 
-Clone with submodules for the required GSN dependency:
+results = psn(data, opt)
 
+# Access results
+denoised_data = results['denoiseddata']      # Denoised estimates
+residuals = results['residuals']             # data - denoiseddata
+thresholds = results['best_threshold']       # Number of dimensions retained
+basis = results['fullbasis']                 # Basis vectors used
+```
+
+#### Output Structure
+
+The `psn()` function returns a dictionary with:
+
+```python
+results = psn(data, opt)
+
+# Primary outputs
+results['denoiseddata']    # (n_units, n_conditions) - Denoised estimates
+results['residuals']       # (n_units, n_conditions, n_trials) - data - denoiseddata
+
+# Diagnostics
+results['best_threshold']  # Average number of dimensions retained
+results['fullbasis']       # (n_units, n_dims) - Basis vectors
+results['signalvar']       # Signal variance per dimension
+results['noisevar']        # Noise variance per dimension
+results['gsn_result']      # Full GSN results dict
+```
+
+---
+
+### MATLAB
+
+#### Installation
+
+Clone with submodules to include the GSN dependency:
 ```bash
 git clone --recurse-submodules https://github.com/jacob-prince/PSN.git
 ```
 
-Or if already cloned:
+If you've already cloned without submodules:
 ```bash
 cd PSN
 git submodule update --init --recursive
 ```
 
-### Test Installation
+#### Basic Usage
 
-Open MATLAB and verify everything works:
+Open MATLAB and navigate to the PSN directory:
 
 ```matlab
 cd('path/to/PSN/matlab')
 
-% Verify GSN dependency
-test_gsn_dependency
+% Generate test data (50 units, 100 conditions, 5 trials)
+data = randn(50, 100, 5);
 
-% Test PSN functionality  
-test_psn
+% Apply PSN with default settings
+results = psn(data);
+fprintf('Denoised data shape: [%d x %d]\n', size(results.denoiseddata));
 ```
 
-You should see successful completion messages for both tests.
-
-### Quick Example
+#### Using Presets
 
 ```matlab
-% Generate test data and run PSN
-data = randn(50, 100, 5);  % 50 units, 100 conditions, 5 trials
-results = psn(data);
-fprintf('PSN completed! Denoised data shape: [%d x %d]\n', size(results.denoiseddata));
+% Conservative: prioritizes retaining signal
+results = psn(data, 'conservative');
+
+% Standard: balances signal retention and generalization (default)
+results = psn(data, 'standard');
+
+% Aggressive: maximizes out-of-sample generalization
+results = psn(data, 'aggressive');
 ```
 
-### Troubleshooting
+#### Custom Configuration
 
-- **"performgsn not found"**: Run `git submodule update --init --recursive`
-- **Path issues**: Ensure MATLAB is in the correct directory
-- See `matlab/README.md` for detailed documentation
+```matlab
+% Customize PSN parameters
+opt = struct();
+opt.basis = 'signal';              % 'signal', 'difference', 'pca', or custom matrix
+opt.criterion = 'prediction';      % 'prediction', 'variance', 'variance_eigenvalues'
+opt.threshold_method = 'hybrid';   % 'global', 'hybrid', 'unit'
+opt.variance_threshold = 0.95;     % Used when criterion='variance'
+opt.wantverbose = true;
+opt.wantfig = true;                % Display diagnostic figures
+
+results = psn(data, opt);
+```
+
+#### Test Installation
+
+Verify GSN dependency and PSN functionality:
+```matlab
+cd('path/to/PSN/matlab')
+
+% Test GSN dependency
+test_gsn_dependency
+
+```
+
+#### Troubleshooting
+
+- **"performgsn not found"**: Run `git submodule update --init --recursive` to fetch the GSN dependency
+- **Path issues**: Ensure MATLAB's working directory is `PSN/matlab`
+- See `matlab/README.md` for detailed MATLAB-specific documentation
+
+---
+
+## Key Parameters
+
+| Parameter | Options | Description |
+|-----------|---------|-------------|
+| **basis** | `'signal'`, `'difference'`, `'pca'`, custom matrix | Basis for dimensionality reduction |
+| **criterion** | `'prediction'`, `'variance'`, `'variance_eigenvalues'` | How to determine dimensionality threshold |
+| **threshold_method** | `'global'`, `'hybrid'`, `'unit'` | How to apply thresholds across units |
+| **variance_threshold** | 0.0 to 1.0 (default: 0.99) | Target variance fraction (for `criterion='variance'`) |
+
+---
+
+## Data Format
+
+Both Python and MATLAB expect data in the shape:
+- **Python**: `(n_units, n_conditions, n_trials)`
+- **MATLAB**: `[n_units x n_conditions x n_trials]`
+
+**NaN handling**: PSN supports uneven trials across conditions. Missing trials can be indicated with NaNs. Each condition must have at least one trial with valid data across all units.
+
+---
+
+## Documentation
+
+- **MATLAB API**: See [matlab/README.md](matlab/README.md) for detailed MATLAB documentation
+- **Examples**: Explore `examples/` for Python demos and `matlab/tests/` for MATLAB examples
+
+---
+
+## Citation
+
+If you use PSN in your research, please cite:
+
+```
+[Citation information will be added upon publication]
+```
+
+---
+
+## License
+
+PSN is released under the MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+## Contributing
+
+PSN is under active development. Feedback, bug reports, and contributions are welcome! Please open an issue or pull request on GitHub.

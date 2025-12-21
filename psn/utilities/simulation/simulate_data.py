@@ -248,7 +248,7 @@ def generate_data(nvox=50, ncond=200, ntrial=5, signal_decay=2.0, noise_decay=1.
         ground_truth['unit_order'] = unit_order
 
     if want_fig:
-        plot_data_diagnostic(train_data, ground_truth, {
+        fig = plot_data_diagnostic(train_data, ground_truth, {
             'nvox': nvox,
             'ncond': ncond,
             'ntrial': ntrial,
@@ -261,6 +261,7 @@ def generate_data(nvox=50, ncond=200, ntrial=5, signal_decay=2.0, noise_decay=1.
             'user_provided': ground_truth['user_provided'],
             'clustered': cluster_units
         })
+        ground_truth['diagnostic_fig'] = fig
 
     return train_data, test_data, ground_truth
 
@@ -747,7 +748,6 @@ def plot_data_diagnostic(data, ground_truth, params):
     ax10.set_ylabel('Unit')
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust for suptitle
-    plt.show()
 
     return fig
 
