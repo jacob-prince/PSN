@@ -772,3 +772,5 @@ def plot_diagnostic_figures(data, results, test_data=None):
 
     plt.tight_layout()
     plt.show()
+
+    return fig

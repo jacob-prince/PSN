@@ -1,6 +1,7 @@
 """PSN (Partitioning Signal and Noise) - Neural data denoising package."""
 
 from .psn import psn
+from .sklearn_api import PSN
 from .utils import (
     compute_noise_ceiling,
     compute_r2,
@@ -26,6 +27,7 @@ except ImportError:
 __all__ = [
     '__version__',
     'psn',
+    'PSN',
     'perform_gsn',
     'compute_noise_ceiling',
     'make_orthonormal',
