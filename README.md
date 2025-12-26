@@ -34,82 +34,179 @@ cd PSN
 pip install -e .
 ```
 
-#### Basic Usage
+#### Basic Usage (Sklearn API)
+
+PSN provides a scikit-learn compatible API with `fit()`, `transform()`, and `fit_transform()` methods:
 
 ```python
 import numpy as np
-from psn import psn
+from psn import PSN
 
 # Generate test data (10 units, 25 conditions, 3 trials)
 np.random.seed(42)
 data = np.random.randn(10, 25, 3)
+
+# Create and fit the model
+model = PSN()
+model.fit(data)
+
+# Access denoised data
+print(f"Denoised shape: {model.denoiseddata_.shape}")  # (10, 25)
+print(f"Retained {model.best_threshold_} dimensions")
+
+# Or use fit_transform for one-step denoising
+denoised = PSN().fit_transform(data)
+```
+
+#### Applying to New Data
+
+Once fitted, the model can denoise new data with the same units:
+
+```python
+# Fit on training data
+model = PSN()
+model.fit(train_data)
+
+# Apply to new test data (must have same number of units)
+denoised_test = model.transform(test_data)
+
+# Works with 3D (trial) or 2D (already averaged) data
+denoised_2d = model.transform(test_data_2d)
+```
+
+#### Saving and Loading Models
+
+Fitted models can be saved and loaded using pickle:
+
+```python
+import pickle
+
+# Save fitted model
+with open('psn_model.pkl', 'wb') as f:
+    pickle.dump(model, f)
+
+# Load and use
+with open('psn_model.pkl', 'rb') as f:
+    loaded_model = pickle.load(f)
+
+denoised = loaded_model.transform(new_data)
+```
+
+#### Diagnostic Visualization
+
+Generate diagnostic plots after fitting:
+
+```python
+model = PSN()
+model.fit(data)
+
+# Generate diagnostic figure
+fig = model.plot_diagnostics()
+fig.savefig('diagnostics.png')
+
+# Or visualize during fit
+model.fit(data, visualize=True)
+```
+
+#### Functional API
+
+For simple one-shot denoising, use the functional `psn()` interface:
+
+```python
+from psn import psn
 
 # Apply PSN denoising with default settings
 results = psn(data)
 
 # Access denoised data
 denoised_data = results['denoiseddata']  # Shape: (10, 25)
-print(f"Original shape: {data.shape}")
-print(f"Denoised shape: {denoised_data.shape}")
 print(f"Retained {results['best_threshold']} dimensions on average")
 ```
 
 #### Using Presets
 
-PSN provides three presets for common use cases:
+By default, PSN uses the `'standard'` preset. You can optionally specify a different mode:
 
 ```python
+# Standard (default): balances signal retention and out-of-sample generalization
+# Uses: basis='signal', criterion='prediction', threshold_method='hybrid'
+model = PSN()  # equivalent to PSN(mode='standard')
+
 # Conservative: prioritizes retaining signal
 # Uses: basis='signal', criterion='variance', threshold_method='global'
-results = psn(data, 'conservative')
-
-# Standard: balances signal retention and out-of-sample generalization (default)
-# Uses: basis='signal', criterion='prediction', threshold_method='hybrid'
-results = psn(data, 'standard')
+model = PSN(mode='conservative')
 
 # Aggressive: maximizes out-of-sample generalization with unit-specific adaptation
 # Uses: basis='difference', criterion='prediction', threshold_method='unit'
-results = psn(data, 'aggressive')
+model = PSN(mode='aggressive')
 ```
 
 #### Custom Configuration
 
 ```python
-# Customize PSN parameters using options dict
+# Sklearn API: pass parameters directly to constructor
+model = PSN(
+    mode=None,                       # Use None for fully custom config
+    basis='signal',                  # 'signal', 'difference', 'pca', or custom matrix
+    criterion='prediction',          # 'prediction', 'variance', or 'variance_eigenvalues'
+    threshold_method='hybrid',       # 'global', 'hybrid', or 'unit'
+    variance_threshold=0.95,         # Used when criterion='variance'
+    wantverbose=True                 # Print progress messages
+)
+model.fit(data)
+
+# Access results as attributes (with trailing underscore)
+denoised_data = model.denoiseddata_      # Denoised estimates
+residuals = model.residuals_             # data - denoiseddata
+thresholds = model.best_threshold_       # Number of dimensions retained
+basis = model.fullbasis_                 # Basis vectors used
+denoiser = model.denoiser_               # Learned denoising matrix
+
+# Functional API: pass options as dict
 opt = {
-    'basis': 'signal',              # 'signal', 'difference', 'pca', or custom matrix
-    'criterion': 'prediction',      # 'prediction', 'variance', or 'variance_eigenvalues'
-    'threshold_method': 'hybrid',   # 'global', 'hybrid', or 'unit'
-    'variance_threshold': 0.95,     # Used when criterion='variance'
-    'wantverbose': True,            # Print progress messages
-    'wantfig': True                 # Generate diagnostic figures
+    'basis': 'signal',
+    'criterion': 'prediction',
+    'threshold_method': 'hybrid',
+    'variance_threshold': 0.95,
+    'wantverbose': True,
+    'wantfig': True
 }
-
 results = psn(data, opt)
-
-# Access results
-denoised_data = results['denoiseddata']      # Denoised estimates
-residuals = results['residuals']             # data - denoiseddata
-thresholds = results['best_threshold']       # Number of dimensions retained
-basis = results['fullbasis']                 # Basis vectors used
 ```
 
 #### Output Structure
 
-The `psn()` function returns a dictionary with:
+**Sklearn API** - Access results as attributes (with trailing underscore):
+
+```python
+model = PSN()
+model.fit(data)
+
+# Primary outputs
+model.denoiseddata_       # (n_units, n_conditions) - Denoised estimates
+model.residuals_          # (n_units, n_conditions, n_trials) - data - denoiseddata
+model.denoiser_           # (n_units, n_units) - Learned denoising matrix
+model.unit_means_         # (n_units,) - Mean per unit for centering
+
+# Diagnostics
+model.best_threshold_     # Number of dimensions retained (scalar or array)
+model.fullbasis_          # (n_units, n_dims) - Basis vectors
+model.signalvar_          # Signal variance per dimension
+model.noisevar_           # Noise variance per dimension
+model.svnv_before_        # Signal/noise variance before denoising
+model.svnv_after_         # Signal/noise variance after denoising
+```
+
+**Functional API** - Returns a dictionary:
 
 ```python
 results = psn(data, opt)
 
-# Primary outputs
 results['denoiseddata']    # (n_units, n_conditions) - Denoised estimates
 results['residuals']       # (n_units, n_conditions, n_trials) - data - denoiseddata
-
-# Diagnostics
-results['best_threshold']  # Average number of dimensions retained
+results['denoiser']        # (n_units, n_units) - Denoising matrix
+results['best_threshold']  # Number of dimensions retained
 results['fullbasis']       # (n_units, n_dims) - Basis vectors
-results['signalvar']       # Signal variance per dimension
-results['noisevar']        # Noise variance per dimension
 results['gsn_result']      # Full GSN results dict
 ```
 
