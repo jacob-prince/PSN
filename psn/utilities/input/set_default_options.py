@@ -70,6 +70,17 @@ def set_default_options(opt, nunits):
     if 'wantverbose' not in opt:
         opt['wantverbose'] = True
 
+    # Auto-detect: if allowable_thresholds is a single value, force threshold_method to 'global'
+    if opt['allowable_thresholds'] is not None:
+        allowable_arr = np.asarray(opt['allowable_thresholds'])
+        if allowable_arr.ndim == 1 and len(allowable_arr) == 1:
+            if opt['threshold_method'] != 'global':
+                if opt['wantverbose']:
+                    print("PSN: allowable_thresholds is a single value, automatically setting threshold_method to 'global'")
+                opt['threshold_method'] = 'global'
+                # Update unit_groups to match global mode
+                opt['unit_groups'] = np.zeros(nunits, dtype=int)
+
     _validate_options(opt, nunits)
     return opt
 

@@ -55,23 +55,48 @@ function [denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_
 % already encode signal - noise/ntrials, so we directly maximize cumsum(eigenvalues)
 
     nunits = size(basis, 1);
+    ndims = size(basis, 2);
     use_diff_basis = ischar(opt.basis) && strcmp(opt.basis, 'difference');
     use_prediction = strcmp(opt.criterion, 'prediction');
 
-    % Threshold selection
-    if use_diff_basis && use_prediction && ~isempty(basis_eigenvalues)
-        % FAST PATH: difference basis eigenvalues ARE the net benefit
-        objective = [0; cumsum(basis_eigenvalues(:))];
-        [~, k] = max(objective);
-        k = k - 1;  % Convert index to number of dims
-    else
-        % Standard path (including variance_eigenvalues criterion)
-        [k, objective] = select_threshold_analytic(signal_proj, noise_proj, basis_eigenvalues, ntrials, opt);
-    end
-
-    % Apply allowable_thresholds constraint
+    % Check if allowable_thresholds is a scalar (forced threshold)
     if ~isempty(opt.allowable_thresholds)
-        k = constrain_to_allowable(k, opt.allowable_thresholds);
+        if isscalar(opt.allowable_thresholds)
+            % FORCED THRESHOLD: Skip optimization, use the scalar value directly
+            k = opt.allowable_thresholds;
+            % Still compute objective curve for visualization
+            if use_diff_basis && use_prediction && ~isempty(basis_eigenvalues)
+                objective = [0; cumsum(basis_eigenvalues(:))];
+            else
+                [~, objective] = select_threshold_analytic(signal_proj, noise_proj, basis_eigenvalues, ntrials, opt);
+            end
+        else
+            % Normal optimization with constraint
+            % Threshold selection
+            if use_diff_basis && use_prediction && ~isempty(basis_eigenvalues)
+                % FAST PATH: difference basis eigenvalues ARE the net benefit
+                objective = [0; cumsum(basis_eigenvalues(:))];
+                [~, k] = max(objective);
+                k = k - 1;  % Convert index to number of dims
+            else
+                % Standard path (including variance_eigenvalues criterion)
+                [k, objective] = select_threshold_analytic(signal_proj, noise_proj, basis_eigenvalues, ntrials, opt);
+            end
+
+            % Apply allowable_thresholds constraint
+            k = constrain_to_allowable(k, opt.allowable_thresholds);
+        end
+    else
+        % No constraint: normal optimization
+        if use_diff_basis && use_prediction && ~isempty(basis_eigenvalues)
+            % FAST PATH: difference basis eigenvalues ARE the net benefit
+            objective = [0; cumsum(basis_eigenvalues(:))];
+            [~, k] = max(objective);
+            k = k - 1;  % Convert index to number of dims
+        else
+            % Standard path (including variance_eigenvalues criterion)
+            [k, objective] = select_threshold_analytic(signal_proj, noise_proj, basis_eigenvalues, ntrials, opt);
+        end
     end
 
     best_threshold = k;

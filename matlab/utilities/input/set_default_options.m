@@ -88,6 +88,20 @@ function opt = set_default_options(opt, nunits)
         opt.wantverbose = 1;
     end
 
+    % Auto-detect: if allowable_thresholds is a single value, force threshold_method to 'global'
+    if ~isempty(opt.allowable_thresholds)
+        if isscalar(opt.allowable_thresholds)
+            if ~strcmp(opt.threshold_method, 'global')
+                if opt.wantverbose
+                    fprintf('PSN: allowable_thresholds is a single value, automatically setting threshold_method to ''global''\n');
+                end
+                opt.threshold_method = 'global';
+                % Update unit_groups to match global mode
+                opt.unit_groups = zeros(nunits, 1);
+            end
+        end
+    end
+
     validate_options(opt, nunits);
 end
 

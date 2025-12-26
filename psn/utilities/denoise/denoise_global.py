@@ -62,22 +62,45 @@ def denoise_global(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, o
     """
 
     nunits = basis.shape[0]
+    ndims = basis.shape[1]
     use_diff_basis = isinstance(opt['basis'], str) and opt['basis'] == 'difference'
     use_prediction = opt['criterion'] == 'prediction'
 
-    # Threshold selection
-    if use_diff_basis and use_prediction and basis_eigenvalues is not None:
-        # FAST PATH: difference basis eigenvalues ARE the net benefit
-        objective = np.concatenate([[0], np.cumsum(basis_eigenvalues)])
-        k = np.argmax(objective)
-        # k is already the number of dims (0-indexed argmax)
-    else:
-        # Standard path (including variance_eigenvalues criterion)
-        k, objective = select_threshold_analytic(signal_proj, noise_proj, basis_eigenvalues, ntrials, opt)
-
-    # Apply allowable_thresholds constraint
+    # Check if allowable_thresholds is a scalar (forced threshold)
     if opt['allowable_thresholds'] is not None:
-        k = constrain_to_allowable(k, opt['allowable_thresholds'])
+        allowable_arr = np.asarray(opt['allowable_thresholds'])
+        if allowable_arr.ndim == 1 and len(allowable_arr) == 1:
+            # FORCED THRESHOLD: Skip optimization, use the scalar value directly
+            k = int(allowable_arr[0])
+            # Still compute objective curve for visualization
+            if use_diff_basis and use_prediction and basis_eigenvalues is not None:
+                objective = np.concatenate([[0], np.cumsum(basis_eigenvalues)])
+            else:
+                _, objective = select_threshold_analytic(signal_proj, noise_proj, basis_eigenvalues, ntrials, opt)
+        else:
+            # Normal optimization with constraint
+            # Threshold selection
+            if use_diff_basis and use_prediction and basis_eigenvalues is not None:
+                # FAST PATH: difference basis eigenvalues ARE the net benefit
+                objective = np.concatenate([[0], np.cumsum(basis_eigenvalues)])
+                k = np.argmax(objective)
+                # k is already the number of dims (0-indexed argmax)
+            else:
+                # Standard path (including variance_eigenvalues criterion)
+                k, objective = select_threshold_analytic(signal_proj, noise_proj, basis_eigenvalues, ntrials, opt)
+
+            # Apply allowable_thresholds constraint
+            k = constrain_to_allowable(k, opt['allowable_thresholds'])
+    else:
+        # No constraint: normal optimization
+        if use_diff_basis and use_prediction and basis_eigenvalues is not None:
+            # FAST PATH: difference basis eigenvalues ARE the net benefit
+            objective = np.concatenate([[0], np.cumsum(basis_eigenvalues)])
+            k = np.argmax(objective)
+            # k is already the number of dims (0-indexed argmax)
+        else:
+            # Standard path (including variance_eigenvalues criterion)
+            k, objective = select_threshold_analytic(signal_proj, noise_proj, basis_eigenvalues, ntrials, opt)
 
     best_threshold = k
 
