@@ -390,19 +390,22 @@ function visualization(data, results)
     % Plot 6-8: Raw, Denoised, Noise
     % =====================================================================
 
+    % Compute shared colorbar limits across all three plots
+    all_data_678 = [trial_avg(:); denoised(:); noise(:)];
+    if has_nans
+        shared_std = nanstd(all_data_678);
+    else
+        shared_std = std(all_data_678);
+    end
+    if shared_std > 0
+        clim_shared = 3*shared_std * [-1, 1];  % Symmetric around 0
+    else
+        clim_shared = [-1, 1];
+    end
+
     % Plot 6: Raw trial-averaged data
     subplot(4, 4, 6);
-    if has_nans
-        data_std = nanstd(trial_avg(:));
-    else
-        data_std = std(trial_avg(:));
-    end
-    if data_std > 0
-        clim_6 = 3*data_std * [-1, 1];  % Symmetric around 0
-    else
-        clim_6 = [-1, 1];
-    end
-    imagesc(trial_avg, clim_6);
+    imagesc(trial_avg, clim_shared);
     colormap(gca, redblue);
     colorbar;
     if has_nans
@@ -415,17 +418,7 @@ function visualization(data, results)
 
     % Plot 7: Denoised data
     subplot(4, 4, 7);
-    if has_nans
-        data_std = nanstd(denoised(:));
-    else
-        data_std = std(denoised(:));
-    end
-    if data_std > 0
-        clim_7 = 3*data_std * [-1, 1];  % Symmetric around 0
-    else
-        clim_7 = [-1, 1];
-    end
-    imagesc(denoised, clim_7);
+    imagesc(denoised, clim_shared);
     colormap(gca, redblue);
     colorbar;
     title('PSN Denoised Data');
@@ -434,17 +427,7 @@ function visualization(data, results)
 
     % Plot 8: Noise (residual)
     subplot(4, 4, 8);
-    if has_nans
-        data_std = nanstd(noise(:));
-    else
-        data_std = std(noise(:));
-    end
-    if data_std > 0
-        clim_8 = 3*data_std * [-1, 1];  % Symmetric around 0
-    else
-        clim_8 = [-1, 1];
-    end
-    imagesc(noise, clim_8);
+    imagesc(noise, clim_shared);
     colormap(gca, redblue);
     colorbar;
     if has_nans
