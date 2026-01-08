@@ -46,7 +46,8 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
 
     <basis_eigenvalues> - [ndims] eigenvalues associated with basis, sorted
       to match basis columns. None for custom or random bases. For 'pca'
-      basis, contains PCA eigenvalues for visualization only (not used for ranking)
+      basis, contains PCA eigenvalues (used for ordering, but not appropriate
+      for criterion='variance_eigenvalues')
     """
 
     nunits = data.shape[0]
@@ -78,7 +79,9 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
             trial_avg_demeaned = trial_avg - unit_means[:, np.newaxis]
             cov_matrix = np.cov(trial_avg_demeaned, ddof=1)  # numpy cov returns symmetric matrix
             basis_eigenvalues, basis = _eigh_descending_sym(cov_matrix)  # no symmetrization needed
-            # Note: PCA eigenvalues stored but NOT used for ranking/thresholding
+            # Note: PCA eigenvalues ARE used for ordering (default behavior), but should
+            # NOT be used with criterion='variance_eigenvalues' as they don't represent
+            # GSN-estimated signal variance.
 
         elif basis_spec == 'random':
             # Random orthonormal basis (no meaningful eigenvalues)

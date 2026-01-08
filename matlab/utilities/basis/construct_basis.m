@@ -41,7 +41,8 @@ function [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, data
 %
 % <basis_eigenvalues> - [ndims x 1] eigenvalues associated with basis, sorted
 %   to match basis columns. Empty ([]) for custom or random bases. For 'pca'
-%   basis, contains PCA eigenvalues for visualization only (not used for ranking)
+%   basis, contains PCA eigenvalues (used for ordering, but not appropriate
+%   for criterion='variance_eigenvalues')
 
     nunits = size(data, 1);
 
@@ -75,7 +76,9 @@ function [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, data
                 trial_avg_demeaned = trial_avg - unit_means;
                 cov_matrix = cov(trial_avg_demeaned');  % cov() returns symmetric matrix
                 [basis_eigenvalues, basis] = eigh_descending_sym(cov_matrix);  % no symmetrization needed
-                % Note: PCA eigenvalues stored but NOT used for ranking/thresholding
+                % Note: PCA eigenvalues ARE used for ordering (default behavior), but should
+                % NOT be used with criterion='variance_eigenvalues' as they don't represent
+                % GSN-estimated signal variance.
 
             case 'random'
                 % Random orthonormal basis (no meaningful eigenvalues)
