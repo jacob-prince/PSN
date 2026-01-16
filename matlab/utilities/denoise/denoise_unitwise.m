@@ -146,11 +146,17 @@ function [denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_
         end
     end
 
-    % Population-level averages for visualization
+    % Population-level totals for visualization
+    % Sum across units to get total variance (since unit weights sum to 1,
+    % mean * nunits = sum). This makes signalvar/noisevar consistent with
+    % eigenvalues and global mode.
     if ~isempty(unit_signal_vars)
-        signalvar = mean(cat(2, unit_signal_vars{:}), 2);
-        noisevar = mean(cat(2, unit_noise_vars{:}), 2);
+        signalvar = mean(cat(2, unit_signal_vars{:}), 2) * nunits;
+        noisevar = mean(cat(2, unit_noise_vars{:}), 2) * nunits;
         objective = [0; cumsum(signalvar - noisevar / ntrials)];
+
+        % Note: unit_cumsum_curves remain unscaled (per-unit contributions)
+        % Their sum equals the objective (green line)
     else
         signalvar = [];
         noisevar = [];

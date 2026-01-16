@@ -447,7 +447,7 @@ residuals = data - repmat(denoiseddata, [1, 1, ntrials]);
 % =========================================================================
 
 [svnv_before, svnv_after] = compute_signal_noise_diagnostics(...
-    opt.threshold_method, unit_signal_vars, unit_noise_vars, best_threshold, nunits);
+    opt.threshold_method, unit_signal_vars, unit_noise_vars, best_threshold, nunits, ntrials_avg);
 
 % =========================================================================
 % STEP 11: Package results

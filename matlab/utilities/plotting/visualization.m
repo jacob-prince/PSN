@@ -75,6 +75,30 @@ function visualization(data, results)
         title_text = sprintf('Data: %d units × %d conditions × %d trials  |  Basis: %s  |  Criterion: %s  |  Method: %s', ...
                             nunits, nconds, ntrials, basis_desc, criterion, threshold_method);
     end
+
+    % Add threshold info if conservative mode or variance criterion is used
+    threshold_info = {};
+    if isfield(opt, 'allowable_thresholds') && ~isempty(opt.allowable_thresholds)
+        allowable = opt.allowable_thresholds;
+        if numel(allowable) == 1
+            threshold_info{end+1} = sprintf('Forced threshold: %d', allowable(1));
+        else
+            threshold_info{end+1} = sprintf('Allowable thresholds: [%s]', num2str(allowable(:)'));
+        end
+    end
+    if strcmp(criterion, 'variance') || strcmp(criterion, 'variance_eigenvalues')
+        if isfield(opt, 'variance_threshold')
+            vt = opt.variance_threshold;
+        else
+            vt = 0.99;
+        end
+        threshold_info{end+1} = sprintf('Variance threshold: %.2f', vt);
+    end
+
+    if ~isempty(threshold_info)
+        title_text = [title_text '  |  ' strjoin(threshold_info, ', ')];
+    end
+
     sgtitle(title_text, 'FontSize', 12, 'FontWeight', 'bold');
 
     % Get trial-averaged and denoised data (use nanmean for NaN data)
@@ -123,18 +147,12 @@ function visualization(data, results)
             plot_title = 'Signal Covariance (cSb)';
         end
 
-        % Compute z-score based colorbar limits (±3 SD)
-        if has_nans
-            data_mean = nanmean(plot_matrix_1(:));
-            data_std = nanstd(plot_matrix_1(:));
+        % Compute symmetric colorbar limits around 0 (use 99th percentile for better contrast)
+        data_absmax = prctile(abs(plot_matrix_1(:)), 99);
+        if data_absmax > 0
+            clim_1 = [-data_absmax, data_absmax];
         else
-            data_mean = mean(plot_matrix_1(:));
-            data_std = std(plot_matrix_1(:));
-        end
-        if data_std > 0
-            clim_1 = [data_mean - 3*data_std, data_mean + 3*data_std];
-        else
-            clim_1 = [data_mean - 1, data_mean + 1];
+            clim_1 = [-1, 1];
         end
 
         imagesc(plot_matrix_1, clim_1);
@@ -185,6 +203,7 @@ function visualization(data, results)
         title('Top 5 Basis Dimensions');
         xlim([0.5, num_pcs + 0.5]);
         ylim([1, nunits]);
+        set(gca, 'YDir', 'reverse');  % Flip y-axis to match heatmaps
         set(gca, 'XTick', 1:num_pcs);
         grid on;
     else
@@ -200,9 +219,6 @@ function visualization(data, results)
     % NOTE: Shows SORTED values (descending order used for ranking)
     subplot(4, 4, 3);
 
-    % Determine if we should use log spacing (more than 50 units)
-    use_log_x = nunits > 50;
-
     % Check if eigenvalues were used for ranking (and are available)
     use_eigenvalues = strcmp(basis_ordering, 'eigenvalues') && ...
                       isfield(results, 'basis_eigenvalues') && ...
@@ -211,18 +227,14 @@ function visualization(data, results)
     if use_eigenvalues
         % Show eigenvalues (SORTED - what was actually used for ranking)
         evals = results.basis_eigenvalues;  % Already sorted in descending order
-        if use_log_x
-            semilogx(1:length(evals), evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5]);
-        else
-            plot(1:length(evals), evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5]);
-        end
+        plot(0:length(evals)-1, evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5]);
         hold on;
 
-        % Add threshold indicators
+        % Add threshold indicators (only if threshold > 0, since line means "include up to here")
         if isfield(results, 'best_threshold')
             if isscalar(results.best_threshold) && results.best_threshold > 0
                 xline(results.best_threshold, 'r--', 'LineWidth', 1.5, 'Label', sprintf('Thresh: %d', results.best_threshold));
-            elseif ~isscalar(results.best_threshold)
+            elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
                 mean_thresh = mean(results.best_threshold);
                 xline(mean_thresh, 'r--', 'LineWidth', 1.5, 'Label', sprintf('Mean: %.1f', mean_thresh));
             end
@@ -236,18 +248,14 @@ function visualization(data, results)
     elseif isfield(results, 'signalvar')
         % Show signal variance (SORTED - what was actually used for ranking)
         signal_vars = results.signalvar;  % Already sorted in descending order
-        if use_log_x
-            semilogx(1:length(signal_vars), signal_vars, 'LineWidth', 1.5, 'Color', 'blue');
-        else
-            plot(1:length(signal_vars), signal_vars, 'LineWidth', 1.5, 'Color', 'blue');
-        end
+        plot(0:length(signal_vars)-1, signal_vars, 'LineWidth', 1.5, 'Color', 'blue');
         hold on;
 
-        % Add threshold indicators
+        % Add threshold indicators (only if threshold > 0, since line means "include up to here")
         if isfield(results, 'best_threshold')
             if isscalar(results.best_threshold) && results.best_threshold > 0
                 xline(results.best_threshold, 'r--', 'LineWidth', 1.5, 'Label', sprintf('Thresh: %d', results.best_threshold));
-            elseif ~isscalar(results.best_threshold)
+            elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
                 mean_thresh = mean(results.best_threshold);
                 xline(mean_thresh, 'r--', 'LineWidth', 1.5, 'Label', sprintf('Mean: %.1f', mean_thresh));
             end
@@ -272,33 +280,25 @@ function visualization(data, results)
             % Global or averaged
             % Left y-axis for variance
             yyaxis left;
-            if use_log_x
-                semilogx(1:length(results.signalvar), results.signalvar, '-', 'LineWidth', 1.5, 'Color', 'blue', 'DisplayName', 'Signal var');
-                hold on;
-                semilogx(1:length(results.noisevar), results.noisevar, '-', 'LineWidth', 1.5, 'Color', [1 0.5 0], 'DisplayName', 'Noise var');
-            else
-                plot(results.signalvar, '-', 'LineWidth', 1.5, 'Color', 'blue', 'DisplayName', 'Signal var');
-                hold on;
-                plot(results.noisevar, '-', 'LineWidth', 1.5, 'Color', [1 0.5 0], 'DisplayName', 'Noise var');
-            end
+            x_dims = 0:length(results.signalvar)-1;
+            plot(x_dims, results.signalvar, '-', 'LineWidth', 1.5, 'Color', 'blue', 'DisplayName', 'Signal var');
+            hold on;
+            plot(x_dims, results.noisevar, '-', 'LineWidth', 1.5, 'Color', [1 0.5 0], 'DisplayName', 'Noise var');
+            plot(x_dims, results.noisevar / ntrials_avg, '-', 'LineWidth', 1.5, 'Color', [1 0.85 0.6], 'DisplayName', sprintf('Noise var / %.1f trials', ntrials_avg));
             ylabel('Variance');
 
             % Right y-axis for NCSNR
             yyaxis right;
             ncsnr_trace = sqrt(results.signalvar) ./ sqrt(results.noisevar + eps);
-            if use_log_x
-                semilogx(1:length(ncsnr_trace), ncsnr_trace, '-', 'LineWidth', 1.5, 'Color', 'magenta', 'DisplayName', 'NCSNR');
-            else
-                plot(ncsnr_trace, '-', 'LineWidth', 1.5, 'Color', 'magenta', 'DisplayName', 'NCSNR');
-            end
+            plot(x_dims, ncsnr_trace, '-', 'LineWidth', 1.5, 'Color', 'magenta', 'DisplayName', 'NCSNR');
             ylabel('NCSNR');
 
-            % Add threshold (on left axis)
+            % Add threshold (on left axis, only if > 0)
             yyaxis left;
             if isfield(results, 'best_threshold')
-                if isscalar(results.best_threshold)
+                if isscalar(results.best_threshold) && results.best_threshold > 0
                     xline(results.best_threshold, 'r--', 'LineWidth', 1, 'DisplayName', 'Threshold');
-                else
+                elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
                     xline(mean(results.best_threshold), 'r--', 'LineWidth', 1, 'DisplayName', 'Mean Threshold');
                 end
             end
@@ -323,62 +323,79 @@ function visualization(data, results)
     % =====================================================================
     subplot(4, 4, 5);
     if isfield(results, 'objective')
-        hold on;
-
         % Check if unit-specific objectives are available
         if isfield(results, 'unit_objectives') && ~isempty(results.unit_objectives)
-            % Unit-specific mode: plot all unit curves
+            % Unit-specific mode: use dual y-axes
+            % Left axis: unit curves (gray)
+            yyaxis left;
+            hold on;
+            h_units = [];
             for u = 1:length(results.unit_objectives)
                 curve_u = results.unit_objectives{u};
-                plot(0:length(curve_u)-1, curve_u, 'LineWidth', 0.5, 'Color', [0.5 0.5 0.5 0.3]);
+                x_unit = 0:length(curve_u)-1;
+                h_units(end+1) = plot(x_unit, curve_u, '-', 'LineWidth', 0.5, 'Color', [0.5 0.5 0.5 0.3], 'Marker', 'none');
             end
 
-            % Plot population average as thick line
-            plot(0:length(results.objective)-1, results.objective, 'LineWidth', 2, 'Color', [0.3 0.7 0.3]);
-
-            % Mark each unit's chosen threshold
+            % Mark each unit's chosen threshold (on left axis)
             if isfield(results, 'best_threshold')
                 x_thresh = [];
                 y_thresh = [];
                 for u = 1:length(results.unit_objectives)
                     k_u = results.best_threshold(u);
                     curve_u = results.unit_objectives{u};
-                    if k_u > 0 && k_u <= length(curve_u)
+                    if k_u >= 0 && k_u < length(curve_u)  % k_u=0 is valid (keep 0 dims)
                         x_thresh(end+1) = k_u;
-                        y_thresh(end+1) = curve_u(k_u+1);
+                        y_thresh(end+1) = curve_u(k_u+1);  % +1 for MATLAB 1-indexing
                     end
                 end
                 if ~isempty(x_thresh)
                     scatter(x_thresh, y_thresh, 20, [1 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
                 end
             end
+            ylabel({'Unit-Specific Objective', '(SignalVar - NoiseVar/ntrials)'});
+            set(gca, 'YColor', [0.4 0.4 0.4]);
+
+            % Right axis: population sum (green)
+            yyaxis right;
+            x_obj = 0:length(results.objective)-1;
+            h_sum = plot(x_obj, results.objective, 'LineWidth', 2, 'Color', [0.3 0.7 0.3]);
+            ylabel('Population Objective');
+            set(gca, 'YColor', [0.3 0.7 0.3]);
+
+            % Add legend
+            legend([h_units(1), h_sum], {'Units', 'Population (=Global)'}, 'Location', 'best');
 
             title('Objective Function (unit-specific)');
         else
             % Global mode: single curve
-            plot(0:length(results.objective)-1, results.objective, 'LineWidth', 1.5, 'Color', [0.3 0.7 0.3]);
+            x_obj = 0:length(results.objective)-1;
+            plot(x_obj, results.objective, 'LineWidth', 1.5, 'Color', [0.3 0.7 0.3]);
 
-            % Mark maximum
-            [~, max_idx] = max(results.objective);
-            plot(max_idx-1, results.objective(max_idx), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
+            % Mark chosen threshold (not maximum - threshold may be constrained)
+            if isfield(results, 'best_threshold') && isscalar(results.best_threshold)
+                k = results.best_threshold;
+                if k >= 0 && k < length(results.objective)
+                    hold on;
+                    plot(k, results.objective(k+1), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
+                end
+            else
+                % Fallback to maximum if no threshold stored
+                [~, max_idx] = max(results.objective);
+                hold on;
+                plot(max_idx-1, results.objective(max_idx), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
+            end
 
             title('Objective Function');
-        end
 
-        % Set x-axis scale (log for high-dimensional data)
-        if use_log_x
-            set(gca, 'XScale', 'log');
+            % Set ylabel based on criterion (only for global mode)
+            if strcmp(criterion, 'variance')
+                ylabel('Cumulative SignalVar');
+            else
+                ylabel('Cumulative SignalVar - NoiseVar/ntrials');
+            end
         end
 
         xlabel('Number of Dimensions');
-
-        % Set ylabel based on criterion
-        if strcmp(criterion, 'variance')
-            ylabel('Cumulative Variance');
-        else
-            ylabel('Cumulative Signal - Noise/ntrials');
-        end
-
         grid on;
     else
         text(0.5, 0.5, 'Objective\nNot Available', ...
@@ -393,14 +410,16 @@ function visualization(data, results)
     % Compute shared colorbar limits across all three plots
     all_data_678 = [trial_avg(:); denoised(:); noise(:)];
     if has_nans
+        shared_mean = nanmean(all_data_678);
         shared_std = nanstd(all_data_678);
     else
+        shared_mean = mean(all_data_678);
         shared_std = std(all_data_678);
     end
     if shared_std > 0
-        clim_shared = 3*shared_std * [-1, 1];  % Symmetric around 0
+        clim_shared = [shared_mean - 3*shared_std, shared_mean + 3*shared_std];
     else
-        clim_shared = [-1, 1];
+        clim_shared = [shared_mean - 1, shared_mean + 1];
     end
 
     % Plot 6: Raw trial-averaged data
@@ -442,13 +461,10 @@ function visualization(data, results)
     % Plot 9: Denoiser matrix
     % =====================================================================
     subplot(4, 4, 9);
-    if has_nans
-        data_std = nanstd(results.denoiser(:));
-    else
-        data_std = std(results.denoiser(:));
-    end
-    if data_std > 0
-        clim_9 = 3*data_std * [-1, 1];  % Symmetric around 0
+    % Compute symmetric colorbar limits around 0 (use 99th percentile for better contrast)
+    data_absmax = prctile(abs(results.denoiser(:)), 99);
+    if data_absmax > 0
+        clim_9 = [-data_absmax, data_absmax];
     else
         clim_9 = [-1, 1];
     end
@@ -476,7 +492,7 @@ function visualization(data, results)
     % Trial-averaged traces
     subplot(4, 4, 10);
     hold on;
-    x_units = 0:nunits-1;
+    x_units = 1:nunits;  % 1-indexed for MATLAB
     for c = 1:nconds
         plot(x_units, trial_avg(:, c), 'Color', trace_colors(c, :), 'LineWidth', 0.5);
     end
@@ -725,8 +741,8 @@ function visualization(data, results)
 
         xlim([0.5, 2.5]);
         set(gca, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
-        ylabel('Noise Variance');
-        title('Noise Variance');
+        ylabel('Noise Variance / ntrials');
+        title('Trial-Averaged Noise Variance');
         grid on;
 
         % Set unified ylims for both signal and noise variance plots

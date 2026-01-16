@@ -3,11 +3,11 @@
 import numpy as np
 
 
-def compute_signal_noise_diagnostics(threshold_method, unit_signal_vars, unit_noise_vars, best_threshold, nunits):
+def compute_signal_noise_diagnostics(threshold_method, unit_signal_vars, unit_noise_vars, best_threshold, nunits, ntrials):
     """COMPUTE_SIGNAL_NOISE_DIAGNOSTICS  Sum signal/noise variance before/after thresholding
 
     [svnv_before, svnv_after] = compute_signal_noise_diagnostics(threshold_method,
-    unit_signal_vars, unit_noise_vars, best_threshold, nunits) computes the total
+    unit_signal_vars, unit_noise_vars, best_threshold, nunits, ntrials) computes the total
     signal and noise variance for each unit before and after applying PSN thresholding.
 
     -------------------------------------------------------------------------
@@ -27,17 +27,20 @@ def compute_signal_noise_diagnostics(threshold_method, unit_signal_vars, unit_no
 
     <nunits> - scalar, number of units
 
+    <ntrials> - scalar, number of trials (or average if NaNs present). Used to
+      convert noise variance to trial-averaged noise variance.
+
     -------------------------------------------------------------------------
     Returns:
     -------------------------------------------------------------------------
 
     <svnv_before> - [nunits x 2] matrix. Column 0 is total signal variance,
-      column 1 is total noise variance, summed across all dimensions (before
-      thresholding)
+      column 1 is trial-averaged noise variance (noise_var / ntrials), summed
+      across all dimensions (before thresholding)
 
     <svnv_after> - [nunits x 2] matrix. Column 0 is total signal variance,
-      column 1 is total noise variance, summed only across retained dimensions
-      (after thresholding)
+      column 1 is trial-averaged noise variance (noise_var / ntrials), summed
+      only across retained dimensions (after thresholding)
     """
 
     svnv_before = np.zeros((nunits, 2))
@@ -50,15 +53,15 @@ def compute_signal_noise_diagnostics(threshold_method, unit_signal_vars, unit_no
             sig_u = unit_signal_vars[u]
             noi_u = unit_noise_vars[u]
             k = best_threshold  # Same threshold for all units
-            svnv_before[u, :] = [np.sum(sig_u), np.sum(noi_u)]
-            svnv_after[u, :] = [(k > 0) * np.sum(sig_u[:k]), (k > 0) * np.sum(noi_u[:k])]
+            svnv_before[u, :] = [np.sum(sig_u), np.sum(noi_u) / ntrials]
+            svnv_after[u, :] = [(k > 0) * np.sum(sig_u[:k]), (k > 0) * np.sum(noi_u[:k]) / ntrials]
     else:
         # Unit-specific: each unit has weighted projections and individual threshold
         for u in range(nunits):
             sig_u = unit_signal_vars[u]
             noi_u = unit_noise_vars[u]
             k_u = best_threshold[u]
-            svnv_before[u, :] = [np.sum(sig_u), np.sum(noi_u)]
-            svnv_after[u, :] = [(k_u > 0) * np.sum(sig_u[:k_u]), (k_u > 0) * np.sum(noi_u[:k_u])]
+            svnv_before[u, :] = [np.sum(sig_u), np.sum(noi_u) / ntrials]
+            svnv_after[u, :] = [(k_u > 0) * np.sum(sig_u[:k_u]), (k_u > 0) * np.sum(noi_u[:k_u]) / ntrials]
 
     return svnv_before, svnv_after

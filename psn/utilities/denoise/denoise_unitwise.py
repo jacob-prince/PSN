@@ -143,11 +143,17 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
                 Bu = basis[:, sort_idx_u[:k]]
                 denoiser[:, u] = Bu @ Bu[u, :]
 
-    # Population-level averages for visualization
+    # Population-level totals for visualization
+    # Sum across units to get total variance (since unit weights sum to 1,
+    # mean * nunits = sum). This makes signalvar/noisevar consistent with
+    # eigenvalues and global mode.
     if len(unit_signal_vars) > 0:
-        signalvar = np.mean(np.column_stack(unit_signal_vars), axis=1)
-        noisevar = np.mean(np.column_stack(unit_noise_vars), axis=1)
+        signalvar = np.mean(np.column_stack(unit_signal_vars), axis=1) * nunits
+        noisevar = np.mean(np.column_stack(unit_noise_vars), axis=1) * nunits
         objective = np.concatenate([[0], np.cumsum(signalvar - noisevar / ntrials)])
+
+        # Note: unit_cumsum_curves remain unscaled (per-unit contributions)
+        # Their sum equals the objective (green line)
     else:
         signalvar = np.array([])
         noisevar = np.array([])

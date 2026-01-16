@@ -71,6 +71,24 @@ def plot_diagnostic_figures(data, results, test_data=None):
     else:
         title_text = f'Data: {nunits} units × {nconds} conditions × {ntrials} trials  |  Basis: {basis_desc}  |  Criterion: {criterion}  |  Method: {threshold_method}'
 
+    # Add threshold info if conservative mode or variance criterion is used
+    threshold_info = []
+    if 'allowable_thresholds' in opt and opt['allowable_thresholds'] is not None:
+        allowable = opt['allowable_thresholds']
+        if hasattr(allowable, '__len__'):
+            if len(allowable) == 1:
+                threshold_info.append(f"Forced threshold: {int(allowable[0])}")
+            else:
+                threshold_info.append(f"Allowable thresholds: {list(allowable)}")
+        else:
+            threshold_info.append(f"Forced threshold: {int(allowable)}")
+    if criterion in ['variance', 'variance_eigenvalues']:
+        vt = opt.get('variance_threshold', 0.99)
+        threshold_info.append(f"Variance threshold: {vt}")
+
+    if threshold_info:
+        title_text += '  |  ' + ', '.join(threshold_info)
+
     plt.suptitle(title_text, fontsize=12, fontweight='bold')
 
     # Get trial-averaged and denoised data (use nanmean for NaN data)
@@ -110,18 +128,16 @@ def plot_diagnostic_figures(data, results, test_data=None):
             plot_matrix_1 = cSb
             plot_title = 'Signal Covariance (cSb)'
 
-        # Compute z-score based colorbar limits (±3 SD)
+        # Compute symmetric colorbar limits around 0 (use 99th percentile for better contrast)
         if has_nans:
-            data_mean = np.nanmean(plot_matrix_1)
-            data_std = np.nanstd(plot_matrix_1)
+            data_absmax = np.nanpercentile(np.abs(plot_matrix_1), 99)
         else:
-            data_mean = np.mean(plot_matrix_1)
-            data_std = np.std(plot_matrix_1)
+            data_absmax = np.percentile(np.abs(plot_matrix_1), 99)
 
-        if data_std > 0:
-            clim_1 = [data_mean - 3*data_std, data_mean + 3*data_std]
+        if data_absmax > 0:
+            clim_1 = [-data_absmax, data_absmax]
         else:
-            clim_1 = [data_mean - 1, data_mean + 1]
+            clim_1 = [-1, 1]
 
         im1 = ax1.imshow(plot_matrix_1, vmin=clim_1[0], vmax=clim_1[1], cmap='RdBu_r', aspect='equal')
         plt.colorbar(im1, ax=ax1)
@@ -139,8 +155,8 @@ def plot_diagnostic_figures(data, results, test_data=None):
     if 'fullbasis' in results:
         num_pcs = min(5, results['fullbasis'].shape[1])
 
-        # Normalize each PC for visualization
-        y_units = np.arange(1, nunits + 1)
+        # Normalize each PC for visualization (0-indexed)
+        y_units = np.arange(nunits)
         colors = plt.cm.tab10(np.linspace(0, 1, num_pcs))
 
         # Find max absolute loading across top 5 PCs for scaling
@@ -151,19 +167,20 @@ def plot_diagnostic_figures(data, results, test_data=None):
             scale_factor = 1
 
         for pc in range(num_pcs):
-            # Center each PC at position pc+1, with loadings as horizontal deviations
-            x_vals = (pc + 1) + results['fullbasis'][:, pc] * scale_factor
+            # Center each PC at position pc (0-indexed), with loadings as horizontal deviations
+            x_vals = pc + results['fullbasis'][:, pc] * scale_factor
             ax2.plot(x_vals, y_units, linewidth=1.5, color=colors[pc])
 
             # Add vertical reference line at center
-            ax2.axvline(x=pc + 1, color='k', linestyle='--', linewidth=0.5)
+            ax2.axvline(x=pc, color='k', linestyle='--', linewidth=0.5)
 
         ax2.set_xlabel('Principal Component')
         ax2.set_ylabel('Units')
         ax2.set_title('Top 5 Basis Dimensions')
-        ax2.set_xlim([0.5, num_pcs + 0.5])
-        ax2.set_ylim([1, nunits])
-        ax2.set_xticks(range(1, num_pcs + 1))
+        ax2.set_xlim([-0.5, num_pcs - 0.5])
+        ax2.set_ylim([0, nunits - 1])
+        ax2.invert_yaxis()  # Flip y-axis to match heatmaps
+        ax2.set_xticks(range(num_pcs))
         ax2.grid(True)
     else:
         ax2.text(0.5, 0.5, 'Basis\nNot Available',
@@ -174,9 +191,6 @@ def plot_diagnostic_figures(data, results, test_data=None):
     # =========================================================================
     ax3 = plt.subplot(4, 4, 3)
 
-    # Determine if we should use log spacing (more than 50 units)
-    use_log_x = nunits > 50
-
     # Check if eigenvalues were used for ranking (and are available)
     use_eigenvalues = (basis_ordering == 'eigenvalues' and
                       'basis_eigenvalues' in results and
@@ -186,20 +200,16 @@ def plot_diagnostic_figures(data, results, test_data=None):
     if use_eigenvalues:
         # Show eigenvalues (SORTED - what was actually used for ranking)
         evals = results['basis_eigenvalues']  # Already sorted in descending order
-        x_vals = np.arange(1, len(evals) + 1)
+        x_vals = np.arange(len(evals))  # 0-indexed
+        ax3.plot(x_vals, evals, linewidth=1.5, color=[0.5, 0, 0.5])
 
-        if use_log_x:
-            ax3.semilogx(x_vals, evals, linewidth=1.5, color=[0.5, 0, 0.5])
-        else:
-            ax3.plot(x_vals, evals, linewidth=1.5, color=[0.5, 0, 0.5])
-
-        # Add threshold indicators
+        # Add threshold indicators (only if threshold > 0, since line means "include up to here")
         if 'best_threshold' in results:
             best_t = results['best_threshold']
             if np.isscalar(best_t) and best_t > 0:
                 ax3.axvline(x=best_t, color='r', linestyle='--', linewidth=1.5,
                            label=f'Thresh: {int(best_t)}')
-            elif hasattr(best_t, '__len__'):
+            elif hasattr(best_t, '__len__') and np.mean(best_t) > 0:
                 mean_thresh = np.mean(best_t)
                 ax3.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=1.5,
                            label=f'Mean: {mean_thresh:.1f}')
@@ -212,20 +222,16 @@ def plot_diagnostic_figures(data, results, test_data=None):
     elif 'signalvar' in results:
         # Show signal variance (SORTED - what was actually used for ranking)
         signal_vars = results['signalvar']  # Already sorted in descending order
-        x_vals = np.arange(1, len(signal_vars) + 1)
+        x_vals = np.arange(len(signal_vars))  # 0-indexed
+        ax3.plot(x_vals, signal_vars, linewidth=1.5, color='blue')
 
-        if use_log_x:
-            ax3.semilogx(x_vals, signal_vars, linewidth=1.5, color='blue')
-        else:
-            ax3.plot(x_vals, signal_vars, linewidth=1.5, color='blue')
-
-        # Add threshold indicators
+        # Add threshold indicators (only if threshold > 0, since line means "include up to here")
         if 'best_threshold' in results:
             best_t = results['best_threshold']
             if np.isscalar(best_t) and best_t > 0:
                 ax3.axvline(x=best_t, color='r', linestyle='--', linewidth=1.5,
                            label=f'Thresh: {int(best_t)}')
-            elif hasattr(best_t, '__len__'):
+            elif hasattr(best_t, '__len__') and np.mean(best_t) > 0:
                 mean_thresh = np.mean(best_t)
                 ax3.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=1.5,
                            label=f'Mean: {mean_thresh:.1f}')
@@ -252,44 +258,34 @@ def plot_diagnostic_figures(data, results, test_data=None):
             ax4_left = ax4
             ax4_left.set_ylabel('Variance', color='tab:blue')
 
-            x_vals = np.arange(1, len(sv) + 1)
-            if use_log_x:
-                line1 = ax4_left.semilogx(x_vals, sv, '-', linewidth=1.5,
-                                         color='blue', label='Signal var')
-                line2 = ax4_left.semilogx(x_vals, nv, '-', linewidth=1.5,
-                                         color=[1, 0.5, 0], label='Noise var')
-            else:
-                line1 = ax4_left.plot(sv, '-', linewidth=1.5, color='blue', label='Signal var')
-                line2 = ax4_left.plot(nv, '-', linewidth=1.5, color=[1, 0.5, 0], label='Noise var')
+            x_vals = np.arange(len(sv))  # 0-indexed
+            line1 = ax4_left.plot(x_vals, sv, '-', linewidth=1.5, color='blue', label='Signal var')
+            line2 = ax4_left.plot(x_vals, nv, '-', linewidth=1.5, color=[1, 0.5, 0], label='Noise var')
+            line2b = ax4_left.plot(x_vals, nv / ntrials_avg, '-', linewidth=1.5, color=[1, 0.85, 0.6], label=f'Noise var / {ntrials_avg:.1f} trials')
 
             ax4_left.tick_params(axis='y', labelcolor='tab:blue')
 
             # Right y-axis for NCSNR
             ax4_right = ax4_left.twinx()
             ncsnr_trace = np.sqrt(sv) / np.sqrt(nv + np.finfo(float).eps)
-
-            if use_log_x:
-                line3 = ax4_right.semilogx(x_vals, ncsnr_trace, '-', linewidth=1.5,
-                                          color='magenta', label='NCSNR')
-            else:
-                line3 = ax4_right.plot(ncsnr_trace, '-', linewidth=1.5, color='magenta', label='NCSNR')
+            line3 = ax4_right.plot(x_vals, ncsnr_trace, '-', linewidth=1.5, color='magenta', label='NCSNR')
 
             ax4_right.set_ylabel('NCSNR', color='magenta')
             ax4_right.tick_params(axis='y', labelcolor='magenta')
 
-            # Add threshold (on left axis)
+            # Add threshold (on left axis, only if > 0)
             if 'best_threshold' in results:
                 best_t = results['best_threshold']
-                if np.isscalar(best_t):
+                if np.isscalar(best_t) and best_t > 0:
                     ax4_left.axvline(x=best_t, color='r', linestyle='--', linewidth=1)
-                else:
+                elif hasattr(best_t, '__len__') and np.mean(best_t) > 0:
                     ax4_left.axvline(x=np.mean(best_t), color='r', linestyle='--', linewidth=1)
 
             ax4_left.set_xlabel('Dimension')
             ax4_left.set_title('Signal and Noise Variance')
 
             # Combine legends
-            lines = line1 + line2 + line3
+            lines = line1 + line2 + line2b + line3
             labels = [l.get_label() for l in lines]
             ax4_left.legend(lines, labels, loc='best')
             ax4_left.grid(True)
@@ -306,19 +302,22 @@ def plot_diagnostic_figures(data, results, test_data=None):
     ax5 = plt.subplot(4, 4, 5)
     if 'objective' in results:
         obj = results['objective']
-        x_obj = np.arange(len(obj))
+        x_obj = np.arange(len(obj))  # Always 0-indexed, linear scale
 
         # Check if unit-specific objectives are available
         if 'unit_objectives' in results and results['unit_objectives']:
-            # Unit-specific mode: plot all unit curves
+            # Unit-specific mode: use dual y-axes
+            # Left axis: unit curves (gray)
+            ax5_left = ax5
+            h_units = None
             for u_obj in results['unit_objectives']:
-                ax5.plot(np.arange(len(u_obj)), u_obj, linewidth=0.5,
+                x_unit = np.arange(len(u_obj))
+                line, = ax5_left.plot(x_unit, u_obj, linewidth=0.5,
                         color=[0.5, 0.5, 0.5], alpha=0.3)
+                if h_units is None:
+                    h_units = line
 
-            # Plot population average as thick line
-            ax5.plot(x_obj, obj, linewidth=2, color=[0.3, 0.7, 0.3])
-
-            # Mark each unit's chosen threshold
+            # Mark each unit's chosen threshold (on left axis)
             if 'best_threshold' in results:
                 best_t = results['best_threshold']
                 if hasattr(best_t, '__len__'):
@@ -331,31 +330,46 @@ def plot_diagnostic_figures(data, results, test_data=None):
                                 x_thresh.append(k_u)
                                 y_thresh.append(u_obj[k_u])
                     if x_thresh:
-                        ax5.scatter(x_thresh, y_thresh, s=20, color=[1, 0.3, 0.3],
+                        ax5_left.scatter(x_thresh, y_thresh, s=20, color=[1, 0.3, 0.3],
                                    alpha=0.6, zorder=5)
+
+            ax5_left.set_ylabel('Unit-Specific Objective\n(SignalVar - NoiseVar/ntrials)', color=[0.4, 0.4, 0.4])
+            ax5_left.tick_params(axis='y', labelcolor=[0.4, 0.4, 0.4])
+
+            # Right axis: population sum (green)
+            ax5_right = ax5.twinx()
+            h_sum, = ax5_right.plot(x_obj, obj, linewidth=2, color=[0.3, 0.7, 0.3])
+            ax5_right.set_ylabel('Population Objective', color=[0.3, 0.7, 0.3])
+            ax5_right.tick_params(axis='y', labelcolor=[0.3, 0.7, 0.3])
+
+            # Add legend
+            ax5_left.legend([h_units, h_sum], ['Units', 'Population (=Global)'], loc='best')
 
             ax5.set_title('Objective Function (unit-specific)')
         else:
             # Global mode: single curve
             ax5.plot(x_obj, obj, linewidth=1.5, color=[0.3, 0.7, 0.3])
 
-            # Mark maximum
-            max_idx = np.argmax(obj)
-            ax5.plot(max_idx, obj[max_idx], 'ro', markersize=8, linewidth=2)
+            # Mark chosen threshold (not maximum - threshold may be constrained)
+            if 'best_threshold' in results and np.isscalar(results['best_threshold']):
+                k = int(results['best_threshold'])
+                if k >= 0 and k < len(obj):
+                    ax5.plot(k, obj[k], 'ro', markersize=8, linewidth=2)
+            else:
+                # Fallback to maximum if no threshold stored
+                max_idx = np.argmax(obj)
+                ax5.plot(max_idx, obj[max_idx], 'ro', markersize=8, linewidth=2)
 
             ax5.set_title('Objective Function')
 
-        # Set x-axis scale (log for high-dimensional data)
-        if use_log_x:
-            ax5.set_xscale('log')
-
         ax5.set_xlabel('Number of Dimensions')
 
-        # Set ylabel based on criterion
-        if criterion == 'variance':
-            ax5.set_ylabel('Cumulative Variance')
-        else:
-            ax5.set_ylabel('Cumulative Signal - Noise/ntrials')
+        # Set ylabel based on criterion (only for global mode - unit-specific mode already set ylabels)
+        if not ('unit_objectives' in results and results['unit_objectives']):
+            if criterion == 'variance':
+                ax5.set_ylabel('Cumulative SignalVar')
+            else:
+                ax5.set_ylabel('Cumulative SignalVar - NoiseVar/ntrials')
 
         ax5.grid(True)
     else:
@@ -366,13 +380,18 @@ def plot_diagnostic_figures(data, results, test_data=None):
     # Plot 6-8: Raw, Denoised, Noise
     # =========================================================================
 
-    # Compute shared colorbar limits across all three plots
+    # Compute shared colorbar limits across all three plots (mean-centered)
     all_data_678 = np.concatenate([trial_avg.ravel(), denoised.ravel(), noise.ravel()])
     if has_nans:
+        shared_mean = np.nanmean(all_data_678)
         shared_std = np.nanstd(all_data_678)
     else:
+        shared_mean = np.mean(all_data_678)
         shared_std = np.std(all_data_678)
-    clim_shared = 3 * shared_std * np.array([-1, 1]) if shared_std > 0 else np.array([-1, 1])
+    if shared_std > 0:
+        clim_shared = [shared_mean - 3*shared_std, shared_mean + 3*shared_std]
+    else:
+        clim_shared = [shared_mean - 1, shared_mean + 1]
 
     # Plot 6: Raw trial-averaged data
     ax6 = plt.subplot(4, 4, 6)
@@ -405,8 +424,9 @@ def plot_diagnostic_figures(data, results, test_data=None):
     # =========================================================================
     ax9 = plt.subplot(4, 4, 9)
     denoiser = results['denoiser']
-    data_std = np.nanstd(denoiser) if has_nans else np.std(denoiser)
-    clim_9 = 3 * data_std * np.array([-1, 1]) if data_std > 0 else np.array([-1, 1])
+    # Compute symmetric colorbar limits around 0 (use 99th percentile for better contrast)
+    data_absmax = np.nanpercentile(np.abs(denoiser), 99) if has_nans else np.percentile(np.abs(denoiser), 99)
+    clim_9 = [-data_absmax, data_absmax] if data_absmax > 0 else [-1, 1]
     im9 = ax9.imshow(denoiser, vmin=clim_9[0], vmax=clim_9[1], cmap='RdBu_r', aspect='equal', interpolation='none')
     plt.colorbar(im9, ax=ax9)
     ax9.set_title('Denoiser Matrix')
@@ -671,8 +691,8 @@ def plot_diagnostic_figures(data, results, test_data=None):
         ax14.set_xlim([0.5, 2.5])
         ax14.set_xticks([1, 2])
         ax14.set_xticklabels(['Before', 'After'])
-        ax14.set_ylabel('Noise Variance')
-        ax14.set_title('Noise Variance')
+        ax14.set_ylabel('Noise Variance / ntrials')
+        ax14.set_title('Trial-Averaged Noise Variance')
         ax14.grid(True)
 
         # Set unified ylims for both signal and noise variance plots
