@@ -2,6 +2,8 @@
 
 import numpy as np
 
+from .merge_dicts import merge_dicts as _merge_dicts
+
 
 def parse_inputs(*args):
     """PARSE_INPUTS  Parse flexible input arguments to psn()
@@ -78,31 +80,3 @@ def parse_inputs(*args):
         opt['threshold_method'] = 'hybrid'
 
     return data, opt
-
-
-def _merge_dicts(base, override):
-    """MERGE_DICTS  Merge two dicts, with override taking precedence
-
-    merged = _merge_dicts(base, override) combines two dicts, with fields
-    from <override> replacing any matching fields in <base>.
-
-    -------------------------------------------------------------------------
-    Inputs:
-    -------------------------------------------------------------------------
-
-    <base> - dict with default or base field values
-
-    <override> - dict with fields that should replace those in <base>
-
-    -------------------------------------------------------------------------
-    Returns:
-    -------------------------------------------------------------------------
-
-    <merged> - dict containing all fields from <base>, with any fields
-      present in <override> replaced by their <override> values
-    """
-
-    merged = base.copy()
-    for key, value in override.items():
-        merged[key] = value
-    return merged

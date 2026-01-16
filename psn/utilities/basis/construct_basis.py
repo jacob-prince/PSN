@@ -2,6 +2,9 @@
 
 import numpy as np
 
+from .eigh_descending_sym import eigh_descending_sym as _eigh_descending_sym
+from .normalize_orthonormalize_basis import normalize_orthonormalize_basis as _normalize_orthonormalize_basis
+
 
 def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_avg, has_nans):
     """CONSTRUCT_BASIS  Create the orthonormal basis for denoising
@@ -106,90 +109,3 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
         basis_eigenvalues = None
 
     return basis, basis_eigenvalues
-
-
-def _eigh_descending_sym(matrix, do_symmetrize=False):
-    """EIGH_DESCENDING_SYM  Compute eigendecomposition with consistent sorting
-
-    [evals_sorted, evecs_sorted] = _eigh_descending_sym(matrix) computes
-    the eigendecomposition of a symmetric matrix and returns eigenvalues
-    and eigenvectors sorted by descending eigenvalue magnitude, with
-    standardized eigenvector signs for reproducibility.
-
-    [evals_sorted, evecs_sorted] = _eigh_descending_sym(matrix, do_symmetrize)
-    optionally forces the matrix to be symmetric before eigendecomposition.
-
-    -------------------------------------------------------------------------
-    Inputs:
-    -------------------------------------------------------------------------
-
-    <matrix> - [n x n] numeric matrix (should be symmetric or nearly symmetric)
-
-    <do_symmetrize> (optional) - boolean. If True, enforces symmetry via
-      (matrix + matrix.T)/2 before eigendecomposition. Default: False.
-      Note: GSN returns symmetric cSb/cNb, so symmetrization is typically
-      only needed for derived matrices like cSb - cNb/ntrials_avg
-
-    -------------------------------------------------------------------------
-    Returns:
-    -------------------------------------------------------------------------
-
-    <evals_sorted> - [n] eigenvalues sorted in descending order
-
-    <evecs_sorted> - [n x n] eigenvectors with columns sorted to match
-      <evals_sorted>. Signs standardized so that the largest-magnitude
-      element in each column is positive
-    """
-
-    if do_symmetrize:
-        matrix = (matrix + matrix.T) / 2
-
-    # Compute eigendecomposition
-    evals, evecs = np.linalg.eigh(matrix)
-
-    # Sort by eigenvalue magnitude (descending)
-    order = np.argsort(evals)[::-1]
-    evals_sorted = evals[order]
-    evecs_sorted = evecs[:, order]
-
-    # Deterministic sign: make largest-magnitude element positive
-    piv = np.argmax(np.abs(evecs_sorted), axis=0)
-    idx = (piv, np.arange(evecs_sorted.shape[1]))
-    sgn = np.sign(evecs_sorted[idx])
-    sgn[sgn == 0] = 1
-    evecs_sorted = evecs_sorted * sgn
-
-    return evals_sorted, evecs_sorted
-
-
-def _normalize_orthonormalize_basis(basis):
-    """NORMALIZE_ORTHONORMALIZE_BASIS  Ensure basis has orthonormal columns
-
-    basis = _normalize_orthonormalize_basis(basis) takes a matrix and
-    ensures its columns are orthonormal (unit length and mutually orthogonal).
-
-    -------------------------------------------------------------------------
-    Inputs:
-    -------------------------------------------------------------------------
-
-    <basis> - [n x k] numeric matrix with k basis vectors as columns
-
-    -------------------------------------------------------------------------
-    Returns:
-    -------------------------------------------------------------------------
-
-    <basis> - [n x k] matrix with orthonormal columns. First normalizes each
-      column to unit length, then checks orthogonality. If not orthogonal
-      (Gram matrix not identity within tolerance 1e-10), applies QR
-      decomposition to enforce orthonormality
-    """
-
-    norms = np.sqrt(np.sum(basis**2, axis=0))
-    norms[norms == 0] = 1
-    basis = basis / norms
-
-    gram = basis.T @ basis
-    if not np.allclose(gram, np.eye(gram.shape[0]), atol=1e-10, rtol=0):
-        basis, _ = np.linalg.qr(basis)
-
-    return basis
