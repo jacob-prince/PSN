@@ -23,7 +23,14 @@ function fig = visualization(data, results, varargin)
     parse(p, varargin{:});
 
     % Create a large figure (visible or invisible based on parameter)
-    fig = figure('Position', [100, 100, 1800, 1200], 'Visible', p.Results.Visible);
+    % Match Python: figsize=(24, 15) -> approximately 2400x1500 pixels
+    fig = figure('Position', [50, 50, 2400, 1500], 'Visible', p.Results.Visible);
+
+    % Set default font sizes to match Python rcParams
+    set(fig, 'DefaultAxesFontSize', 11);
+    set(fig, 'DefaultTextFontSize', 12);
+    set(fig, 'DefaultAxesTitleFontSizeMultiplier', 1.18);  % 13/11
+    set(fig, 'DefaultAxesLabelFontSizeMultiplier', 1.0);   % 11/11
 
     % Extract data dimensions
     [nunits, nconds, ntrials] = size(data);
@@ -111,7 +118,7 @@ function fig = visualization(data, results, varargin)
         title_text = [title_text '  |  ' strjoin(threshold_info, ', ')];
     end
 
-    sgtitle(title_text, 'FontSize', 12, 'FontWeight', 'bold');
+    sgtitle(title_text, 'FontSize', 14, 'FontWeight', 'bold');
 
     % Get trial-averaged and denoised data (use nanmean for NaN data)
     if has_nans
@@ -123,9 +130,16 @@ function fig = visualization(data, results, varargin)
     noise = trial_avg - denoised;
 
     % =====================================================================
-    % Plot 1: Basis source matrix (covariance)
+    % Create tiledlayout to match Python GridSpec(4, 8)
+    % Row 1: cSb(2), cNb(2), Top5 PCs(1), Eigenvalues(1), Sig/Noise var(2)
+    % Row 2-4: standard 4x2 pattern (each subplot spans 2 columns)
     % =====================================================================
-    subplot(4, 4, 1);
+    t = tiledlayout(4, 8, 'TileSpacing', 'compact', 'Padding', 'compact');
+
+    % =====================================================================
+    % Plot 1: Basis source matrix (signal covariance or basis-specific)
+    % =====================================================================
+    ax1 = nexttile(t, [1 2]);  % Row 1, columns 1-2
     if isfield(results, 'gsn_result') && isfield(results.gsn_result, 'cSb')
         cSb = results.gsn_result.cSb;
         cNb = results.gsn_result.cNb;
@@ -167,28 +181,56 @@ function fig = visualization(data, results, varargin)
             clim_1 = [-1, 1];
         end
 
-        imagesc(plot_matrix_1, clim_1);
-        colormap(gca, redblue);
-        colorbar;
-        title(plot_title);
-        xlabel('Units');
-        ylabel('Units');
-        axis equal tight;
+        imagesc(ax1, plot_matrix_1, clim_1);
+        colormap(ax1, redblue);
+        colorbar(ax1);
+        title(ax1, plot_title);
+        xlabel(ax1, 'Units');
+        ylabel(ax1, 'Units');
+        axis(ax1, 'equal', 'tight');
     else
-        text(0.5, 0.5, 'Covariance\nNot Available', ...
+        text(ax1, 0.5, 0.5, {'Covariance', 'Not Available'}, ...
              'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
              'Units', 'normalized');
     end
 
     % =====================================================================
-    % Plot 2: Top 5 PCs as vertical line plots
+    % Plot 2: Noise Covariance (cNb) - NEW
     % =====================================================================
-    subplot(4, 4, 2);
+    ax2 = nexttile(t, [1 2]);  % Row 1, columns 3-4
+    if isfield(results, 'gsn_result') && isfield(results.gsn_result, 'cNb')
+        cNb = results.gsn_result.cNb;
+
+        % Compute symmetric colorbar limits around 0 (use 99th percentile for better contrast)
+        data_absmax_cNb = prctile(abs(cNb(:)), 99);
+        if data_absmax_cNb > 0
+            clim_cNb = [-data_absmax_cNb, data_absmax_cNb];
+        else
+            clim_cNb = [-1, 1];
+        end
+
+        imagesc(ax2, cNb, clim_cNb);
+        colormap(ax2, redblue);
+        colorbar(ax2);
+        title(ax2, 'Noise Covariance (cNb)');
+        xlabel(ax2, 'Units');
+        ylabel(ax2, 'Units');
+        axis(ax2, 'equal', 'tight');
+    else
+        text(ax2, 0.5, 0.5, {'Noise Covariance', 'Not Available'}, ...
+             'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+             'Units', 'normalized');
+    end
+
+    % =====================================================================
+    % Plot 3: Top 5 PCs as vertical line plots (half width)
+    % =====================================================================
+    ax3 = nexttile(t, [1 1]);  % Row 1, column 5 (single column)
     if isfield(results, 'fullbasis')
         num_pcs = min(5, size(results.fullbasis, 2));
 
         % Normalize each PC for visualization
-        hold on;
+        hold(ax3, 'on');
         y_units = 1:nunits;
         colors = lines(num_pcs);
 
@@ -203,33 +245,31 @@ function fig = visualization(data, results, varargin)
         for pc = 1:num_pcs
             % Center each PC at position pc, with loadings as horizontal deviations
             x_vals = pc + results.fullbasis(:, pc) * scale_factor;
-            plot(x_vals, y_units, 'LineWidth', 1.5, 'Color', colors(pc, :));
+            plot(ax3, x_vals, y_units, 'LineWidth', 1.5, 'Color', colors(pc, :));
 
             % Add vertical reference line at center
-            plot([pc, pc], [1, nunits], 'k--', 'LineWidth', 0.5);
+            plot(ax3, [pc, pc], [1, nunits], 'k--', 'LineWidth', 0.5);
         end
-        hold off;
+        hold(ax3, 'off');
 
-        xlabel('Principal Component');
-        ylabel('Units');
-        title('Top 5 Basis Dimensions');
-        xlim([0.5, num_pcs + 0.5]);
-        ylim([1, nunits]);
-        set(gca, 'YDir', 'reverse');  % Flip y-axis to match heatmaps
-        set(gca, 'XTick', 1:num_pcs);
-        grid on;
+        xlabel(ax3, 'PC');
+        ylabel(ax3, 'Units');
+        title(ax3, 'Top 5 Basis Dims');
+        xlim(ax3, [0.5, num_pcs + 0.5]);
+        ylim(ax3, [1, nunits]);
+        set(ax3, 'YDir', 'reverse');  % Flip y-axis to match heatmaps
+        set(ax3, 'XTick', 1:num_pcs);
+        grid(ax3, 'on');
     else
-        text(0.5, 0.5, 'Basis\nNot Available', ...
+        text(ax3, 0.5, 0.5, {'Basis', 'Not Available'}, ...
              'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
              'Units', 'normalized');
     end
 
     % =====================================================================
-    % Plot 3: Global dimension ranking (eigenvalues or signal variance)
+    % Plot 4: Global dimension ranking (eigenvalues or signal variance) (half width)
     % =====================================================================
-    % This subplot shows what was actually used for global dimension ranking
-    % NOTE: Shows SORTED values (descending order used for ranking)
-    subplot(4, 4, 3);
+    ax4 = nexttile(t, [1 1]);  % Row 1, column 6 (single column)
 
     % Check if eigenvalues were used for ranking (and are available)
     use_eigenvalues = strcmp(basis_ordering, 'eigenvalues') && ...
@@ -239,113 +279,128 @@ function fig = visualization(data, results, varargin)
     if use_eigenvalues
         % Show eigenvalues (SORTED - what was actually used for ranking)
         evals = results.basis_eigenvalues;  % Already sorted in descending order
-        plot(0:length(evals)-1, evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5]);
-        hold on;
+        plot(ax4, 0:length(evals)-1, evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5]);
+        hold(ax4, 'on');
 
-        % Add threshold indicators (only if threshold > 0, since line means "include up to here")
+        % Add threshold indicators (only if threshold > 0)
         if isfield(results, 'best_threshold')
             if isscalar(results.best_threshold) && results.best_threshold > 0
-                xline(results.best_threshold, 'r--', 'LineWidth', 1.5, 'Label', sprintf('Thresh: %d', results.best_threshold));
+                xline(ax4, results.best_threshold, 'r--', 'LineWidth', 1.5);
             elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
                 mean_thresh = mean(results.best_threshold);
-                xline(mean_thresh, 'r--', 'LineWidth', 1.5, 'Label', sprintf('Mean: %.1f', mean_thresh));
+                xline(ax4, mean_thresh, 'r--', 'LineWidth', 1.5);
+                % Add rotated text annotation for mean threshold
+                ylims = ylim(ax4);
+                y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
+                text(ax4, mean_thresh + 0.5, y_pos, sprintf('Mean: %.1f', mean_thresh), ...
+                    'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
+                    'HorizontalAlignment', 'left', 'VerticalAlignment', 'bottom');
             end
         end
+        hold(ax4, 'off');
 
-        xlabel('Dimension');
-        ylabel('Eigenvalue');
-        title('Basis Eigenvalues (sorted, used for ranking)');
-        grid on;
+        xlabel(ax4, 'Dim');
+        ylabel(ax4, 'Eigenvalue');
+        title(ax4, 'Basis Eigenvalues');
+        grid(ax4, 'on');
 
     elseif isfield(results, 'signalvar')
         % Show signal variance (SORTED - what was actually used for ranking)
         signal_vars = results.signalvar;  % Already sorted in descending order
-        plot(0:length(signal_vars)-1, signal_vars, 'LineWidth', 1.5, 'Color', 'blue');
-        hold on;
+        plot(ax4, 0:length(signal_vars)-1, signal_vars, 'LineWidth', 1.5, 'Color', 'blue');
+        hold(ax4, 'on');
 
-        % Add threshold indicators (only if threshold > 0, since line means "include up to here")
+        % Add threshold indicators (only if threshold > 0)
         if isfield(results, 'best_threshold')
             if isscalar(results.best_threshold) && results.best_threshold > 0
-                xline(results.best_threshold, 'r--', 'LineWidth', 1.5, 'Label', sprintf('Thresh: %d', results.best_threshold));
+                xline(ax4, results.best_threshold, 'r--', 'LineWidth', 1.5);
             elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
                 mean_thresh = mean(results.best_threshold);
-                xline(mean_thresh, 'r--', 'LineWidth', 1.5, 'Label', sprintf('Mean: %.1f', mean_thresh));
+                xline(ax4, mean_thresh, 'r--', 'LineWidth', 1.5);
+                % Add rotated text annotation for mean threshold
+                ylims = ylim(ax4);
+                y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
+                text(ax4, mean_thresh + 0.5, y_pos, sprintf('Mean: %.1f', mean_thresh), ...
+                    'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
+                    'HorizontalAlignment', 'left', 'VerticalAlignment', 'bottom');
             end
         end
+        hold(ax4, 'off');
 
-        xlabel('Dimension');
-        ylabel('Signal Variance');
-        title('Signal Variance Spectrum (sorted, used for ranking)');
-        grid on;
+        xlabel(ax4, 'Dim');
+        ylabel(ax4, 'Signal Var');
+        title(ax4, 'Signal Variance');
+        grid(ax4, 'on');
     else
-        text(0.5, 0.5, 'Ranking Info\nNot Available', ...
+        text(ax4, 0.5, 0.5, {'Ranking Info', 'Not Available'}, ...
              'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
              'Units', 'normalized');
     end
 
     % =====================================================================
-    % Plot 4: Signal vs Noise variance
+    % Plot 5: Signal vs Noise variance
     % =====================================================================
-    subplot(4, 4, 4);
+    ax5 = nexttile(t, [1 2]);  % Row 1, columns 7-8
     if isfield(results, 'signalvar') && isfield(results, 'noisevar')
         if ~iscell(results.signalvar)
             % Global or averaged
             % Left y-axis for variance
-            yyaxis left;
+            yyaxis(ax5, 'left');
             x_dims = 0:length(results.signalvar)-1;
-            plot(x_dims, results.signalvar, '-', 'LineWidth', 1.5, 'Color', 'blue', 'DisplayName', 'Signal var');
-            hold on;
-            plot(x_dims, results.noisevar, '-', 'LineWidth', 1.5, 'Color', [1 0.5 0], 'DisplayName', 'Noise var');
-            plot(x_dims, results.noisevar / ntrials_avg, '-', 'LineWidth', 1.5, 'Color', [1 0.85 0.6], 'DisplayName', sprintf('Noise var / %.1f trials', ntrials_avg));
-            ylabel('Variance');
+            plot(ax5, x_dims, results.signalvar, '-', 'LineWidth', 1.5, 'Color', 'blue', 'DisplayName', 'Signal var');
+            hold(ax5, 'on');
+            plot(ax5, x_dims, results.noisevar, '-', 'LineWidth', 1.5, 'Color', [1 0.5 0], 'DisplayName', 'Noise var');
+            plot(ax5, x_dims, results.noisevar / ntrials_avg, '-', 'LineWidth', 1.5, 'Color', [1 0.85 0.6], 'DisplayName', sprintf('Noise var / %.1f trials', ntrials_avg));
+            ylabel(ax5, 'Variance');
 
             % Right y-axis for NCSNR
-            yyaxis right;
+            yyaxis(ax5, 'right');
             ncsnr_trace = sqrt(results.signalvar) ./ sqrt(results.noisevar + eps);
-            plot(x_dims, ncsnr_trace, '-', 'LineWidth', 1.5, 'Color', 'magenta', 'DisplayName', 'NCSNR');
-            ylabel('NCSNR');
+            plot(ax5, x_dims, ncsnr_trace, '-', 'LineWidth', 1.5, 'Color', 'magenta', 'DisplayName', 'NCSNR');
+            ylabel(ax5, 'NCSNR');
 
             % Add threshold (on left axis, only if > 0)
-            yyaxis left;
+            yyaxis(ax5, 'left');
             if isfield(results, 'best_threshold')
                 if isscalar(results.best_threshold) && results.best_threshold > 0
-                    xline(results.best_threshold, 'r--', 'LineWidth', 1, 'DisplayName', 'Threshold');
+                    xline(ax5, results.best_threshold, 'r--', 'LineWidth', 1, 'DisplayName', 'Threshold');
                 elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
-                    xline(mean(results.best_threshold), 'r--', 'LineWidth', 1, 'DisplayName', 'Mean Threshold');
+                    xline(ax5, mean(results.best_threshold), 'r--', 'LineWidth', 1, 'DisplayName', 'Mean Threshold');
                 end
             end
+            hold(ax5, 'off');
 
-            xlabel('Dimension');
-            title('Signal and Noise Variance');
-            legend('Location', 'best');
-            grid on;
+            xlabel(ax5, 'Dimension');
+            title(ax5, 'Signal and Noise Variance');
+            legend(ax5, 'Location', 'best', 'FontSize', 7);
+            grid(ax5, 'on');
         else
-            text(0.5, 0.5, 'Per-Unit Variance\n(Averaged across units)', ...
+            text(ax5, 0.5, 0.5, {'Per-Unit Variance', '(Averaged across units)'}, ...
                  'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
                  'Units', 'normalized');
         end
     else
-        text(0.5, 0.5, 'Variance Info\nNot Available', ...
+        text(ax5, 0.5, 0.5, {'Variance Info', 'Not Available'}, ...
              'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
              'Units', 'normalized');
     end
 
     % =====================================================================
-    % Plot 5: Objective function
+    % Plot 6: Objective function (row 2, col 1-2)
     % =====================================================================
-    subplot(4, 4, 5);
+    ax6 = nexttile(t, [1 2]);  % Row 2, columns 1-2
     if isfield(results, 'objective')
         % Check if unit-specific objectives are available
         if isfield(results, 'unit_objectives') && ~isempty(results.unit_objectives)
             % Unit-specific mode: use dual y-axes
             % Left axis: unit curves (gray)
-            yyaxis left;
-            hold on;
+            yyaxis(ax6, 'left');
+            hold(ax6, 'on');
             h_units = [];
             for u = 1:length(results.unit_objectives)
                 curve_u = results.unit_objectives{u};
                 x_unit = 0:length(curve_u)-1;
-                h_units(end+1) = plot(x_unit, curve_u, '-', 'LineWidth', 0.5, 'Color', [0.5 0.5 0.5 0.3], 'Marker', 'none');
+                h_units(end+1) = plot(ax6, x_unit, curve_u, '-', 'LineWidth', 0.5, 'Color', [0.5 0.5 0.5 0.3], 'Marker', 'none');
             end
 
             % Mark each unit's chosen threshold (on left axis)
@@ -361,72 +416,75 @@ function fig = visualization(data, results, varargin)
                     end
                 end
                 if ~isempty(x_thresh)
-                    scatter(x_thresh, y_thresh, 20, [1 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+                    scatter(ax6, x_thresh, y_thresh, 20, [1 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
                 end
             end
-            ylabel({'Unit-Specific Objective', '(SignalVar - NoiseVar/ntrials)'});
-            set(gca, 'YColor', [0.4 0.4 0.4]);
+            ylabel(ax6, {'Unit-Specific Objective', '(SignalVar - NoiseVar/ntrials)'});
+            set(ax6, 'YColor', [0.4 0.4 0.4]);
 
             % Right axis: population sum (green)
-            yyaxis right;
+            yyaxis(ax6, 'right');
             x_obj = 0:length(results.objective)-1;
-            h_sum = plot(x_obj, results.objective, 'LineWidth', 2, 'Color', [0.3 0.7 0.3]);
-            ylabel('Population Objective');
-            set(gca, 'YColor', [0.3 0.7 0.3]);
+            h_sum = plot(ax6, x_obj, results.objective, 'LineWidth', 2, 'Color', [0.3 0.7 0.3]);
+            ylabel(ax6, 'Population Objective');
+            set(ax6, 'YColor', [0.3 0.7 0.3]);
+            hold(ax6, 'off');
 
             % Add legend
-            legend([h_units(1), h_sum], {'Units', 'Population (=Global)'}, 'Location', 'best');
+            legend(ax6, [h_units(1), h_sum], {'Units', 'Population (=Global)'}, 'Location', 'best');
 
-            title('Objective Function (unit-specific)');
+            title(ax6, 'Objective Function (unit-specific)');
         else
             % Global mode: single curve
             x_obj = 0:length(results.objective)-1;
-            plot(x_obj, results.objective, 'LineWidth', 1.5, 'Color', [0.3 0.7 0.3]);
+            plot(ax6, x_obj, results.objective, 'LineWidth', 1.5, 'Color', [0.3 0.7 0.3]);
 
             % Mark chosen threshold (not maximum - threshold may be constrained)
             if isfield(results, 'best_threshold') && isscalar(results.best_threshold)
                 k = results.best_threshold;
                 if k >= 0 && k < length(results.objective)
-                    hold on;
-                    plot(k, results.objective(k+1), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
+                    hold(ax6, 'on');
+                    plot(ax6, k, results.objective(k+1), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
+                    hold(ax6, 'off');
                 end
             else
                 % Fallback to maximum if no threshold stored
                 [~, max_idx] = max(results.objective);
-                hold on;
-                plot(max_idx-1, results.objective(max_idx), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
+                hold(ax6, 'on');
+                plot(ax6, max_idx-1, results.objective(max_idx), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
+                hold(ax6, 'off');
             end
 
-            title('Objective Function');
+            title(ax6, 'Objective Function');
 
             % Set ylabel based on criterion (only for global mode)
             if strcmp(criterion, 'variance')
-                ylabel('Cumulative SignalVar');
+                ylabel(ax6, 'Cumulative SignalVar');
             else
-                ylabel('Cumulative SignalVar - NoiseVar/ntrials');
+                ylabel(ax6, 'Cumulative SignalVar - NoiseVar/ntrials');
             end
         end
 
-        xlabel('Number of Dimensions');
-        grid on;
+        xlabel(ax6, 'Number of Dimensions');
+        grid(ax6, 'on');
     else
-        text(0.5, 0.5, 'Objective\nNot Available', ...
+        text(ax6, 0.5, 0.5, {'Objective', 'Not Available'}, ...
              'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
              'Units', 'normalized');
     end
 
     % =====================================================================
-    % Plot 6-8: Raw, Denoised, Noise
+    % Plot 7-9: Raw, Denoised, Noise
     % =====================================================================
 
     % Compute shared colorbar limits across all three plots
-    all_data_678 = [trial_avg(:); denoised(:); noise(:)];
+    all_data_789 = [trial_avg(:); denoised(:); noise(:)];
     if has_nans
-        shared_mean = nanmean(all_data_678);
-        shared_std = nanstd(all_data_678);
+        shared_mean = nanmean(all_data_789);
+        shared_std = nanstd(all_data_789);
     else
-        shared_mean = mean(all_data_678);
-        shared_std = std(all_data_678);
+        shared_mean = mean(all_data_789);
+        shared_std = std(all_data_789);
     end
     if shared_std > 0
         clim_shared = [shared_mean - 3*shared_std, shared_mean + 3*shared_std];
@@ -434,62 +492,62 @@ function fig = visualization(data, results, varargin)
         clim_shared = [shared_mean - 1, shared_mean + 1];
     end
 
-    % Plot 6: Raw trial-averaged data
-    subplot(4, 4, 6);
-    imagesc(trial_avg, clim_shared);
-    colormap(gca, redblue);
-    colorbar;
+    % Plot 7: Raw trial-averaged data
+    ax7 = nexttile(t, [1 2]);  % Row 2, columns 3-4
+    imagesc(ax7, trial_avg, clim_shared);
+    colormap(ax7, redblue);
+    colorbar(ax7);
     if has_nans
-        title('Input Data (trial-averaged, with NaNs)');
+        title(ax7, 'Input Data (trial-averaged, with NaNs)');
     else
-        title('Input Data (trial-averaged)');
+        title(ax7, 'Input Data (trial-averaged)');
     end
-    xlabel('Conditions');
-    ylabel('Units');
+    xlabel(ax7, 'Conditions');
+    ylabel(ax7, 'Units');
 
-    % Plot 7: Denoised data
-    subplot(4, 4, 7);
-    imagesc(denoised, clim_shared);
-    colormap(gca, redblue);
-    colorbar;
-    title('PSN Denoised Data');
-    xlabel('Conditions');
-    ylabel('Units');
+    % Plot 8: Denoised data
+    ax8 = nexttile(t, [1 2]);  % Row 2, columns 5-6
+    imagesc(ax8, denoised, clim_shared);
+    colormap(ax8, redblue);
+    colorbar(ax8);
+    title(ax8, 'PSN Denoised Data');
+    xlabel(ax8, 'Conditions');
+    ylabel(ax8, 'Units');
 
-    % Plot 8: Noise (residual)
-    subplot(4, 4, 8);
-    imagesc(noise, clim_shared);
-    colormap(gca, redblue);
-    colorbar;
+    % Plot 9: Noise (residual)
+    ax9 = nexttile(t, [1 2]);  % Row 2, columns 7-8
+    imagesc(ax9, noise, clim_shared);
+    colormap(ax9, redblue);
+    colorbar(ax9);
     if has_nans
-        title('Residual (Noise, with NaNs)');
+        title(ax9, 'Residual (Noise, with NaNs)');
     else
-        title('Residual (Noise)');
+        title(ax9, 'Residual (Noise)');
     end
-    xlabel('Conditions');
-    ylabel('Units');
+    xlabel(ax9, 'Conditions');
+    ylabel(ax9, 'Units');
 
     % =====================================================================
-    % Plot 9: Denoiser matrix
+    % Plot 10: Denoiser matrix
     % =====================================================================
-    subplot(4, 4, 9);
+    ax10 = nexttile(t, [1 2]);  % Row 3, columns 1-2
     % Compute symmetric colorbar limits around 0 (use 99th percentile for better contrast)
     data_absmax = prctile(abs(results.denoiser(:)), 99);
     if data_absmax > 0
-        clim_9 = [-data_absmax, data_absmax];
+        clim_10 = [-data_absmax, data_absmax];
     else
-        clim_9 = [-1, 1];
+        clim_10 = [-1, 1];
     end
-    imagesc(results.denoiser, clim_9);
-    colormap(gca, redblue);
-    colorbar;
-    title('Denoiser Matrix');
-    xlabel('Units');
-    ylabel('Units');
-    axis square;
+    imagesc(ax10, results.denoiser, clim_10);
+    colormap(ax10, redblue);
+    colorbar(ax10);
+    title(ax10, 'Denoiser Matrix');
+    xlabel(ax10, 'Units');
+    ylabel(ax10, 'Units');
+    axis(ax10, 'square');
 
     % =====================================================================
-    % Plot 10-11: Traces
+    % Plot 11-12: Traces
     % =====================================================================
     % Color conditions by mean response (handle NaNs)
     cond_means = nanmean(trial_avg, 1);
@@ -502,29 +560,31 @@ function fig = visualization(data, results, varargin)
     end
 
     % Trial-averaged traces
-    subplot(4, 4, 10);
-    hold on;
+    ax11 = nexttile(t, [1 2]);  % Row 3, columns 3-4
+    hold(ax11, 'on');
     x_units = 1:nunits;  % 1-indexed for MATLAB
     for c = 1:nconds
-        plot(x_units, trial_avg(:, c), 'Color', trace_colors(c, :), 'LineWidth', 0.5);
+        plot(ax11, x_units, trial_avg(:, c), 'Color', trace_colors(c, :), 'LineWidth', 0.5);
     end
-    xlabel('Units');
-    ylabel('Activity');
-    title('Trial-Averaged Traces');
-    grid on;
-    xlim([min(x_units), max(x_units)]);
+    hold(ax11, 'off');
+    xlabel(ax11, 'Units');
+    ylabel(ax11, 'Activity');
+    title(ax11, 'Trial-Averaged Traces');
+    grid(ax11, 'on');
+    xlim(ax11, [min(x_units), max(x_units)]);
 
     % Denoised traces
-    subplot(4, 4, 11);
-    hold on;
+    ax12 = nexttile(t, [1 2]);  % Row 3, columns 5-6
+    hold(ax12, 'on');
     for c = 1:nconds
-        plot(x_units, denoised(:, c), 'Color', trace_colors(c, :), 'LineWidth', 0.5);
+        plot(ax12, x_units, denoised(:, c), 'Color', trace_colors(c, :), 'LineWidth', 0.5);
     end
-    xlabel('Units');
-    ylabel('Activity');
-    title('PSN Denoised Traces');
-    grid on;
-    xlim([min(x_units), max(x_units)]);
+    hold(ax12, 'off');
+    xlabel(ax12, 'Units');
+    ylabel(ax12, 'Activity');
+    title(ax12, 'PSN Denoised Traces');
+    grid(ax12, 'on');
+    xlim(ax12, [min(x_units), max(x_units)]);
 
     % Match y-limits (handle NaNs)
     all_trace_data = [trial_avg(:); denoised(:)];
@@ -538,15 +598,13 @@ function fig = visualization(data, results, varargin)
     y_range = y_max - y_min;
     y_margin = y_range * 0.05;
 
-    subplot(4, 4, 10);
-    ylim([y_min - y_margin, y_max + y_margin]);
-    subplot(4, 4, 11);
-    ylim([y_min - y_margin, y_max + y_margin]);
+    ylim(ax11, [y_min - y_margin, y_max + y_margin]);
+    ylim(ax12, [y_min - y_margin, y_max + y_margin]);
 
     % =====================================================================
-    % Plot 12: Split-half reliability
+    % Plot 13: Split-half reliability
     % =====================================================================
-    subplot(4, 4, 12);
+    ax13 = nexttile(t, [1 2]);  % Row 3, columns 7-8
 
     % Split trials
     half_idx = floor(ntrials / 2);
@@ -611,54 +669,57 @@ function fig = visualization(data, results, varargin)
     rng(42);
     x_jitter = (rand(nunits, 1) - 0.5) * 0.16;
 
-    hold on;
+    hold(ax13, 'on');
 
     % Connecting lines
     for u = 1:nunits
         values = [corr_tavg(u), corr_cross(u), corr_dn(u)];
         if ~any(isnan(values))
-            plot(x_positions + x_jitter(u), values, 'Color', [0.5 0.5 0.5], 'LineWidth', 0.3);
+            plot(ax13, x_positions + x_jitter(u), values, 'Color', [0.5 0.5 0.5], 'LineWidth', 0.3);
         end
     end
 
     % Scatter points
-    scatter(x_positions(1) + x_jitter, corr_tavg, 15, 'blue', 'filled', 'MarkerFaceAlpha', 0.4);
-    scatter(x_positions(2) + x_jitter, corr_cross, 15, [1 0.84 0], 'filled', 'MarkerFaceAlpha', 0.4);
-    scatter(x_positions(3) + x_jitter, corr_dn, 15, [0.5 0.8 0.3], 'filled', 'MarkerFaceAlpha', 0.4);
+    scatter(ax13, x_positions(1) + x_jitter, corr_tavg, 15, 'blue', 'filled', 'MarkerFaceAlpha', 0.4);
+    scatter(ax13, x_positions(2) + x_jitter, corr_cross, 15, [1 0.84 0], 'filled', 'MarkerFaceAlpha', 0.4);
+    scatter(ax13, x_positions(3) + x_jitter, corr_dn, 15, [0.5 0.8 0.3], 'filled', 'MarkerFaceAlpha', 0.4);
 
     % Means
     mean_tavg = nanmean(corr_tavg);
     mean_cross = nanmean(corr_cross);
     mean_dn = nanmean(corr_dn);
 
-    scatter(x_positions(1), mean_tavg, 100, 'blue', 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
-    scatter(x_positions(2), mean_cross, 100, [1 0.84 0], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
-    scatter(x_positions(3), mean_dn, 100, [0.2 0.6 0.2], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+    scatter(ax13, x_positions(1), mean_tavg, 100, 'blue', 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+    scatter(ax13, x_positions(2), mean_cross, 100, [1 0.84 0], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+    scatter(ax13, x_positions(3), mean_dn, 100, [0.2 0.6 0.2], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
 
     % Labels
     y_offset = 0.08;
-    text(x_positions(1), mean_tavg + y_offset, sprintf('%.3f', mean_tavg), ...
+    text(ax13, x_positions(1), mean_tavg + y_offset, sprintf('%.3f', mean_tavg), ...
         'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
-    text(x_positions(2), mean_cross + y_offset, sprintf('%.3f', mean_cross), ...
+    text(ax13, x_positions(2), mean_cross + y_offset, sprintf('%.3f', mean_cross), ...
         'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
-    text(x_positions(3), mean_dn + y_offset, sprintf('%.3f', mean_dn), ...
+    text(ax13, x_positions(3), mean_dn + y_offset, sprintf('%.3f', mean_dn), ...
         'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
 
-    set(gca, 'XTick', x_positions, 'XTickLabel', labels, 'XTickLabelRotation', 0, 'FontSize', 7);
-    ylabel('Pearson r');
+    hold(ax13, 'off');
+
+    set(ax13, 'XTick', x_positions, 'XTickLabel', labels, 'XTickLabelRotation', 0);
+    ax13.XAxis.FontSize = 7;  % Only set x-tick label font size smaller
+    ylabel(ax13, 'Pearson r');
     if has_nans
         % Count actual valid trials per split
         valid_A = sum(~any(isnan(data_A), 1), 3);
         valid_B = sum(~any(isnan(data_B), 1), 3);
         avg_valid_A = mean(valid_A(valid_A > 0));
         avg_valid_B = mean(valid_B(valid_B > 0));
-        title(sprintf('Split-Half Reliability\n(%.1f vs %.1f avg trials)', avg_valid_A, avg_valid_B));
+        title(ax13, sprintf('Split-Half Reliability\n(%.1f vs %.1f avg trials)', avg_valid_A, avg_valid_B));
     else
-        title(sprintf('Split-Half Reliability\n(%d vs %d trials)', size(data_A,3), size(data_B,3)));
+        title(ax13, sprintf('Split-Half Reliability\n(%d vs %d trials)', size(data_A,3), size(data_B,3)));
     end
-    grid on;
-    xlim([0.5, 3.5]);
-    yline(0, 'k-', 'LineWidth', 1);
+    grid(ax13, 'on');
+    xlim(ax13, [0.5, 3.5]);
+    yline(ax13, 0, 'k-', 'LineWidth', 1);
 
     % Set y-limits
     all_corr = [corr_tavg; corr_cross; corr_dn];
@@ -668,13 +729,13 @@ function fig = visualization(data, results, varargin)
         y_max_c = max(valid_corr);
         y_range_c = y_max_c - y_min_c;
         y_pad = max(0.1, y_range_c * 0.15);
-        ylim([y_min_c - y_pad, y_max_c + y_pad]);
+        ylim(ax13, [y_min_c - y_pad, y_max_c + y_pad]);
     else
-        ylim([-1, 1]);
+        ylim(ax13, [-1, 1]);
     end
 
     % =====================================================================
-    % Plot 13-16: Signal/Noise Diagnostics
+    % Plot 14-17: Signal/Noise Diagnostics
     % =====================================================================
 
     % Extract signal/noise variance data
@@ -697,69 +758,69 @@ function fig = visualization(data, results, varargin)
         x_after = 2;
         x_jitter_diag = (rand(nunits, 1) - 0.5) * 0.1;
 
-        % Plot 13: Signal Variance
-        subplot(4, 4, 13);
-        hold on;
+        % Plot 14: Signal Variance
+        ax14 = nexttile(t, [1 2]);  % Row 4, columns 1-2
+        hold(ax14, 'on');
         for u = 1:nunits
-            plot([x_before, x_after] + x_jitter_diag(u), [sv_before(u), sv_after(u)], ...
+            plot(ax14, [x_before, x_after] + x_jitter_diag(u), [sv_before(u), sv_after(u)], ...
                 'Color', [0.7 0.7 0.7], 'LineWidth', 0.5);
         end
-        scatter(x_before + x_jitter_diag, sv_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
-        scatter(x_after + x_jitter_diag, sv_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax14, x_before + x_jitter_diag, sv_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax14, x_after + x_jitter_diag, sv_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
 
         mean_sv_before = mean(sv_before);
         mean_sv_after = mean(sv_after);
-        scatter(x_before, mean_sv_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
-        scatter(x_after, mean_sv_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+        scatter(ax14, x_before, mean_sv_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+        scatter(ax14, x_after, mean_sv_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
 
         % Calculate y_offset dynamically
         y_range_sv = max([sv_before; sv_after]) - min([sv_before; sv_after]);
         y_offset_sv = y_range_sv * 0.08;
 
-        text(x_before, mean_sv_before + y_offset_sv, sprintf('%.3f', mean_sv_before), ...
+        text(ax14, x_before, mean_sv_before + y_offset_sv, sprintf('%.3f', mean_sv_before), ...
             'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
-        text(x_after, mean_sv_after + y_offset_sv, sprintf('%.3f', mean_sv_after), ...
+        text(ax14, x_after, mean_sv_after + y_offset_sv, sprintf('%.3f', mean_sv_after), ...
             'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
 
-        xlim([0.5, 2.5]);
-        set(gca, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
-        ylabel('Signal Variance');
-        title('Signal Variance');
-        grid on;
+        hold(ax14, 'off');
+        xlim(ax14, [0.5, 2.5]);
+        set(ax14, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
+        ylabel(ax14, 'Signal Variance');
+        title(ax14, 'Signal Variance');
+        grid(ax14, 'on');
 
-        % Plot 14: Noise Variance
-        subplot(4, 4, 14);
-        hold on;
+        % Plot 15: Noise Variance
+        ax15 = nexttile(t, [1 2]);  % Row 4, columns 3-4
+        hold(ax15, 'on');
         for u = 1:nunits
-            plot([x_before, x_after] + x_jitter_diag(u), [nv_before(u), nv_after(u)], ...
+            plot(ax15, [x_before, x_after] + x_jitter_diag(u), [nv_before(u), nv_after(u)], ...
                 'Color', [0.7 0.7 0.7], 'LineWidth', 0.5);
         end
-        scatter(x_before + x_jitter_diag, nv_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
-        scatter(x_after + x_jitter_diag, nv_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax15, x_before + x_jitter_diag, nv_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax15, x_after + x_jitter_diag, nv_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
 
         mean_nv_before = mean(nv_before);
         mean_nv_after = mean(nv_after);
-        scatter(x_before, mean_nv_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
-        scatter(x_after, mean_nv_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+        scatter(ax15, x_before, mean_nv_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+        scatter(ax15, x_after, mean_nv_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
 
         % Calculate y_offset dynamically
         y_range_nv = max([nv_before; nv_after]) - min([nv_before; nv_after]);
         y_offset_nv = y_range_nv * 0.08;
 
-        text(x_before, mean_nv_before + y_offset_nv, sprintf('%.3f', mean_nv_before), ...
+        text(ax15, x_before, mean_nv_before + y_offset_nv, sprintf('%.3f', mean_nv_before), ...
             'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
-        text(x_after, mean_nv_after + y_offset_nv, sprintf('%.3f', mean_nv_after), ...
+        text(ax15, x_after, mean_nv_after + y_offset_nv, sprintf('%.3f', mean_nv_after), ...
             'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
 
-        xlim([0.5, 2.5]);
-        set(gca, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
-        ylabel('Noise Variance / ntrials');
-        title('Trial-Averaged Noise Variance');
-        grid on;
+        hold(ax15, 'off');
+        xlim(ax15, [0.5, 2.5]);
+        set(ax15, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
+        ylabel(ax15, 'Noise Variance / ntrials');
+        title(ax15, 'Trial-Averaged Noise Variance');
+        grid(ax15, 'on');
 
         % Set unified ylims for both signal and noise variance plots
-        % Based on whichever has the bigger range
-        % Start at 0 (or slightly below) since variance is non-negative
         all_sv_vals = [sv_before; sv_after];
         all_nv_vals = [nv_before; nv_after];
         all_variance_vals = [all_sv_vals; all_nv_vals];
@@ -768,88 +829,87 @@ function fig = visualization(data, results, varargin)
         unified_ylim = [-y_pad_unified, y_max_unified + y_max_unified * 0.15];
 
         % Apply unified limits to both subplots
-        subplot(4, 4, 13);
-        ylim(unified_ylim);
-        yline(0, 'k--', 'LineWidth', 0.5);
+        ylim(ax14, unified_ylim);
+        yline(ax14, 0, 'k--', 'LineWidth', 0.5);
 
-        subplot(4, 4, 14);
-        ylim(unified_ylim);
-        yline(0, 'k--', 'LineWidth', 0.5);
+        ylim(ax15, unified_ylim);
+        yline(ax15, 0, 'k--', 'LineWidth', 0.5);
 
-        % Plot 15: NCSNR
-        subplot(4, 4, 15);
-        hold on;
+        % Plot 16: NCSNR
+        ax16 = nexttile(t, [1 2]);  % Row 4, columns 5-6
+        hold(ax16, 'on');
         for u = 1:nunits
-            plot([x_before, x_after] + x_jitter_diag(u), [ncsnr_before(u), ncsnr_after(u)], ...
+            plot(ax16, [x_before, x_after] + x_jitter_diag(u), [ncsnr_before(u), ncsnr_after(u)], ...
                 'Color', [0.7 0.7 0.7], 'LineWidth', 0.5);
         end
-        scatter(x_before + x_jitter_diag, ncsnr_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
-        scatter(x_after + x_jitter_diag, ncsnr_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax16, x_before + x_jitter_diag, ncsnr_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax16, x_after + x_jitter_diag, ncsnr_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
 
         mean_ncsnr_before = mean(ncsnr_before);
         mean_ncsnr_after = mean(ncsnr_after);
-        scatter(x_before, mean_ncsnr_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
-        scatter(x_after, mean_ncsnr_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+        scatter(ax16, x_before, mean_ncsnr_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+        scatter(ax16, x_after, mean_ncsnr_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
 
         % Calculate y_offset dynamically
         y_range_ncsnr = max([ncsnr_before; ncsnr_after]) - min([ncsnr_before; ncsnr_after]);
         y_offset_ncsnr = y_range_ncsnr * 0.08;
 
-        text(x_before, mean_ncsnr_before + y_offset_ncsnr, sprintf('%.3f', mean_ncsnr_before), ...
+        text(ax16, x_before, mean_ncsnr_before + y_offset_ncsnr, sprintf('%.3f', mean_ncsnr_before), ...
             'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
-        text(x_after, mean_ncsnr_after + y_offset_ncsnr, sprintf('%.3f', mean_ncsnr_after), ...
+        text(ax16, x_after, mean_ncsnr_after + y_offset_ncsnr, sprintf('%.3f', mean_ncsnr_after), ...
             'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
 
         % Set ylims with padding
-        % Start at 0 (or slightly below) since NCSNR is non-negative
         all_ncsnr_vals = [ncsnr_before; ncsnr_after];
         y_max_ncsnr = max(all_ncsnr_vals);
         y_pad_ncsnr_bottom = y_max_ncsnr * 0.05;  % 5% padding at bottom
         y_pad_ncsnr_top = y_max_ncsnr * 0.15;  % 15% padding at top
-        ylim([-y_pad_ncsnr_bottom, y_max_ncsnr + y_pad_ncsnr_top]);
-        yline(0, 'k--', 'LineWidth', 0.5);
+        ylim(ax16, [-y_pad_ncsnr_bottom, y_max_ncsnr + y_pad_ncsnr_top]);
+        yline(ax16, 0, 'k--', 'LineWidth', 0.5);
 
-        xlim([0.5, 2.5]);
-        set(gca, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
-        ylabel('NCSNR');
-        title('Noise Ceiling SNR (NCSNR)');
-        grid on;
+        hold(ax16, 'off');
+        xlim(ax16, [0.5, 2.5]);
+        set(ax16, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
+        ylabel(ax16, 'NCSNR');
+        title(ax16, 'Noise Ceiling SNR (NCSNR)');
+        grid(ax16, 'on');
 
-        % Plot 16: Noise Ceiling %
-        subplot(4, 4, 16);
-        hold on;
+        % Plot 17: Noise Ceiling %
+        ax17 = nexttile(t, [1 2]);  % Row 4, columns 7-8
+        hold(ax17, 'on');
         for u = 1:nunits
-            plot([x_before, x_after] + x_jitter_diag(u), [noiseceiling_before(u), noiseceiling_after(u)], ...
+            plot(ax17, [x_before, x_after] + x_jitter_diag(u), [noiseceiling_before(u), noiseceiling_after(u)], ...
                 'Color', [0.7 0.7 0.7], 'LineWidth', 0.5);
         end
-        scatter(x_before + x_jitter_diag, noiseceiling_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
-        scatter(x_after + x_jitter_diag, noiseceiling_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax17, x_before + x_jitter_diag, noiseceiling_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax17, x_after + x_jitter_diag, noiseceiling_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
 
         mean_nc_before = mean(noiseceiling_before);
         mean_nc_after = mean(noiseceiling_after);
-        scatter(x_before, mean_nc_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
-        scatter(x_after, mean_nc_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+        scatter(ax17, x_before, mean_nc_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
+        scatter(ax17, x_after, mean_nc_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
 
         % Fixed y_offset for noise ceiling (percentage scale 0-100)
         y_offset_nc = 100 * 0.08;
 
-        text(x_before, mean_nc_before + y_offset_nc, sprintf('%.3f', mean_nc_before), ...
+        text(ax17, x_before, mean_nc_before + y_offset_nc, sprintf('%.3f', mean_nc_before), ...
             'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
-        text(x_after, mean_nc_after + y_offset_nc, sprintf('%.3f', mean_nc_after), ...
+        text(ax17, x_after, mean_nc_after + y_offset_nc, sprintf('%.3f', mean_nc_after), ...
             'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
 
-        xlim([0.5, 2.5]);
-        ylim([-5, 100]);  % Add negative padding to make yline at 0 visible
-        yline(0, 'k--', 'LineWidth', 0.5);
+        hold(ax17, 'off');
+        xlim(ax17, [0.5, 2.5]);
+        ylim(ax17, [-5, 100]);  % Add negative padding to make yline at 0 visible
+        yline(ax17, 0, 'k--', 'LineWidth', 0.5);
 
-        set(gca, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
-        ylabel('Noise Ceiling (%)');
+        set(ax17, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
+        ylabel(ax17, 'Noise Ceiling (%)');
         if has_nans
-            title(sprintf('Noise Ceiling Percentage (%.1f avg trials)', ntrials_avg));
+            title(ax17, sprintf('Noise Ceiling Percentage (%.1f avg trials)', ntrials_avg));
         else
-            title(sprintf('Noise Ceiling Percentage (%d trials)', ntrials));
+            title(ax17, sprintf('Noise Ceiling Percentage (%d trials)', ntrials));
         end
-        grid on;
+        grid(ax17, 'on');
     end
 
 end

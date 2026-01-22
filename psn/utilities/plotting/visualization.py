@@ -28,8 +28,27 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
     # Set random seed for reproducibility
     np.random.seed(42)
 
-    # Create a large figure with 4x4 grid
-    fig = plt.figure(figsize=(18, 12))
+    # Increase font sizes globally for this figure
+    plt.rcParams.update({
+        'font.size': 12,
+        'axes.titlesize': 13,
+        'axes.labelsize': 11,
+        'xtick.labelsize': 10,
+        'ytick.labelsize': 10,
+        'legend.fontsize': 9,
+    })
+
+    # Create a large figure with custom grid layout
+    # Top row: 5 subplots (cSb, cNb, basis dims (half), eigenvalues (half), sig/noise var)
+    # Rows 2-4: standard 4x4 grid
+    fig = plt.figure(figsize=(24, 15))
+
+    # Create GridSpec: 4 rows, 8 columns (to allow half-width subplots)
+    # Increase spacing to prevent overlap
+    # Use width_ratios to make first 2 columns slightly narrower (for objective plot with twin y-axis)
+    gs = GridSpec(4, 8, figure=fig, hspace=0.45, wspace=0.6,
+                  left=0.05, right=0.95, top=0.93, bottom=0.05,
+                  width_ratios=[0.9, 0.9, 1, 1, 1, 1, 1, 1])
 
     # Extract data dimensions
     nunits, nconds, ntrials = data.shape
@@ -92,7 +111,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
     if threshold_info:
         title_text += '  |  ' + ', '.join(threshold_info)
 
-    plt.suptitle(title_text, fontsize=12, fontweight='bold')
+    plt.suptitle(title_text, fontsize=14, fontweight='bold')
 
     # Get trial-averaged and denoised data (use nanmean for NaN data)
     if has_nans:
@@ -104,9 +123,9 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
     noise = trial_avg - denoised
 
     # =========================================================================
-    # Plot 1: Basis source matrix (covariance)
+    # Plot 1: Basis source matrix (signal covariance or basis-specific)
     # =========================================================================
-    ax1 = plt.subplot(4, 4, 1)
+    ax1 = fig.add_subplot(gs[0, 0:2])  # First 2 columns of row 0
     if 'gsn_result' in results and 'cSb' in results['gsn_result']:
         cSb = results['gsn_result']['cSb']
         cNb = results['gsn_result']['cNb']
@@ -152,9 +171,36 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
                 ha='center', va='center', transform=ax1.transAxes)
 
     # =========================================================================
-    # Plot 2: Top 5 PCs as vertical line plots
+    # Plot 2: Noise Covariance (cNb)
     # =========================================================================
-    ax2 = plt.subplot(4, 4, 2)
+    ax2 = fig.add_subplot(gs[0, 2:4])  # Columns 2-3 of row 0
+    if 'gsn_result' in results and 'cNb' in results['gsn_result']:
+        cNb = results['gsn_result']['cNb']
+
+        # Compute symmetric colorbar limits around 0 (use 99th percentile for better contrast)
+        if has_nans:
+            data_absmax_cNb = np.nanpercentile(np.abs(cNb), 99)
+        else:
+            data_absmax_cNb = np.percentile(np.abs(cNb), 99)
+
+        if data_absmax_cNb > 0:
+            clim_cNb = [-data_absmax_cNb, data_absmax_cNb]
+        else:
+            clim_cNb = [-1, 1]
+
+        im2 = ax2.imshow(cNb, vmin=clim_cNb[0], vmax=clim_cNb[1], cmap='RdBu_r', aspect='equal')
+        plt.colorbar(im2, ax=ax2)
+        ax2.set_title('Noise Covariance (cNb)')
+        ax2.set_xlabel('Units')
+        ax2.set_ylabel('Units')
+    else:
+        ax2.text(0.5, 0.5, 'Noise Covariance\nNot Available',
+                ha='center', va='center', transform=ax2.transAxes)
+
+    # =========================================================================
+    # Plot 3: Top 5 PCs as vertical line plots (half width)
+    # =========================================================================
+    ax3 = fig.add_subplot(gs[0, 4:5])  # Column 4 of row 0 (half width)
     if 'fullbasis' in results:
         num_pcs = min(5, results['fullbasis'].shape[1])
 
@@ -172,27 +218,27 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
         for pc in range(num_pcs):
             # Center each PC at position pc (0-indexed), with loadings as horizontal deviations
             x_vals = pc + results['fullbasis'][:, pc] * scale_factor
-            ax2.plot(x_vals, y_units, linewidth=1.5, color=colors[pc])
+            ax3.plot(x_vals, y_units, linewidth=1.5, color=colors[pc])
 
             # Add vertical reference line at center
-            ax2.axvline(x=pc, color='k', linestyle='--', linewidth=0.5)
+            ax3.axvline(x=pc, color='k', linestyle='--', linewidth=0.5)
 
-        ax2.set_xlabel('Principal Component')
-        ax2.set_ylabel('Units')
-        ax2.set_title('Top 5 Basis Dimensions')
-        ax2.set_xlim([-0.5, num_pcs - 0.5])
-        ax2.set_ylim([0, nunits - 1])
-        ax2.invert_yaxis()  # Flip y-axis to match heatmaps
-        ax2.set_xticks(range(num_pcs))
-        ax2.grid(True)
+        ax3.set_xlabel('PC')
+        ax3.set_ylabel('Units')
+        ax3.set_title('Top 5 Basis Dims')
+        ax3.set_xlim([-0.5, num_pcs - 0.5])
+        ax3.set_ylim([0, nunits - 1])
+        ax3.invert_yaxis()  # Flip y-axis to match heatmaps
+        ax3.set_xticks(range(num_pcs))
+        ax3.grid(True)
     else:
-        ax2.text(0.5, 0.5, 'Basis\nNot Available',
-                ha='center', va='center', transform=ax2.transAxes)
+        ax3.text(0.5, 0.5, 'Basis\nNot Available',
+                ha='center', va='center', transform=ax3.transAxes)
 
     # =========================================================================
-    # Plot 3: Global dimension ranking (eigenvalues or signal variance)
+    # Plot 4: Global dimension ranking (eigenvalues or signal variance) - half width
     # =========================================================================
-    ax3 = plt.subplot(4, 4, 3)
+    ax4 = fig.add_subplot(gs[0, 5:6])  # Column 5 of row 0 (half width)
 
     # Check if eigenvalues were used for ranking (and are available)
     use_eigenvalues = (basis_ordering == 'eigenvalues' and
@@ -204,69 +250,69 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
         # Show eigenvalues (SORTED - what was actually used for ranking)
         evals = results['basis_eigenvalues']  # Already sorted in descending order
         x_vals = np.arange(len(evals))  # 0-indexed
-        ax3.plot(x_vals, evals, linewidth=1.5, color=[0.5, 0, 0.5])
+        ax4.plot(x_vals, evals, linewidth=1.5, color=[0.5, 0, 0.5])
 
         # Add threshold indicators (only if threshold > 0, since line means "include up to here")
         if 'best_threshold' in results:
             best_t = results['best_threshold']
             if np.isscalar(best_t) and best_t > 0:
-                ax3.axvline(x=best_t, color='r', linestyle='--', linewidth=1.5)
+                ax4.axvline(x=best_t, color='r', linestyle='--', linewidth=1.5)
                 # Add rotated text annotation like MATLAB
-                y_mid = (ax3.get_ylim()[0] + ax3.get_ylim()[1]) / 2
-                ax3.text(best_t, y_mid, f'Thresh: {int(best_t)}',
+                y_mid = (ax4.get_ylim()[0] + ax4.get_ylim()[1]) / 2
+                ax4.text(best_t, y_mid, f'Thresh: {int(best_t)}',
                         color='r', fontsize=9, rotation=90,
                         ha='right', va='center')
             elif hasattr(best_t, '__len__') and np.mean(best_t) > 0:
                 mean_thresh = np.mean(best_t)
-                ax3.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=1.5)
+                ax4.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=1.5)
                 # Add rotated text annotation like MATLAB
-                y_mid = (ax3.get_ylim()[0] + ax3.get_ylim()[1]) / 2
-                ax3.text(mean_thresh, y_mid, f'Mean: {mean_thresh:.1f}',
+                y_mid = (ax4.get_ylim()[0] + ax4.get_ylim()[1]) / 2
+                ax4.text(mean_thresh, y_mid, f'Mean: {mean_thresh:.1f}',
                         color='r', fontsize=9, rotation=90,
                         ha='right', va='center')
 
-        ax3.set_xlabel('Dimension')
-        ax3.set_ylabel('Eigenvalue')
-        ax3.set_title('Basis Eigenvalues (sorted, used for ranking)')
-        ax3.grid(True)
+        ax4.set_xlabel('Dim')
+        ax4.set_ylabel('Eigenvalue')
+        ax4.set_title('Basis Eigenvalues')
+        ax4.grid(True)
 
     elif 'signalvar' in results:
         # Show signal variance (SORTED - what was actually used for ranking)
         signal_vars = results['signalvar']  # Already sorted in descending order
         x_vals = np.arange(len(signal_vars))  # 0-indexed
-        ax3.plot(x_vals, signal_vars, linewidth=1.5, color='blue')
+        ax4.plot(x_vals, signal_vars, linewidth=1.5, color='blue')
 
         # Add threshold indicators (only if threshold > 0, since line means "include up to here")
         if 'best_threshold' in results:
             best_t = results['best_threshold']
             if np.isscalar(best_t) and best_t > 0:
-                ax3.axvline(x=best_t, color='r', linestyle='--', linewidth=1.5)
+                ax4.axvline(x=best_t, color='r', linestyle='--', linewidth=1.5)
                 # Add rotated text annotation like MATLAB
-                y_mid = (ax3.get_ylim()[0] + ax3.get_ylim()[1]) / 2
-                ax3.text(best_t, y_mid, f'Thresh: {int(best_t)}',
+                y_mid = (ax4.get_ylim()[0] + ax4.get_ylim()[1]) / 2
+                ax4.text(best_t, y_mid, f'Thresh: {int(best_t)}',
                         color='r', fontsize=9, rotation=90,
                         ha='right', va='center')
             elif hasattr(best_t, '__len__') and np.mean(best_t) > 0:
                 mean_thresh = np.mean(best_t)
-                ax3.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=1.5)
+                ax4.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=1.5)
                 # Add rotated text annotation like MATLAB
-                y_mid = (ax3.get_ylim()[0] + ax3.get_ylim()[1]) / 2
-                ax3.text(mean_thresh, y_mid, f'Mean: {mean_thresh:.1f}',
+                y_mid = (ax4.get_ylim()[0] + ax4.get_ylim()[1]) / 2
+                ax4.text(mean_thresh, y_mid, f'Mean: {mean_thresh:.1f}',
                         color='r', fontsize=9, rotation=90,
                         ha='right', va='center')
 
-        ax3.set_xlabel('Dimension')
-        ax3.set_ylabel('Signal Variance')
-        ax3.set_title('Signal Variance Spectrum (sorted, used for ranking)')
-        ax3.grid(True)
+        ax4.set_xlabel('Dim')
+        ax4.set_ylabel('Signal Var')
+        ax4.set_title('Signal Variance')
+        ax4.grid(True)
     else:
-        ax3.text(0.5, 0.5, 'Ranking Info\nNot Available',
-                ha='center', va='center', transform=ax3.transAxes)
+        ax4.text(0.5, 0.5, 'Ranking Info\nNot Available',
+                ha='center', va='center', transform=ax4.transAxes)
 
     # =========================================================================
-    # Plot 4: Signal vs Noise variance
+    # Plot 5: Signal vs Noise variance
     # =========================================================================
-    ax4 = plt.subplot(4, 4, 4)
+    ax5 = fig.add_subplot(gs[0, 6:8])  # Columns 6-7 of row 0
     if 'signalvar' in results and 'noisevar' in results:
         if not isinstance(results['signalvar'], (list, tuple)):
             # Global or averaged
@@ -274,51 +320,51 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
             nv = results['noisevar']
 
             # Left y-axis for variance
-            ax4_left = ax4
-            ax4_left.set_ylabel('Variance', color='tab:blue')
+            ax5_left = ax5
+            ax5_left.set_ylabel('Variance', color='tab:blue')
 
             x_vals = np.arange(len(sv))  # 0-indexed
-            line1 = ax4_left.plot(x_vals, sv, '-', linewidth=1.5, color='blue', label='Signal var')
-            line2 = ax4_left.plot(x_vals, nv, '-', linewidth=1.5, color=[1, 0.5, 0], label='Noise var')
-            line2b = ax4_left.plot(x_vals, nv / ntrials_avg, '-', linewidth=1.5, color=[1, 0.85, 0.6], label=f'Noise var / {ntrials_avg:.1f} trials')
+            line1 = ax5_left.plot(x_vals, sv, '-', linewidth=1.5, color='blue', label='Signal var')
+            line2 = ax5_left.plot(x_vals, nv, '-', linewidth=1.5, color=[1, 0.5, 0], label='Noise var')
+            line2b = ax5_left.plot(x_vals, nv / ntrials_avg, '-', linewidth=1.5, color=[1, 0.85, 0.6], label=f'Noise var / {ntrials_avg:.1f} trials')
 
-            ax4_left.tick_params(axis='y', labelcolor='tab:blue')
+            ax5_left.tick_params(axis='y', labelcolor='tab:blue')
 
             # Right y-axis for NCSNR
-            ax4_right = ax4_left.twinx()
+            ax5_right = ax5_left.twinx()
             ncsnr_trace = np.sqrt(sv) / np.sqrt(nv + np.finfo(float).eps)
-            line3 = ax4_right.plot(x_vals, ncsnr_trace, '-', linewidth=1.5, color='magenta', label='NCSNR')
+            line3 = ax5_right.plot(x_vals, ncsnr_trace, '-', linewidth=1.5, color='magenta', label='NCSNR')
 
-            ax4_right.set_ylabel('NCSNR', color='magenta')
-            ax4_right.tick_params(axis='y', labelcolor='magenta')
+            ax5_right.set_ylabel('NCSNR', color='magenta')
+            ax5_right.tick_params(axis='y', labelcolor='magenta')
 
             # Add threshold (on left axis, only if > 0)
             if 'best_threshold' in results:
                 best_t = results['best_threshold']
                 if np.isscalar(best_t) and best_t > 0:
-                    ax4_left.axvline(x=best_t, color='r', linestyle='--', linewidth=1)
+                    ax5_left.axvline(x=best_t, color='r', linestyle='--', linewidth=1)
                 elif hasattr(best_t, '__len__') and np.mean(best_t) > 0:
-                    ax4_left.axvline(x=np.mean(best_t), color='r', linestyle='--', linewidth=1)
+                    ax5_left.axvline(x=np.mean(best_t), color='r', linestyle='--', linewidth=1)
 
-            ax4_left.set_xlabel('Dimension')
-            ax4_left.set_title('Signal and Noise Variance')
+            ax5_left.set_xlabel('Dimension')
+            ax5_left.set_title('Signal and Noise Variance')
 
             # Combine legends
             lines = line1 + line2 + line2b + line3
             labels = [l.get_label() for l in lines]
-            ax4_left.legend(lines, labels, loc='best')
-            ax4_left.grid(True)
+            ax5_left.legend(lines, labels, loc='best', fontsize=7)
+            ax5_left.grid(True)
         else:
-            ax4.text(0.5, 0.5, 'Per-Unit Variance\n(Averaged across units)',
-                    ha='center', va='center', transform=ax4.transAxes)
+            ax5.text(0.5, 0.5, 'Per-Unit Variance\n(Averaged across units)',
+                    ha='center', va='center', transform=ax5.transAxes)
     else:
-        ax4.text(0.5, 0.5, 'Variance Info\nNot Available',
-                ha='center', va='center', transform=ax4.transAxes)
+        ax5.text(0.5, 0.5, 'Variance Info\nNot Available',
+                ha='center', va='center', transform=ax5.transAxes)
 
     # =========================================================================
-    # Plot 5: Objective function
+    # Plot 6: Objective function (row 2, col 1)
     # =========================================================================
-    ax5 = plt.subplot(4, 4, 5)
+    ax6 = fig.add_subplot(gs[1, 0:2])  # Row 1, columns 0-1
     if 'objective' in results:
         obj = results['objective']
         x_obj = np.arange(len(obj))  # Always 0-indexed, linear scale
@@ -327,11 +373,11 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
         if 'unit_objectives' in results and results['unit_objectives']:
             # Unit-specific mode: use dual y-axes
             # Left axis: unit curves (gray)
-            ax5_left = ax5
+            ax6_left = ax6
             h_units = None
             for u_obj in results['unit_objectives']:
                 x_unit = np.arange(len(u_obj))
-                line, = ax5_left.plot(x_unit, u_obj, linewidth=0.5,
+                line, = ax6_left.plot(x_unit, u_obj, linewidth=0.5,
                         color=[0.5, 0.5, 0.5], alpha=0.3)
                 if h_units is None:
                     h_units = line
@@ -349,111 +395,111 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
                                 x_thresh.append(k_u)
                                 y_thresh.append(u_obj[k_u])
                     if x_thresh:
-                        ax5_left.scatter(x_thresh, y_thresh, s=20, color=[1, 0.3, 0.3],
+                        ax6_left.scatter(x_thresh, y_thresh, s=20, color=[1, 0.3, 0.3],
                                    alpha=0.6, zorder=5)
 
-            ax5_left.set_ylabel('Unit-Specific Objective\n(SignalVar - NoiseVar/ntrials)', color=[0.4, 0.4, 0.4])
-            ax5_left.tick_params(axis='y', labelcolor=[0.4, 0.4, 0.4])
+            ax6_left.set_ylabel('Unit-Specific Objective\n(SignalVar - NoiseVar/ntrials)', color=[0.4, 0.4, 0.4])
+            ax6_left.tick_params(axis='y', labelcolor=[0.4, 0.4, 0.4])
 
             # Right axis: population sum (green)
-            ax5_right = ax5.twinx()
-            h_sum, = ax5_right.plot(x_obj, obj, linewidth=2, color=[0.3, 0.7, 0.3])
-            ax5_right.set_ylabel('Population Objective', color=[0.3, 0.7, 0.3])
-            ax5_right.tick_params(axis='y', labelcolor=[0.3, 0.7, 0.3])
+            ax6_right = ax6.twinx()
+            h_sum, = ax6_right.plot(x_obj, obj, linewidth=2, color=[0.3, 0.7, 0.3])
+            ax6_right.set_ylabel('Population Objective', color=[0.3, 0.7, 0.3])
+            ax6_right.tick_params(axis='y', labelcolor=[0.3, 0.7, 0.3])
 
             # Add legend
-            ax5_left.legend([h_units, h_sum], ['Units', 'Population (=Global)'], loc='best')
+            ax6_left.legend([h_units, h_sum], ['Units', 'Population (=Global)'], loc='best')
 
-            ax5.set_title('Objective Function (unit-specific)')
+            ax6.set_title('Objective Function (unit-specific)')
         else:
             # Global mode: single curve
-            ax5.plot(x_obj, obj, linewidth=1.5, color=[0.3, 0.7, 0.3])
+            ax6.plot(x_obj, obj, linewidth=1.5, color=[0.3, 0.7, 0.3])
 
             # Mark chosen threshold (not maximum - threshold may be constrained)
             if 'best_threshold' in results and np.isscalar(results['best_threshold']):
                 k = int(results['best_threshold'])
                 if k >= 0 and k < len(obj):
-                    ax5.plot(k, obj[k], 'ro', markersize=8, linewidth=2)
+                    ax6.plot(k, obj[k], 'ro', markersize=8, linewidth=2)
             else:
                 # Fallback to maximum if no threshold stored
                 max_idx = np.argmax(obj)
-                ax5.plot(max_idx, obj[max_idx], 'ro', markersize=8, linewidth=2)
+                ax6.plot(max_idx, obj[max_idx], 'ro', markersize=8, linewidth=2)
 
-            ax5.set_title('Objective Function')
+            ax6.set_title('Objective Function')
 
-        ax5.set_xlabel('Number of Dimensions')
+        ax6.set_xlabel('Number of Dimensions')
 
         # Set ylabel based on criterion (only for global mode - unit-specific mode already set ylabels)
         if not ('unit_objectives' in results and results['unit_objectives']):
             if criterion == 'variance':
-                ax5.set_ylabel('Cumulative SignalVar')
+                ax6.set_ylabel('Cumulative SignalVar')
             else:
-                ax5.set_ylabel('Cumulative SignalVar - NoiseVar/ntrials')
+                ax6.set_ylabel('Cumulative SignalVar - NoiseVar/ntrials')
 
-        ax5.grid(True)
+        ax6.grid(True)
     else:
-        ax5.text(0.5, 0.5, 'Objective\nNot Available',
-                ha='center', va='center', transform=ax5.transAxes)
+        ax6.text(0.5, 0.5, 'Objective\nNot Available',
+                ha='center', va='center', transform=ax6.transAxes)
 
     # =========================================================================
-    # Plot 6-8: Raw, Denoised, Noise
+    # Plot 7-9: Raw, Denoised, Noise
     # =========================================================================
 
     # Compute shared colorbar limits across all three plots (mean-centered)
-    all_data_678 = np.concatenate([trial_avg.ravel(), denoised.ravel(), noise.ravel()])
+    all_data_789 = np.concatenate([trial_avg.ravel(), denoised.ravel(), noise.ravel()])
     if has_nans:
-        shared_mean = np.nanmean(all_data_678)
-        shared_std = np.nanstd(all_data_678)
+        shared_mean = np.nanmean(all_data_789)
+        shared_std = np.nanstd(all_data_789)
     else:
-        shared_mean = np.mean(all_data_678)
-        shared_std = np.std(all_data_678)
+        shared_mean = np.mean(all_data_789)
+        shared_std = np.std(all_data_789)
     if shared_std > 0:
         clim_shared = [shared_mean - 3*shared_std, shared_mean + 3*shared_std]
     else:
         clim_shared = [shared_mean - 1, shared_mean + 1]
 
-    # Plot 6: Raw trial-averaged data
-    ax6 = plt.subplot(4, 4, 6)
-    im6 = ax6.imshow(trial_avg, vmin=clim_shared[0], vmax=clim_shared[1], cmap='RdBu_r', aspect='auto', interpolation='none')
-    plt.colorbar(im6, ax=ax6)
-    title_6 = 'Input Data (trial-averaged, with NaNs)' if has_nans else 'Input Data (trial-averaged)'
-    ax6.set_title(title_6)
-    ax6.set_xlabel('Conditions')
-    ax6.set_ylabel('Units')
-
-    # Plot 7: Denoised data
-    ax7 = plt.subplot(4, 4, 7)
-    im7 = ax7.imshow(denoised, vmin=clim_shared[0], vmax=clim_shared[1], cmap='RdBu_r', aspect='auto', interpolation='none')
+    # Plot 7: Raw trial-averaged data
+    ax7 = fig.add_subplot(gs[1, 2:4])  # Row 1, columns 2-3
+    im7 = ax7.imshow(trial_avg, vmin=clim_shared[0], vmax=clim_shared[1], cmap='RdBu_r', aspect='auto', interpolation='none')
     plt.colorbar(im7, ax=ax7)
-    ax7.set_title('PSN Denoised Data')
+    title_7 = 'Input Data (trial-averaged, with NaNs)' if has_nans else 'Input Data (trial-averaged)'
+    ax7.set_title(title_7)
     ax7.set_xlabel('Conditions')
     ax7.set_ylabel('Units')
 
-    # Plot 8: Noise (residual)
-    ax8 = plt.subplot(4, 4, 8)
-    im8 = ax8.imshow(noise, vmin=clim_shared[0], vmax=clim_shared[1], cmap='RdBu_r', aspect='auto', interpolation='none')
+    # Plot 8: Denoised data
+    ax8 = fig.add_subplot(gs[1, 4:6])  # Row 1, columns 4-5
+    im8 = ax8.imshow(denoised, vmin=clim_shared[0], vmax=clim_shared[1], cmap='RdBu_r', aspect='auto', interpolation='none')
     plt.colorbar(im8, ax=ax8)
-    title_8 = 'Residual (Noise, with NaNs)' if has_nans else 'Residual (Noise)'
-    ax8.set_title(title_8)
+    ax8.set_title('PSN Denoised Data')
     ax8.set_xlabel('Conditions')
     ax8.set_ylabel('Units')
 
-    # =========================================================================
-    # Plot 9: Denoiser matrix
-    # =========================================================================
-    ax9 = plt.subplot(4, 4, 9)
-    denoiser = results['denoiser']
-    # Compute symmetric colorbar limits around 0 (use 99th percentile for better contrast)
-    data_absmax = np.nanpercentile(np.abs(denoiser), 99) if has_nans else np.percentile(np.abs(denoiser), 99)
-    clim_9 = [-data_absmax, data_absmax] if data_absmax > 0 else [-1, 1]
-    im9 = ax9.imshow(denoiser, vmin=clim_9[0], vmax=clim_9[1], cmap='RdBu_r', aspect='equal', interpolation='none')
+    # Plot 9: Noise (residual)
+    ax9 = fig.add_subplot(gs[1, 6:8])  # Row 1, columns 6-7
+    im9 = ax9.imshow(noise, vmin=clim_shared[0], vmax=clim_shared[1], cmap='RdBu_r', aspect='auto', interpolation='none')
     plt.colorbar(im9, ax=ax9)
-    ax9.set_title('Denoiser Matrix')
-    ax9.set_xlabel('Units')
+    title_9 = 'Residual (Noise, with NaNs)' if has_nans else 'Residual (Noise)'
+    ax9.set_title(title_9)
+    ax9.set_xlabel('Conditions')
     ax9.set_ylabel('Units')
 
     # =========================================================================
-    # Plot 10-11: Traces
+    # Plot 10: Denoiser matrix
+    # =========================================================================
+    ax10 = fig.add_subplot(gs[2, 0:2])  # Row 2, columns 0-1
+    denoiser = results['denoiser']
+    # Compute symmetric colorbar limits around 0 (use 99th percentile for better contrast)
+    data_absmax = np.nanpercentile(np.abs(denoiser), 99) if has_nans else np.percentile(np.abs(denoiser), 99)
+    clim_10 = [-data_absmax, data_absmax] if data_absmax > 0 else [-1, 1]
+    im10 = ax10.imshow(denoiser, vmin=clim_10[0], vmax=clim_10[1], cmap='RdBu_r', aspect='equal', interpolation='none')
+    plt.colorbar(im10, ax=ax10)
+    ax10.set_title('Denoiser Matrix')
+    ax10.set_xlabel('Units')
+    ax10.set_ylabel('Units')
+
+    # =========================================================================
+    # Plot 11-12: Traces
     # =========================================================================
     # Color conditions by mean response (handle NaNs)
     cond_means = np.nanmean(trial_avg, axis=0)
@@ -465,25 +511,25 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
         trace_colors[cond_idx, :] = colors[rank, :3]  # Use only RGB, not alpha
 
     # Trial-averaged traces
-    ax10 = plt.subplot(4, 4, 10)
+    ax11 = fig.add_subplot(gs[2, 2:4])  # Row 2, columns 2-3
     x_units = np.arange(nunits)
     for c in range(nconds):
-        ax10.plot(x_units, trial_avg[:, c], color=trace_colors[c, :], linewidth=0.5)
-    ax10.set_xlabel('Units')
-    ax10.set_ylabel('Activity')
-    ax10.set_title('Trial-Averaged Traces')
-    ax10.grid(True)
-    ax10.set_xlim([x_units[0], x_units[-1]])
-
-    # Denoised traces
-    ax11 = plt.subplot(4, 4, 11)
-    for c in range(nconds):
-        ax11.plot(x_units, denoised[:, c], color=trace_colors[c, :], linewidth=0.5)
+        ax11.plot(x_units, trial_avg[:, c], color=trace_colors[c, :], linewidth=0.5)
     ax11.set_xlabel('Units')
     ax11.set_ylabel('Activity')
-    ax11.set_title('PSN Denoised Traces')
+    ax11.set_title('Trial-Averaged Traces')
     ax11.grid(True)
     ax11.set_xlim([x_units[0], x_units[-1]])
+
+    # Denoised traces
+    ax12 = fig.add_subplot(gs[2, 4:6])  # Row 2, columns 4-5
+    for c in range(nconds):
+        ax12.plot(x_units, denoised[:, c], color=trace_colors[c, :], linewidth=0.5)
+    ax12.set_xlabel('Units')
+    ax12.set_ylabel('Activity')
+    ax12.set_title('PSN Denoised Traces')
+    ax12.grid(True)
+    ax12.set_xlim([x_units[0], x_units[-1]])
 
     # Match y-limits (handle NaNs)
     all_trace_data = np.concatenate([trial_avg.ravel(), denoised.ravel()])
@@ -492,13 +538,13 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
     y_range = y_max - y_min
     y_margin = y_range * 0.05
 
-    ax10.set_ylim([y_min - y_margin, y_max + y_margin])
     ax11.set_ylim([y_min - y_margin, y_max + y_margin])
+    ax12.set_ylim([y_min - y_margin, y_max + y_margin])
 
     # =========================================================================
-    # Plot 12: Split-half reliability
+    # Plot 13: Split-half reliability
     # =========================================================================
-    ax12 = plt.subplot(4, 4, 12)
+    ax13 = fig.add_subplot(gs[2, 6:8])  # Row 2, columns 6-7
 
     # Split trials
     half_idx = ntrials // 2
@@ -558,15 +604,15 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
     for u in range(nunits):
         values = [corr_tavg[u], corr_cross[u], corr_dn[u]]
         if not np.any(np.isnan(values)):
-            ax12.plot(x_positions + x_jitter[u], values,
+            ax13.plot(x_positions + x_jitter[u], values,
                      color=[0.5, 0.5, 0.5], linewidth=0.3)
 
     # Scatter points
-    ax12.scatter(x_positions[0] + x_jitter, corr_tavg, s=15, color='blue',
+    ax13.scatter(x_positions[0] + x_jitter, corr_tavg, s=15, color='blue',
                 alpha=0.4, zorder=2)
-    ax12.scatter(x_positions[1] + x_jitter, corr_cross, s=15, color=[1, 0.84, 0],
+    ax13.scatter(x_positions[1] + x_jitter, corr_cross, s=15, color=[1, 0.84, 0],
                 alpha=0.4, zorder=2)
-    ax12.scatter(x_positions[2] + x_jitter, corr_dn, s=15, color=[0.5, 0.8, 0.3],
+    ax13.scatter(x_positions[2] + x_jitter, corr_dn, s=15, color=[0.5, 0.8, 0.3],
                 alpha=0.4, zorder=2)
 
     # Means
@@ -574,25 +620,25 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
     mean_cross = np.nanmean(corr_cross)
     mean_dn = np.nanmean(corr_dn)
 
-    ax12.scatter(x_positions[0], mean_tavg, s=100, color='blue',
+    ax13.scatter(x_positions[0], mean_tavg, s=100, color='blue',
                 edgecolors='white', linewidths=2, zorder=3)
-    ax12.scatter(x_positions[1], mean_cross, s=100, color=[1, 0.84, 0],
+    ax13.scatter(x_positions[1], mean_cross, s=100, color=[1, 0.84, 0],
                 edgecolors='white', linewidths=2, zorder=3)
-    ax12.scatter(x_positions[2], mean_dn, s=100, color=[0.2, 0.6, 0.2],
+    ax13.scatter(x_positions[2], mean_dn, s=100, color=[0.2, 0.6, 0.2],
                 edgecolors='white', linewidths=2, zorder=3)
 
     # Labels
     y_offset = 0.08
-    ax12.text(x_positions[0], mean_tavg + y_offset, f'{mean_tavg:.3f}',
+    ax13.text(x_positions[0], mean_tavg + y_offset, f'{mean_tavg:.3f}',
              ha='center', va='bottom', fontsize=10, fontweight='bold')
-    ax12.text(x_positions[1], mean_cross + y_offset, f'{mean_cross:.3f}',
+    ax13.text(x_positions[1], mean_cross + y_offset, f'{mean_cross:.3f}',
              ha='center', va='bottom', fontsize=10, fontweight='bold')
-    ax12.text(x_positions[2], mean_dn + y_offset, f'{mean_dn:.3f}',
+    ax13.text(x_positions[2], mean_dn + y_offset, f'{mean_dn:.3f}',
              ha='center', va='bottom', fontsize=10, fontweight='bold')
 
-    ax12.set_xticks(x_positions)
-    ax12.set_xticklabels(labels, rotation=0, fontsize=7)
-    ax12.set_ylabel('Pearson r')
+    ax13.set_xticks(x_positions)
+    ax13.set_xticklabels(labels, rotation=0, fontsize=7)
+    ax13.set_ylabel('Pearson r')
 
     if has_nans:
         # Count actual valid trials per split
@@ -600,13 +646,13 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
         valid_B = np.sum(~np.any(np.isnan(data_B), axis=0), axis=1)
         avg_valid_A = np.mean(valid_A[valid_A > 0])
         avg_valid_B = np.mean(valid_B[valid_B > 0])
-        ax12.set_title(f'Split-Half Reliability\n({avg_valid_A:.1f} vs {avg_valid_B:.1f} avg trials)')
+        ax13.set_title(f'Split-Half Reliability\n({avg_valid_A:.1f} vs {avg_valid_B:.1f} avg trials)')
     else:
-        ax12.set_title(f'Split-Half Reliability\n({data_A.shape[2]} vs {data_B.shape[2]} trials)')
+        ax13.set_title(f'Split-Half Reliability\n({data_A.shape[2]} vs {data_B.shape[2]} trials)')
 
-    ax12.grid(True)
-    ax12.set_xlim([0.5, 3.5])
-    ax12.axhline(y=0, color='k', linewidth=1)
+    ax13.grid(True)
+    ax13.set_xlim([0.5, 3.5])
+    ax13.axhline(y=0, color='k', linewidth=1)
 
     # Set y-limits
     all_corr = np.concatenate([corr_tavg, corr_cross, corr_dn])
@@ -616,12 +662,12 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
         y_max_c = np.max(valid_corr)
         y_range_c = y_max_c - y_min_c
         y_pad = max(0.1, y_range_c * 0.15)
-        ax12.set_ylim([y_min_c - y_pad, y_max_c + y_pad])
+        ax13.set_ylim([y_min_c - y_pad, y_max_c + y_pad])
     else:
-        ax12.set_ylim([-1, 1])
+        ax13.set_ylim([-1, 1])
 
     # =========================================================================
-    # Plot 13-16: Signal/Noise Diagnostics
+    # Plot 14-17: Signal/Noise Diagnostics
     # =========================================================================
 
     # Extract signal/noise variance data
@@ -644,75 +690,75 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
         x_after = 2
         x_jitter_diag = (np.random.rand(nunits) - 0.5) * 0.1
 
-        # Plot 13: Signal Variance
-        ax13 = plt.subplot(4, 4, 13)
+        # Plot 14: Signal Variance
+        ax14 = fig.add_subplot(gs[3, 0:2])  # Row 3, columns 0-1
         for u in range(nunits):
-            ax13.plot([x_before, x_after] + x_jitter_diag[u],
+            ax14.plot([x_before, x_after] + x_jitter_diag[u],
                      [sv_before[u], sv_after[u]],
                      color=[0.7, 0.7, 0.7], linewidth=0.5)
 
-        ax13.scatter(x_before + x_jitter_diag, sv_before, s=40, color=[0.3, 0.5, 0.8],
+        ax14.scatter(x_before + x_jitter_diag, sv_before, s=40, color=[0.3, 0.5, 0.8],
                     alpha=0.6)
-        ax13.scatter(x_after + x_jitter_diag, sv_after, s=40, color=[0.8, 0.3, 0.3],
+        ax14.scatter(x_after + x_jitter_diag, sv_after, s=40, color=[0.8, 0.3, 0.3],
                     alpha=0.6)
 
         mean_sv_before = np.mean(sv_before)
         mean_sv_after = np.mean(sv_after)
-        ax13.scatter(x_before, mean_sv_before, s=120, color=[0.1, 0.3, 0.6],
+        ax14.scatter(x_before, mean_sv_before, s=120, color=[0.1, 0.3, 0.6],
                     edgecolors='white', linewidths=2, zorder=3)
-        ax13.scatter(x_after, mean_sv_after, s=120, color=[0.6, 0.1, 0.1],
+        ax14.scatter(x_after, mean_sv_after, s=120, color=[0.6, 0.1, 0.1],
                     edgecolors='white', linewidths=2, zorder=3)
 
         # Calculate y_offset dynamically
         y_range_sv = np.max([sv_before.max(), sv_after.max()]) - np.min([sv_before.min(), sv_after.min()])
         y_offset_sv = y_range_sv * 0.08
 
-        ax13.text(x_before, mean_sv_before + y_offset_sv, f'{mean_sv_before:.3f}',
+        ax14.text(x_before, mean_sv_before + y_offset_sv, f'{mean_sv_before:.3f}',
                  ha='center', va='bottom', fontsize=10, fontweight='bold')
-        ax13.text(x_after, mean_sv_after + y_offset_sv, f'{mean_sv_after:.3f}',
+        ax14.text(x_after, mean_sv_after + y_offset_sv, f'{mean_sv_after:.3f}',
                  ha='center', va='bottom', fontsize=10, fontweight='bold')
 
-        ax13.set_xlim([0.5, 2.5])
-        ax13.set_xticks([1, 2])
-        ax13.set_xticklabels(['Before', 'After'])
-        ax13.set_ylabel('Signal Variance')
-        ax13.set_title('Signal Variance')
-        ax13.grid(True)
+        ax14.set_xlim([0.5, 2.5])
+        ax14.set_xticks([1, 2])
+        ax14.set_xticklabels(['Before', 'After'])
+        ax14.set_ylabel('Signal Variance')
+        ax14.set_title('Signal Variance')
+        ax14.grid(True)
 
-        # Plot 14: Noise Variance
-        ax14 = plt.subplot(4, 4, 14)
+        # Plot 15: Noise Variance
+        ax15 = fig.add_subplot(gs[3, 2:4])  # Row 3, columns 2-3
         for u in range(nunits):
-            ax14.plot([x_before, x_after] + x_jitter_diag[u],
+            ax15.plot([x_before, x_after] + x_jitter_diag[u],
                      [nv_before[u], nv_after[u]],
                      color=[0.7, 0.7, 0.7], linewidth=0.5)
 
-        ax14.scatter(x_before + x_jitter_diag, nv_before, s=40, color=[0.3, 0.5, 0.8],
+        ax15.scatter(x_before + x_jitter_diag, nv_before, s=40, color=[0.3, 0.5, 0.8],
                     alpha=0.6)
-        ax14.scatter(x_after + x_jitter_diag, nv_after, s=40, color=[0.8, 0.3, 0.3],
+        ax15.scatter(x_after + x_jitter_diag, nv_after, s=40, color=[0.8, 0.3, 0.3],
                     alpha=0.6)
 
         mean_nv_before = np.mean(nv_before)
         mean_nv_after = np.mean(nv_after)
-        ax14.scatter(x_before, mean_nv_before, s=120, color=[0.1, 0.3, 0.6],
+        ax15.scatter(x_before, mean_nv_before, s=120, color=[0.1, 0.3, 0.6],
                     edgecolors='white', linewidths=2, zorder=3)
-        ax14.scatter(x_after, mean_nv_after, s=120, color=[0.6, 0.1, 0.1],
+        ax15.scatter(x_after, mean_nv_after, s=120, color=[0.6, 0.1, 0.1],
                     edgecolors='white', linewidths=2, zorder=3)
 
         # Calculate y_offset dynamically
         y_range_nv = np.max([nv_before.max(), nv_after.max()]) - np.min([nv_before.min(), nv_after.min()])
         y_offset_nv = y_range_nv * 0.08
 
-        ax14.text(x_before, mean_nv_before + y_offset_nv, f'{mean_nv_before:.3f}',
+        ax15.text(x_before, mean_nv_before + y_offset_nv, f'{mean_nv_before:.3f}',
                  ha='center', va='bottom', fontsize=10, fontweight='bold')
-        ax14.text(x_after, mean_nv_after + y_offset_nv, f'{mean_nv_after:.3f}',
+        ax15.text(x_after, mean_nv_after + y_offset_nv, f'{mean_nv_after:.3f}',
                  ha='center', va='bottom', fontsize=10, fontweight='bold')
 
-        ax14.set_xlim([0.5, 2.5])
-        ax14.set_xticks([1, 2])
-        ax14.set_xticklabels(['Before', 'After'])
-        ax14.set_ylabel('Noise Variance / ntrials')
-        ax14.set_title('Trial-Averaged Noise Variance')
-        ax14.grid(True)
+        ax15.set_xlim([0.5, 2.5])
+        ax15.set_xticks([1, 2])
+        ax15.set_xticklabels(['Before', 'After'])
+        ax15.set_ylabel('Noise Variance / ntrials')
+        ax15.set_title('Trial-Averaged Noise Variance')
+        ax15.grid(True)
 
         # Set unified ylims for both signal and noise variance plots
         all_variance_vals = np.concatenate([sv_before, sv_after, nv_before, nv_after])
@@ -720,38 +766,38 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
         y_pad_unified = y_max_unified * 0.05  # 5% padding at bottom
         unified_ylim = [-y_pad_unified, y_max_unified + y_max_unified * 0.15]
 
-        ax13.set_ylim(unified_ylim)
-        ax13.axhline(y=0, color='k', linestyle='--', linewidth=0.5)
-
         ax14.set_ylim(unified_ylim)
         ax14.axhline(y=0, color='k', linestyle='--', linewidth=0.5)
 
-        # Plot 15: NCSNR
-        ax15 = plt.subplot(4, 4, 15)
+        ax15.set_ylim(unified_ylim)
+        ax15.axhline(y=0, color='k', linestyle='--', linewidth=0.5)
+
+        # Plot 16: NCSNR
+        ax16 = fig.add_subplot(gs[3, 4:6])  # Row 3, columns 4-5
         for u in range(nunits):
-            ax15.plot([x_before, x_after] + x_jitter_diag[u],
+            ax16.plot([x_before, x_after] + x_jitter_diag[u],
                      [ncsnr_before[u], ncsnr_after[u]],
                      color=[0.7, 0.7, 0.7], linewidth=0.5)
 
-        ax15.scatter(x_before + x_jitter_diag, ncsnr_before, s=40, color=[0.3, 0.5, 0.8],
+        ax16.scatter(x_before + x_jitter_diag, ncsnr_before, s=40, color=[0.3, 0.5, 0.8],
                     alpha=0.6)
-        ax15.scatter(x_after + x_jitter_diag, ncsnr_after, s=40, color=[0.8, 0.3, 0.3],
+        ax16.scatter(x_after + x_jitter_diag, ncsnr_after, s=40, color=[0.8, 0.3, 0.3],
                     alpha=0.6)
 
         mean_ncsnr_before = np.mean(ncsnr_before)
         mean_ncsnr_after = np.mean(ncsnr_after)
-        ax15.scatter(x_before, mean_ncsnr_before, s=120, color=[0.1, 0.3, 0.6],
+        ax16.scatter(x_before, mean_ncsnr_before, s=120, color=[0.1, 0.3, 0.6],
                     edgecolors='white', linewidths=2, zorder=3)
-        ax15.scatter(x_after, mean_ncsnr_after, s=120, color=[0.6, 0.1, 0.1],
+        ax16.scatter(x_after, mean_ncsnr_after, s=120, color=[0.6, 0.1, 0.1],
                     edgecolors='white', linewidths=2, zorder=3)
 
         # Calculate y_offset dynamically
         y_range_ncsnr = np.max([ncsnr_before.max(), ncsnr_after.max()]) - np.min([ncsnr_before.min(), ncsnr_after.min()])
         y_offset_ncsnr = y_range_ncsnr * 0.08
 
-        ax15.text(x_before, mean_ncsnr_before + y_offset_ncsnr, f'{mean_ncsnr_before:.3f}',
+        ax16.text(x_before, mean_ncsnr_before + y_offset_ncsnr, f'{mean_ncsnr_before:.3f}',
                  ha='center', va='bottom', fontsize=10, fontweight='bold')
-        ax15.text(x_after, mean_ncsnr_after + y_offset_ncsnr, f'{mean_ncsnr_after:.3f}',
+        ax16.text(x_after, mean_ncsnr_after + y_offset_ncsnr, f'{mean_ncsnr_after:.3f}',
                  ha='center', va='bottom', fontsize=10, fontweight='bold')
 
         # Set ylims with padding
@@ -759,59 +805,57 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
         y_max_ncsnr = np.max(all_ncsnr_vals)
         y_pad_ncsnr_bottom = y_max_ncsnr * 0.05  # 5% padding at bottom
         y_pad_ncsnr_top = y_max_ncsnr * 0.15  # 15% padding at top
-        ax15.set_ylim([-y_pad_ncsnr_bottom, y_max_ncsnr + y_pad_ncsnr_top])
-        ax15.axhline(y=0, color='k', linestyle='--', linewidth=0.5)
+        ax16.set_ylim([-y_pad_ncsnr_bottom, y_max_ncsnr + y_pad_ncsnr_top])
+        ax16.axhline(y=0, color='k', linestyle='--', linewidth=0.5)
 
-        ax15.set_xlim([0.5, 2.5])
-        ax15.set_xticks([1, 2])
-        ax15.set_xticklabels(['Before', 'After'])
-        ax15.set_ylabel('NCSNR')
-        ax15.set_title('Noise Ceiling SNR (NCSNR)')
-        ax15.grid(True)
+        ax16.set_xlim([0.5, 2.5])
+        ax16.set_xticks([1, 2])
+        ax16.set_xticklabels(['Before', 'After'])
+        ax16.set_ylabel('NCSNR')
+        ax16.set_title('Noise Ceiling SNR (NCSNR)')
+        ax16.grid(True)
 
-        # Plot 16: Noise Ceiling %
-        ax16 = plt.subplot(4, 4, 16)
+        # Plot 17: Noise Ceiling %
+        ax17 = fig.add_subplot(gs[3, 6:8])  # Row 3, columns 6-7
         for u in range(nunits):
-            ax16.plot([x_before, x_after] + x_jitter_diag[u],
+            ax17.plot([x_before, x_after] + x_jitter_diag[u],
                      [noiseceiling_before[u], noiseceiling_after[u]],
                      color=[0.7, 0.7, 0.7], linewidth=0.5)
 
-        ax16.scatter(x_before + x_jitter_diag, noiseceiling_before, s=40, color=[0.3, 0.5, 0.8],
+        ax17.scatter(x_before + x_jitter_diag, noiseceiling_before, s=40, color=[0.3, 0.5, 0.8],
                     alpha=0.6)
-        ax16.scatter(x_after + x_jitter_diag, noiseceiling_after, s=40, color=[0.8, 0.3, 0.3],
+        ax17.scatter(x_after + x_jitter_diag, noiseceiling_after, s=40, color=[0.8, 0.3, 0.3],
                     alpha=0.6)
 
         mean_nc_before = np.mean(noiseceiling_before)
         mean_nc_after = np.mean(noiseceiling_after)
-        ax16.scatter(x_before, mean_nc_before, s=120, color=[0.1, 0.3, 0.6],
+        ax17.scatter(x_before, mean_nc_before, s=120, color=[0.1, 0.3, 0.6],
                     edgecolors='white', linewidths=2, zorder=3)
-        ax16.scatter(x_after, mean_nc_after, s=120, color=[0.6, 0.1, 0.1],
+        ax17.scatter(x_after, mean_nc_after, s=120, color=[0.6, 0.1, 0.1],
                     edgecolors='white', linewidths=2, zorder=3)
 
         # Fixed y_offset for noise ceiling (percentage scale 0-100)
         y_offset_nc = 100 * 0.08
 
-        ax16.text(x_before, mean_nc_before + y_offset_nc, f'{mean_nc_before:.3f}',
+        ax17.text(x_before, mean_nc_before + y_offset_nc, f'{mean_nc_before:.3f}',
                  ha='center', va='bottom', fontsize=10, fontweight='bold')
-        ax16.text(x_after, mean_nc_after + y_offset_nc, f'{mean_nc_after:.3f}',
+        ax17.text(x_after, mean_nc_after + y_offset_nc, f'{mean_nc_after:.3f}',
                  ha='center', va='bottom', fontsize=10, fontweight='bold')
 
-        ax16.set_xlim([0.5, 2.5])
-        ax16.set_ylim([-5, 100])  # Add negative padding to make yline at 0 visible
-        ax16.axhline(y=0, color='k', linestyle='--', linewidth=0.5)
+        ax17.set_xlim([0.5, 2.5])
+        ax17.set_ylim([-5, 100])  # Add negative padding to make yline at 0 visible
+        ax17.axhline(y=0, color='k', linestyle='--', linewidth=0.5)
 
-        ax16.set_xticks([1, 2])
-        ax16.set_xticklabels(['Before', 'After'])
-        ax16.set_ylabel('Noise Ceiling (%)')
+        ax17.set_xticks([1, 2])
+        ax17.set_xticklabels(['Before', 'After'])
+        ax17.set_ylabel('Noise Ceiling (%)')
 
         if has_nans:
-            ax16.set_title(f'Noise Ceiling Percentage ({ntrials_avg:.1f} avg trials)')
+            ax17.set_title(f'Noise Ceiling Percentage ({ntrials_avg:.1f} avg trials)')
         else:
-            ax16.set_title(f'Noise Ceiling Percentage ({ntrials} trials)')
+            ax17.set_title(f'Noise Ceiling Percentage ({ntrials} trials)')
 
-        ax16.grid(True)
-
-    plt.tight_layout()
+        ax17.grid(True)
 
     # Save figure if figurepath specified, otherwise show it
     if figurepath is not None:
