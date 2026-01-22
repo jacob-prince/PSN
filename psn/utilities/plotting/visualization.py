@@ -6,7 +6,7 @@ import scipy.stats as stats
 from matplotlib.gridspec import GridSpec
 
 
-def plot_diagnostic_figures(data, results, test_data=None):
+def plot_diagnostic_figures(data, results, test_data=None, figurepath=None):
     """
     Generate diagnostic figures for PSN denoising results (NEW API).
 
@@ -20,6 +20,9 @@ def plot_diagnostic_figures(data, results, test_data=None):
         Results dictionary from psn function
     test_data : ndarray, optional
         Not used in current implementation (reserved for future use)
+    figurepath : str, optional
+        If specified, save figure to this path before displaying.
+        The figure is saved at 150 dpi with tight bounding box.
     """
 
     # Set random seed for reproducibility
@@ -207,12 +210,20 @@ def plot_diagnostic_figures(data, results, test_data=None):
         if 'best_threshold' in results:
             best_t = results['best_threshold']
             if np.isscalar(best_t) and best_t > 0:
-                ax3.axvline(x=best_t, color='r', linestyle='--', linewidth=1.5,
-                           label=f'Thresh: {int(best_t)}')
+                ax3.axvline(x=best_t, color='r', linestyle='--', linewidth=1.5)
+                # Add rotated text annotation like MATLAB
+                y_mid = (ax3.get_ylim()[0] + ax3.get_ylim()[1]) / 2
+                ax3.text(best_t, y_mid, f'Thresh: {int(best_t)}',
+                        color='r', fontsize=9, rotation=90,
+                        ha='right', va='center')
             elif hasattr(best_t, '__len__') and np.mean(best_t) > 0:
                 mean_thresh = np.mean(best_t)
-                ax3.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=1.5,
-                           label=f'Mean: {mean_thresh:.1f}')
+                ax3.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=1.5)
+                # Add rotated text annotation like MATLAB
+                y_mid = (ax3.get_ylim()[0] + ax3.get_ylim()[1]) / 2
+                ax3.text(mean_thresh, y_mid, f'Mean: {mean_thresh:.1f}',
+                        color='r', fontsize=9, rotation=90,
+                        ha='right', va='center')
 
         ax3.set_xlabel('Dimension')
         ax3.set_ylabel('Eigenvalue')
@@ -229,12 +240,20 @@ def plot_diagnostic_figures(data, results, test_data=None):
         if 'best_threshold' in results:
             best_t = results['best_threshold']
             if np.isscalar(best_t) and best_t > 0:
-                ax3.axvline(x=best_t, color='r', linestyle='--', linewidth=1.5,
-                           label=f'Thresh: {int(best_t)}')
+                ax3.axvline(x=best_t, color='r', linestyle='--', linewidth=1.5)
+                # Add rotated text annotation like MATLAB
+                y_mid = (ax3.get_ylim()[0] + ax3.get_ylim()[1]) / 2
+                ax3.text(best_t, y_mid, f'Thresh: {int(best_t)}',
+                        color='r', fontsize=9, rotation=90,
+                        ha='right', va='center')
             elif hasattr(best_t, '__len__') and np.mean(best_t) > 0:
                 mean_thresh = np.mean(best_t)
-                ax3.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=1.5,
-                           label=f'Mean: {mean_thresh:.1f}')
+                ax3.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=1.5)
+                # Add rotated text annotation like MATLAB
+                y_mid = (ax3.get_ylim()[0] + ax3.get_ylim()[1]) / 2
+                ax3.text(mean_thresh, y_mid, f'Mean: {mean_thresh:.1f}',
+                        color='r', fontsize=9, rotation=90,
+                        ha='right', va='center')
 
         ax3.set_xlabel('Dimension')
         ax3.set_ylabel('Signal Variance')
@@ -793,6 +812,12 @@ def plot_diagnostic_figures(data, results, test_data=None):
         ax16.grid(True)
 
     plt.tight_layout()
-    plt.show()
+
+    # Save figure if figurepath specified, otherwise show it
+    if figurepath is not None:
+        fig.savefig(figurepath, dpi=150, bbox_inches='tight')
+        # Don't show - just save and return (caller will close)
+    else:
+        plt.show()
 
     return fig

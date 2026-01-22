@@ -34,6 +34,7 @@ def set_default_options(opt, nunits):
       gsn_args           = {}
       wantfig            = True
       wantverbose        = True
+      figurepath         = None
     """
 
     # Create a copy to avoid modifying the original
@@ -71,6 +72,9 @@ def set_default_options(opt, nunits):
 
     if 'wantverbose' not in opt:
         opt['wantverbose'] = True
+
+    if 'figurepath' not in opt:
+        opt['figurepath'] = None
 
     # Auto-detect: if allowable_thresholds is a single value, force threshold_method to 'global'
     if opt['allowable_thresholds'] is not None:

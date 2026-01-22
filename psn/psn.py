@@ -135,6 +135,13 @@ def psn(*args):
       <wantfig> - boolean. Whether to generate diagnostic figures.
         Default: True.
 
+      <figurepath> (optional) - string. Path to save the diagnostic figure.
+        Can be a full path (e.g., '/path/to/figure.png') or just a filename
+        (e.g., 'psn_diagnostics.png') to save in the current directory.
+        If specified, the figure is saved to this path and closed after saving.
+        If None or omitted, figures are displayed but not automatically saved.
+        Default: None.
+
       <wantverbose> - boolean. Whether to show messages during execution.
         Default: True.
 

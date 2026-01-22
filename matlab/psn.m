@@ -114,6 +114,13 @@ function [results] = psn(varargin)
 %   <wantfig> - 0 or 1. Whether to generate diagnostic figures.
 %     Default: 1.
 %
+%   <figurepath> (optional) - string. Path to save the diagnostic figure.
+%     Can be a full path (e.g., '/path/to/figure.png') or just a filename
+%     (e.g., 'psn_diagnostics.png') to save in the current directory.
+%     If specified, the figure is saved to this path and closed after saving.
+%     If '' or omitted, figures are displayed but not automatically saved.
+%     Default: '' (empty string).
+%
 %   <wantverbose> - 0 or 1. Whether to show messages during execution.
 %     Default: 1.
 %

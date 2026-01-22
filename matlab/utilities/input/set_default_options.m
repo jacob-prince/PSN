@@ -27,6 +27,7 @@ function opt = set_default_options(opt, nunits)
 %   unit_groups        = (1:nunits)' for hybrid/unit modes, zeros for global
 %   gsn_args           = struct()
 %   wantfig            = 1
+%   figurepath         = '' (empty = display only, no save)
 %   wantverbose        = 1
 
     % Normalize string inputs to char for consistent strcmp behavior
@@ -86,6 +87,10 @@ function opt = set_default_options(opt, nunits)
 
     if ~isfield(opt, 'wantverbose')
         opt.wantverbose = 1;
+    end
+
+    if ~isfield(opt, 'figurepath')
+        opt.figurepath = '';
     end
 
     % Auto-detect: if allowable_thresholds is a single value, force threshold_method to 'global'

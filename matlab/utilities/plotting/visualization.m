@@ -1,4 +1,4 @@
-function visualization(data, results)
+function fig = visualization(data, results, varargin)
 % VISUALIZATION Generate diagnostic figures for PSN denoising results (NEW API)
 %
 % This visualization works with the new PSN API and results structure.
@@ -9,9 +9,21 @@ function visualization(data, results)
 %     Training data used for denoising
 % results : struct
 %     Results structure from psn function
+% varargin : optional name-value pairs
+%     'Visible' - 'on' (default) or 'off' to control figure visibility
+%
+% Returns:
+% --------
+% fig : figure handle
+%     Handle to the created figure (for saving)
 
-    % Create a large figure
-    figure('Position', [100, 100, 1800, 1200]);
+    % Parse optional arguments
+    p = inputParser;
+    addParameter(p, 'Visible', 'on');
+    parse(p, varargin{:});
+
+    % Create a large figure (visible or invisible based on parameter)
+    fig = figure('Position', [100, 100, 1800, 1200], 'Visible', p.Results.Visible);
 
     % Extract data dimensions
     [nunits, nconds, ntrials] = size(data);
