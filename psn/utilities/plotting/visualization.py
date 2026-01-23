@@ -343,13 +343,18 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
             # Add vertical reference line at center
             ax3.axvline(x=pc, color='k', linestyle='--', linewidth=0.5)
 
-        ax3.set_xlabel('PC')
+        ax3.set_xlabel('Principal Component')
         ax3.set_ylabel('Units')
         ax3.set_title('Top 5 Basis Dims')
         ax3.set_xlim([-0.5, num_pcs - 0.5])
         ax3.set_ylim([0, nunits - 1])
         ax3.invert_yaxis()  # Flip y-axis to match heatmaps
         ax3.set_xticks(range(num_pcs))
+        # Add eigenvalue labels under PC indices
+        if 'basis_eigenvalues' in results and results['basis_eigenvalues'] is not None and len(results['basis_eigenvalues']) >= num_pcs:
+            evals = results['basis_eigenvalues']
+            tick_labels = [f'{pc}\nλ={evals[pc]:.2f}' for pc in range(num_pcs)]
+            ax3.set_xticklabels(tick_labels, fontsize=7)
         ax3.grid(True)
     else:
         ax3.text(0.5, 0.5, 'Basis\nNot Available',
@@ -400,7 +405,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                         color='r', fontsize=9, rotation=90,
                         ha='left', va='top')
 
-        ax4.set_xlabel('Dim')
+        ax4.set_xlabel('Dimension')
         ax4.set_ylabel('Eigenvalue')
         ax4.set_title('Basis Eigenvalues')
         ax4.grid(True)
@@ -441,7 +446,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                         color='r', fontsize=9, rotation=90,
                         ha='left', va='top')
 
-        ax4.set_xlabel('Dim')
+        ax4.set_xlabel('Dimension')
         ax4.set_ylabel('Signal Var')
         ax4.set_title('Signal Variance')
         ax4.grid(True)

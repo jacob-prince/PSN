@@ -311,13 +311,29 @@ function fig = visualization(data, results, varargin)
         end
         hold(ax3, 'off');
 
-        xlabel(ax3, 'PC');
         ylabel(ax3, 'Units');
         title(ax3, 'Top 5 Basis Dims');
         xlim(ax3, [0.5, num_pcs + 0.5]);
         ylim(ax3, [1, nunits]);
         set(ax3, 'YDir', 'reverse');  % Flip y-axis to match heatmaps
         set(ax3, 'XTick', 1:num_pcs);
+        % Add eigenvalue labels under PC indices (MATLAB is 1-indexed)
+        if isfield(results, 'basis_eigenvalues') && ~isempty(results.basis_eigenvalues) && length(results.basis_eigenvalues) >= num_pcs
+            evals = results.basis_eigenvalues;
+            % Use simple tick labels for PC index, add lambda as text below
+            set(ax3, 'XTick', 1:num_pcs, 'XTickLabel', 1:num_pcs);
+            % Get axis position for placing text
+            ylims = ylim(ax3);
+            y_text = ylims(2) + 0.08 * (ylims(2) - ylims(1));  % Just below x-axis (y is reversed)
+            for pc = 1:num_pcs
+                text(ax3, pc, y_text, sprintf('\\lambda=%.2f', evals(pc)), ...
+                    'HorizontalAlignment', 'center', 'VerticalAlignment', 'top', ...
+                    'FontSize', 7);
+            end
+        end
+        % Add xlabel with extra padding to avoid overlap with lambda labels
+        xh = xlabel(ax3, 'Principal Component');
+        xh.Position(2) = xh.Position(2) + 0.07 * (ylims(2) - ylims(1));
         grid(ax3, 'on');
     else
         text(ax3, 0.5, 0.5, {'Basis', 'Not Available'}, ...
@@ -371,7 +387,7 @@ function fig = visualization(data, results, varargin)
         end
         hold(ax4, 'off');
 
-        xlabel(ax4, 'Dim');
+        xlabel(ax4, 'Dimension');
         ylabel(ax4, 'Eigenvalue');
         title(ax4, 'Basis Eigenvalues');
         grid(ax4, 'on');
@@ -415,7 +431,7 @@ function fig = visualization(data, results, varargin)
         end
         hold(ax4, 'off');
 
-        xlabel(ax4, 'Dim');
+        xlabel(ax4, 'Dimension');
         ylabel(ax4, 'Signal Var');
         title(ax4, 'Signal Variance');
         grid(ax4, 'on');
