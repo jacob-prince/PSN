@@ -35,6 +35,7 @@ def set_default_options(opt, nunits):
       wantfig            = True
       wantverbose        = True
       figurepath         = None
+      cmap               = None (uses cmapsign4 in visualization)
     """
 
     # Create a copy to avoid modifying the original
@@ -75,6 +76,9 @@ def set_default_options(opt, nunits):
 
     if 'figurepath' not in opt:
         opt['figurepath'] = None
+
+    if 'cmap' not in opt:
+        opt['cmap'] = None  # Will use default cmapsign4 in visualization
 
     # Auto-detect: if allowable_thresholds is a single value, force threshold_method to 'global'
     if opt['allowable_thresholds'] is not None:

@@ -45,6 +45,9 @@ class PSN:
         Options passed to GSN routine. Default: None.
     wantverbose : bool, optional
         Whether to print progress messages. Default: True.
+    cmap : colormap, optional
+        Colormap for input data, denoised data, and residual plots
+        in diagnostic figures. Default: cmapsign4 (cyan-blue-black-red-yellow).
 
     Attributes (available after fit)
     ---------------------------------
@@ -150,7 +153,13 @@ class PSN:
             Fitted estimator.
         """
         # Build options dict
-        opt = self.options.copy()
+        # Handle case where user passes opt={'key': value} instead of key=value
+        if 'opt' in self.options and isinstance(self.options['opt'], dict):
+            # Flatten: merge the nested 'opt' dict with any other options
+            opt = {k: v for k, v in self.options.items() if k != 'opt'}
+            opt.update(self.options['opt'])
+        else:
+            opt = self.options.copy()
         opt['wantfig'] = visualize
 
         # Call functional API
@@ -291,6 +300,11 @@ class PSN:
 
         Parameters
         ----------
+        figurepath : str, optional
+            If specified, save figure to this path.
+        cmap : colormap, optional
+            Colormap for input data, denoised data, and residual plots.
+            Default: cmapsign4() (cyan-blue-black-red-yellow).
         **kwargs
             Additional keyword arguments passed to plot_diagnostic_figures.
 
@@ -344,6 +358,10 @@ class PSN:
             results['unit_noise_vars'] = self.unit_noise_vars_
         if self.unit_objectives_ is not None:
             results['unit_objectives'] = self.unit_objectives_
+
+        # Use cmap from opt_used_ if not overridden in kwargs
+        if 'cmap' not in kwargs and self.opt_used_.get('cmap') is not None:
+            kwargs['cmap'] = self.opt_used_['cmap']
 
         fig = plot_diagnostic_figures(self.input_data_, results, **kwargs)
         return fig

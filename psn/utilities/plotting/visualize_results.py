@@ -30,12 +30,13 @@ def visualize_results(results, opt):
     """
 
     figurepath = opt.get('figurepath', None)
+    cmap = opt.get('cmap', None)
 
     try:
         from .visualization import plot_diagnostic_figures
 
-        # Call visualization with figurepath - it will save before plt.show()
-        fig = plot_diagnostic_figures(results['input_data'], results, figurepath=figurepath)
+        # Call visualization with figurepath and cmap - it will save before plt.show()
+        fig = plot_diagnostic_figures(results['input_data'], results, figurepath=figurepath, cmap=cmap)
 
         if figurepath is not None:
             if opt.get('wantverbose', True):

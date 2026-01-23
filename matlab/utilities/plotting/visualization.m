@@ -11,6 +11,8 @@ function fig = visualization(data, results, varargin)
 %     Results structure from psn function
 % varargin : optional name-value pairs
 %     'Visible' - 'on' (default) or 'off' to control figure visibility
+%     'cmap' - colormap for input data, denoised data, and residual plots
+%              (default: cmapsign4(256))
 %
 % Returns:
 % --------
@@ -20,7 +22,18 @@ function fig = visualization(data, results, varargin)
     % Parse optional arguments
     p = inputParser;
     addParameter(p, 'Visible', 'on');
+    addParameter(p, 'cmap', []);  % colormap for data plots (empty = use default or from opt)
     parse(p, varargin{:});
+
+    % Get colormap for data plots (input, denoised, residuals)
+    % Priority: 1) explicit argument, 2) opt.cmap from results, 3) default cmapsign4
+    if ~isempty(p.Results.cmap)
+        data_cmap = p.Results.cmap;
+    elseif isfield(results, 'opt_used') && isfield(results.opt_used, 'cmap') && ~isempty(results.opt_used.cmap)
+        data_cmap = results.opt_used.cmap;
+    else
+        data_cmap = cmapsign4(256);
+    end
 
     % Create a large figure (visible or invisible based on parameter)
     % Match Python: figsize=(24, 15) -> approximately 2400x1500 pixels
@@ -34,6 +47,51 @@ function fig = visualization(data, results, varargin)
 
     % Extract data dimensions
     [nunits, nconds, ntrials] = size(data);
+
+    % Subsampling for large datasets (>500 units or >500 conditions)
+    % Randomly select 100 units/conditions for certain plots, but keep full population for means
+    n_subsample = 100;
+
+    % Unit subsampling
+    subsample_units = nunits > 500;
+    if subsample_units
+        rng(42);  % For reproducibility
+        subsample_idx = sort(randperm(nunits, n_subsample));
+    else
+        subsample_idx = 1:nunits;
+    end
+
+    % Condition subsampling (for trace plots)
+    subsample_conds = nconds > 500;
+    if subsample_conds
+        rng(43);  % Different seed for conditions
+        subsample_cond_idx = sort(randperm(nconds, n_subsample));
+    else
+        subsample_cond_idx = 1:nconds;
+    end
+
+    % Build suffix strings
+    if subsample_units && subsample_conds
+        subsample_suffix = sprintf('\n(randomly subsampling %d units, %d conditions)', n_subsample, n_subsample);
+        subsample_suffix_units = sprintf('\n(randomly subsampling %d units)', n_subsample);
+        subsample_suffix_conds = sprintf('\n(randomly subsampling %d conditions)', n_subsample);
+        subsample_suffix_traces = sprintf('\n(randomly subsampling %d units, %d conditions)', n_subsample, n_subsample);
+    elseif subsample_units
+        subsample_suffix = sprintf('\n(randomly subsampling %d units)', n_subsample);
+        subsample_suffix_units = subsample_suffix;
+        subsample_suffix_conds = '';
+        subsample_suffix_traces = subsample_suffix;
+    elseif subsample_conds
+        subsample_suffix = '';
+        subsample_suffix_units = '';
+        subsample_suffix_conds = sprintf('\n(randomly subsampling %d conditions)', n_subsample);
+        subsample_suffix_traces = subsample_suffix_conds;
+    else
+        subsample_suffix = '';
+        subsample_suffix_units = '';
+        subsample_suffix_conds = '';
+        subsample_suffix_traces = '';
+    end
 
     % Get options if stored
     if isfield(results, 'opt_used')
@@ -118,8 +176,6 @@ function fig = visualization(data, results, varargin)
         title_text = [title_text '  |  ' strjoin(threshold_info, ', ')];
     end
 
-    sgtitle(title_text, 'FontSize', 14, 'FontWeight', 'bold');
-
     % Get trial-averaged and denoised data (use nanmean for NaN data)
     if has_nans
         trial_avg = nanmean(data, 3);
@@ -135,6 +191,9 @@ function fig = visualization(data, results, varargin)
     % Row 2-4: standard 4x2 pattern (each subplot spans 2 columns)
     % =====================================================================
     t = tiledlayout(4, 8, 'TileSpacing', 'compact', 'Padding', 'compact');
+
+    % Add supertitle (must be after tiledlayout creation)
+    sgtitle(title_text, 'FontSize', 14, 'FontWeight', 'bold');
 
     % =====================================================================
     % Plot 1: Basis source matrix (signal covariance or basis-specific)
@@ -271,6 +330,9 @@ function fig = visualization(data, results, varargin)
     % =====================================================================
     ax4 = nexttile(t, [1 1]);  % Row 1, column 6 (single column)
 
+    % Determine if we should use log scale for x-axis (for large datasets)
+    use_logscale = nunits > 50;
+
     % Check if eigenvalues were used for ranking (and are available)
     use_eigenvalues = strcmp(basis_ordering, 'eigenvalues') && ...
                       isfield(results, 'basis_eigenvalues') && ...
@@ -279,22 +341,32 @@ function fig = visualization(data, results, varargin)
     if use_eigenvalues
         % Show eigenvalues (SORTED - what was actually used for ranking)
         evals = results.basis_eigenvalues;  % Already sorted in descending order
-        plot(ax4, 0:length(evals)-1, evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5]);
+        % MATLAB is 1-indexed, so dimensions always go 1, 2, 3...
+        x_dims_4 = 1:length(evals);
+        plot(ax4, x_dims_4, evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5]);
         hold(ax4, 'on');
 
         % Add threshold indicators (only if threshold > 0)
+        % Threshold value is the number of dims to keep (1-indexed in MATLAB)
         if isfield(results, 'best_threshold')
             if isscalar(results.best_threshold) && results.best_threshold > 0
-                xline(ax4, results.best_threshold, 'r--', 'LineWidth', 1.5);
-            elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
-                mean_thresh = mean(results.best_threshold);
-                xline(ax4, mean_thresh, 'r--', 'LineWidth', 1.5);
-                % Add rotated text annotation for mean threshold
+                thresh_val = results.best_threshold;
+                xline(ax4, thresh_val, 'r--', 'LineWidth', 2);
+                % Add rotated text annotation for threshold (top of text on right side of line)
                 ylims = ylim(ax4);
                 y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                text(ax4, mean_thresh + 0.5, y_pos, sprintf('Mean: %.1f', mean_thresh), ...
+                text(ax4, thresh_val, y_pos, sprintf('  Threshold = %d', thresh_val), ...
                     'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
-                    'HorizontalAlignment', 'left', 'VerticalAlignment', 'bottom');
+                    'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
+            elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
+                mean_thresh = mean(results.best_threshold);
+                xline(ax4, mean_thresh, 'r--', 'LineWidth', 2);
+                % Add rotated text annotation for mean threshold (top of text on right side of line)
+                ylims = ylim(ax4);
+                y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
+                text(ax4, mean_thresh, y_pos, sprintf('  Mean Threshold = %.1f', mean_thresh), ...
+                    'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
+                    'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
             end
         end
         hold(ax4, 'off');
@@ -303,26 +375,42 @@ function fig = visualization(data, results, varargin)
         ylabel(ax4, 'Eigenvalue');
         title(ax4, 'Basis Eigenvalues');
         grid(ax4, 'on');
+        if use_logscale
+            set(ax4, 'XScale', 'log');
+            xlim(ax4, [0.8, length(evals) + 1]);
+        else
+            xlim(ax4, [0.5, length(evals) + 0.5]);
+        end
 
     elseif isfield(results, 'signalvar')
         % Show signal variance (SORTED - what was actually used for ranking)
         signal_vars = results.signalvar;  % Already sorted in descending order
-        plot(ax4, 0:length(signal_vars)-1, signal_vars, 'LineWidth', 1.5, 'Color', 'blue');
+        % MATLAB is 1-indexed, so dimensions always go 1, 2, 3...
+        x_dims_4 = 1:length(signal_vars);
+        plot(ax4, x_dims_4, signal_vars, 'LineWidth', 1.5, 'Color', 'blue');
         hold(ax4, 'on');
 
         % Add threshold indicators (only if threshold > 0)
+        % Threshold value is the number of dims to keep (1-indexed in MATLAB)
         if isfield(results, 'best_threshold')
             if isscalar(results.best_threshold) && results.best_threshold > 0
-                xline(ax4, results.best_threshold, 'r--', 'LineWidth', 1.5);
-            elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
-                mean_thresh = mean(results.best_threshold);
-                xline(ax4, mean_thresh, 'r--', 'LineWidth', 1.5);
-                % Add rotated text annotation for mean threshold
+                thresh_val = results.best_threshold;
+                xline(ax4, thresh_val, 'r--', 'LineWidth', 2);
+                % Add rotated text annotation for threshold (top of text on right side of line)
                 ylims = ylim(ax4);
                 y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                text(ax4, mean_thresh + 0.5, y_pos, sprintf('Mean: %.1f', mean_thresh), ...
+                text(ax4, thresh_val, y_pos, sprintf('  Threshold = %d', thresh_val), ...
                     'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
-                    'HorizontalAlignment', 'left', 'VerticalAlignment', 'bottom');
+                    'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
+            elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
+                mean_thresh = mean(results.best_threshold);
+                xline(ax4, mean_thresh, 'r--', 'LineWidth', 2);
+                % Add rotated text annotation for mean threshold (top of text on right side of line)
+                ylims = ylim(ax4);
+                y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
+                text(ax4, mean_thresh, y_pos, sprintf('  Mean Threshold = %.1f', mean_thresh), ...
+                    'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
+                    'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
             end
         end
         hold(ax4, 'off');
@@ -331,6 +419,12 @@ function fig = visualization(data, results, varargin)
         ylabel(ax4, 'Signal Var');
         title(ax4, 'Signal Variance');
         grid(ax4, 'on');
+        if use_logscale
+            set(ax4, 'XScale', 'log');
+            xlim(ax4, [0.8, length(signal_vars) + 1]);
+        else
+            xlim(ax4, [0.5, length(signal_vars) + 0.5]);
+        end
     else
         text(ax4, 0.5, 0.5, {'Ranking Info', 'Not Available'}, ...
              'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
@@ -346,7 +440,8 @@ function fig = visualization(data, results, varargin)
             % Global or averaged
             % Left y-axis for variance
             yyaxis(ax5, 'left');
-            x_dims = 0:length(results.signalvar)-1;
+            % MATLAB is 1-indexed, so dimensions always go 1, 2, 3...
+            x_dims = 1:length(results.signalvar);
             plot(ax5, x_dims, results.signalvar, '-', 'LineWidth', 1.5, 'Color', 'blue', 'DisplayName', 'Signal var');
             hold(ax5, 'on');
             plot(ax5, x_dims, results.noisevar, '-', 'LineWidth', 1.5, 'Color', [1 0.5 0], 'DisplayName', 'Noise var');
@@ -360,12 +455,28 @@ function fig = visualization(data, results, varargin)
             ylabel(ax5, 'NCSNR');
 
             % Add threshold (on left axis, only if > 0)
+            % Threshold value is the number of dims to keep, which corresponds directly
+            % to the x-position (no offset needed - threshold=1 means line at x=1)
             yyaxis(ax5, 'left');
             if isfield(results, 'best_threshold')
                 if isscalar(results.best_threshold) && results.best_threshold > 0
-                    xline(ax5, results.best_threshold, 'r--', 'LineWidth', 1, 'DisplayName', 'Threshold');
+                    thresh_val = results.best_threshold;
+                    xline(ax5, thresh_val, 'r--', 'LineWidth', 2, 'DisplayName', 'Threshold');
+                    % Add rotated text annotation for threshold
+                    ylims = ylim(ax5);
+                    y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
+                    text(ax5, thresh_val, y_pos, sprintf('  Threshold = %d', thresh_val), ...
+                        'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
+                        'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
                 elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
-                    xline(ax5, mean(results.best_threshold), 'r--', 'LineWidth', 1, 'DisplayName', 'Mean Threshold');
+                    mean_thresh = mean(results.best_threshold);
+                    xline(ax5, mean_thresh, 'r--', 'LineWidth', 2, 'DisplayName', 'Mean Threshold');
+                    % Add rotated text annotation for mean threshold
+                    ylims = ylim(ax5);
+                    y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
+                    text(ax5, mean_thresh, y_pos, sprintf('  Mean Threshold = %.1f', mean_thresh), ...
+                        'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
+                        'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
                 end
             end
             hold(ax5, 'off');
@@ -374,6 +485,12 @@ function fig = visualization(data, results, varargin)
             title(ax5, 'Signal and Noise Variance');
             legend(ax5, 'Location', 'best', 'FontSize', 7);
             grid(ax5, 'on');
+            if use_logscale
+                set(ax5, 'XScale', 'log');
+                xlim(ax5, [0.8, length(results.signalvar) + 1]);
+            else
+                xlim(ax5, [0.5, length(results.signalvar) + 0.5]);
+            end
         else
             text(ax5, 0.5, 0.5, {'Per-Unit Variance', '(Averaged across units)'}, ...
                  'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
@@ -390,28 +507,49 @@ function fig = visualization(data, results, varargin)
     % =====================================================================
     ax6 = nexttile(t, [1 2]);  % Row 2, columns 1-2
     if isfield(results, 'objective')
+        % For log scale, we need to handle x=0 specially
+        % Use x=0.5 for the zero-dimension case, then shift rest by 1
+        % This allows log scale while preserving the "0 dims" data point
+        zero_placeholder = 0.5;  % Position for "0 dimensions" in log scale
+
         % Check if unit-specific objectives are available
         if isfield(results, 'unit_objectives') && ~isempty(results.unit_objectives)
             % Unit-specific mode: use dual y-axes
-            % Left axis: unit curves (gray)
+            % Left axis: unit curves (gray) - use subsampling if needed
             yyaxis(ax6, 'left');
             hold(ax6, 'on');
             h_units = [];
-            for u = 1:length(results.unit_objectives)
+            units_to_plot = subsample_idx;  % Use subsampled units
+            for ii = 1:length(units_to_plot)
+                u = units_to_plot(ii);
                 curve_u = results.unit_objectives{u};
-                x_unit = 0:length(curve_u)-1;
+                if use_logscale
+                    % x=0 -> zero_placeholder, x=1 -> 1, x=2 -> 2, etc.
+                    x_unit = [zero_placeholder, 1:length(curve_u)-1];
+                else
+                    x_unit = 0:length(curve_u)-1;
+                end
                 h_units(end+1) = plot(ax6, x_unit, curve_u, '-', 'LineWidth', 0.5, 'Color', [0.5 0.5 0.5 0.3], 'Marker', 'none');
             end
 
-            % Mark each unit's chosen threshold (on left axis)
+            % Mark each unit's chosen threshold (on left axis) - use subsampling
             if isfield(results, 'best_threshold')
                 x_thresh = [];
                 y_thresh = [];
-                for u = 1:length(results.unit_objectives)
+                for ii = 1:length(units_to_plot)
+                    u = units_to_plot(ii);
                     k_u = results.best_threshold(u);
                     curve_u = results.unit_objectives{u};
                     if k_u >= 0 && k_u < length(curve_u)  % k_u=0 is valid (keep 0 dims)
-                        x_thresh(end+1) = k_u;
+                        if use_logscale
+                            if k_u == 0
+                                x_thresh(end+1) = zero_placeholder;
+                            else
+                                x_thresh(end+1) = k_u;
+                            end
+                        else
+                            x_thresh(end+1) = k_u;
+                        end
                         y_thresh(end+1) = curve_u(k_u+1);  % +1 for MATLAB 1-indexing
                     end
                 end
@@ -422,9 +560,13 @@ function fig = visualization(data, results, varargin)
             ylabel(ax6, {'Unit-Specific Objective', '(SignalVar - NoiseVar/ntrials)'});
             set(ax6, 'YColor', [0.4 0.4 0.4]);
 
-            % Right axis: population sum (green)
+            % Right axis: population sum (green) - FULL population
             yyaxis(ax6, 'right');
-            x_obj = 0:length(results.objective)-1;
+            if use_logscale
+                x_obj = [zero_placeholder, 1:length(results.objective)-1];
+            else
+                x_obj = 0:length(results.objective)-1;
+            end
             h_sum = plot(ax6, x_obj, results.objective, 'LineWidth', 2, 'Color', [0.3 0.7 0.3]);
             ylabel(ax6, 'Population Objective');
             set(ax6, 'YColor', [0.3 0.7 0.3]);
@@ -433,10 +575,14 @@ function fig = visualization(data, results, varargin)
             % Add legend
             legend(ax6, [h_units(1), h_sum], {'Units', 'Population (=Global)'}, 'Location', 'best');
 
-            title(ax6, 'Objective Function (unit-specific)');
+            title(ax6, ['Objective Function (unit-specific)' subsample_suffix_units]);
         else
             % Global mode: single curve
-            x_obj = 0:length(results.objective)-1;
+            if use_logscale
+                x_obj = [zero_placeholder, 1:length(results.objective)-1];
+            else
+                x_obj = 0:length(results.objective)-1;
+            end
             plot(ax6, x_obj, results.objective, 'LineWidth', 1.5, 'Color', [0.3 0.7 0.3]);
 
             % Mark chosen threshold (not maximum - threshold may be constrained)
@@ -444,14 +590,32 @@ function fig = visualization(data, results, varargin)
                 k = results.best_threshold;
                 if k >= 0 && k < length(results.objective)
                     hold(ax6, 'on');
-                    plot(ax6, k, results.objective(k+1), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
+                    if use_logscale
+                        if k == 0
+                            x_marker = zero_placeholder;
+                        else
+                            x_marker = k;
+                        end
+                    else
+                        x_marker = k;
+                    end
+                    plot(ax6, x_marker, results.objective(k+1), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
                     hold(ax6, 'off');
                 end
             else
                 % Fallback to maximum if no threshold stored
                 [~, max_idx] = max(results.objective);
                 hold(ax6, 'on');
-                plot(ax6, max_idx-1, results.objective(max_idx), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
+                if use_logscale
+                    if max_idx == 1
+                        x_marker = zero_placeholder;
+                    else
+                        x_marker = max_idx - 1;
+                    end
+                else
+                    x_marker = max_idx - 1;
+                end
+                plot(ax6, x_marker, results.objective(max_idx), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
                 hold(ax6, 'off');
             end
 
@@ -467,6 +631,27 @@ function fig = visualization(data, results, varargin)
 
         xlabel(ax6, 'Number of Dimensions');
         grid(ax6, 'on');
+
+        % Apply log scale and fix tick labels if needed
+        if use_logscale
+            set(ax6, 'XScale', 'log');
+            % Set xlim to start at zero_placeholder (so "0" point is visible)
+            n_dims = length(results.objective) - 1;  % max dimension
+            xlim(ax6, [zero_placeholder * 0.8, n_dims * 1.1]);
+            % Set custom ticks to show "0" at the zero_placeholder position
+            % Choose nice tick values for log scale
+            tick_vals = [zero_placeholder];
+            tick_labels = {'0'};
+            % Add powers of 10 and intermediate values
+            log_ticks = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+            for lt = log_ticks
+                if lt <= n_dims
+                    tick_vals(end+1) = lt;
+                    tick_labels{end+1} = num2str(lt);
+                end
+            end
+            set(ax6, 'XTick', tick_vals, 'XTickLabel', tick_labels);
+        end
     else
         text(ax6, 0.5, 0.5, {'Objective', 'Not Available'}, ...
              'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
@@ -487,7 +672,7 @@ function fig = visualization(data, results, varargin)
         shared_std = std(all_data_789);
     end
     if shared_std > 0
-        clim_shared = [shared_mean - 3*shared_std, shared_mean + 3*shared_std];
+        clim_shared = [shared_mean - 2*shared_std, shared_mean + 2*shared_std];
     else
         clim_shared = [shared_mean - 1, shared_mean + 1];
     end
@@ -495,7 +680,7 @@ function fig = visualization(data, results, varargin)
     % Plot 7: Raw trial-averaged data
     ax7 = nexttile(t, [1 2]);  % Row 2, columns 3-4
     imagesc(ax7, trial_avg, clim_shared);
-    colormap(ax7, redblue);
+    colormap(ax7, data_cmap);
     colorbar(ax7);
     if has_nans
         title(ax7, 'Input Data (trial-averaged, with NaNs)');
@@ -508,7 +693,7 @@ function fig = visualization(data, results, varargin)
     % Plot 8: Denoised data
     ax8 = nexttile(t, [1 2]);  % Row 2, columns 5-6
     imagesc(ax8, denoised, clim_shared);
-    colormap(ax8, redblue);
+    colormap(ax8, data_cmap);
     colorbar(ax8);
     title(ax8, 'PSN Denoised Data');
     xlabel(ax8, 'Conditions');
@@ -517,7 +702,7 @@ function fig = visualization(data, results, varargin)
     % Plot 9: Noise (residual)
     ax9 = nexttile(t, [1 2]);  % Row 2, columns 7-8
     imagesc(ax9, noise, clim_shared);
-    colormap(ax9, redblue);
+    colormap(ax9, data_cmap);
     colorbar(ax9);
     if has_nans
         title(ax9, 'Residual (Noise, with NaNs)');
@@ -547,47 +732,54 @@ function fig = visualization(data, results, varargin)
     axis(ax10, 'square');
 
     % =====================================================================
-    % Plot 11-12: Traces
+    % Plot 11-12: Traces (use subsampled units and/or conditions if needed)
     % =====================================================================
     % Color conditions by mean response (handle NaNs)
+    % Use subsampled conditions for coloring
+    n_conds_to_plot = length(subsample_cond_idx);
     cond_means = nanmean(trial_avg, 1);
-    [~, sorted_indices] = sort(cond_means);
-    colors = jet(nconds);
-    trace_colors = zeros(nconds, 3);
-    for rank = 1:nconds
+    cond_means_sub = cond_means(subsample_cond_idx);
+    [~, sorted_indices] = sort(cond_means_sub);
+    colors = jet(n_conds_to_plot);
+    trace_colors = zeros(n_conds_to_plot, 3);
+    for rank = 1:n_conds_to_plot
         cond_idx = sorted_indices(rank);
         trace_colors(cond_idx, :) = colors(rank, :);
     end
 
+    % Get subsampled data for traces (both units and conditions)
+    trial_avg_sub = trial_avg(subsample_idx, subsample_cond_idx);
+    denoised_sub = denoised(subsample_idx, subsample_cond_idx);
+
     % Trial-averaged traces
     ax11 = nexttile(t, [1 2]);  % Row 3, columns 3-4
     hold(ax11, 'on');
-    x_units = 1:nunits;  % 1-indexed for MATLAB
-    for c = 1:nconds
-        plot(ax11, x_units, trial_avg(:, c), 'Color', trace_colors(c, :), 'LineWidth', 0.5);
+    x_units = 1:length(subsample_idx);  % 1-indexed for MATLAB
+    for c = 1:n_conds_to_plot
+        plot(ax11, x_units, trial_avg_sub(:, c), 'Color', trace_colors(c, :), 'LineWidth', 0.5);
     end
     hold(ax11, 'off');
     xlabel(ax11, 'Units');
     ylabel(ax11, 'Activity');
-    title(ax11, 'Trial-Averaged Traces');
+    title(ax11, ['Trial-Averaged Traces' subsample_suffix_traces]);
     grid(ax11, 'on');
     xlim(ax11, [min(x_units), max(x_units)]);
 
     % Denoised traces
     ax12 = nexttile(t, [1 2]);  % Row 3, columns 5-6
     hold(ax12, 'on');
-    for c = 1:nconds
-        plot(ax12, x_units, denoised(:, c), 'Color', trace_colors(c, :), 'LineWidth', 0.5);
+    for c = 1:n_conds_to_plot
+        plot(ax12, x_units, denoised_sub(:, c), 'Color', trace_colors(c, :), 'LineWidth', 0.5);
     end
     hold(ax12, 'off');
     xlabel(ax12, 'Units');
     ylabel(ax12, 'Activity');
-    title(ax12, 'PSN Denoised Traces');
+    title(ax12, ['PSN Denoised Traces' subsample_suffix_traces]);
     grid(ax12, 'on');
     xlim(ax12, [min(x_units), max(x_units)]);
 
-    % Match y-limits (handle NaNs)
-    all_trace_data = [trial_avg(:); denoised(:)];
+    % Match y-limits (handle NaNs) - use subsampled data for ylim
+    all_trace_data = [trial_avg_sub(:); denoised_sub(:)];
     if has_nans
         y_min = nanmin(all_trace_data);
         y_max = nanmax(all_trace_data);
@@ -602,7 +794,7 @@ function fig = visualization(data, results, varargin)
     ylim(ax12, [y_min - y_margin, y_max + y_margin]);
 
     % =====================================================================
-    % Plot 13: Split-half reliability
+    % Plot 13: Split-half reliability (use subsampling for scatter, full pop for means)
     % =====================================================================
     ax13 = nexttile(t, [1 2]);  % Row 3, columns 7-8
 
@@ -635,7 +827,7 @@ function fig = visualization(data, results, varargin)
         dn_B = denoiser' * (tavg_B - unit_means) + unit_means;
     end
 
-    % Compute correlations
+    % Compute correlations for ALL units (for means)
     corr_tavg = zeros(nunits, 1);
     corr_cross = zeros(nunits, 1);
     corr_dn = zeros(nunits, 1);
@@ -661,30 +853,36 @@ function fig = visualization(data, results, varargin)
         end
     end
 
+    % Subsampled correlations for plotting
+    corr_tavg_sub = corr_tavg(subsample_idx);
+    corr_cross_sub = corr_cross(subsample_idx);
+    corr_dn_sub = corr_dn(subsample_idx);
+    n_sub = length(subsample_idx);
+
     % Plot
     x_positions = [1, 2, 3];
     labels = {'TAvg vs TAvg', 'TAvg vs Denoised', 'Denoised vs Denoised'};
 
-    % Add jitter
+    % Add jitter for subsampled units
     rng(42);
-    x_jitter = (rand(nunits, 1) - 0.5) * 0.16;
+    x_jitter_sub = (rand(n_sub, 1) - 0.5) * 0.16;
 
     hold(ax13, 'on');
 
-    % Connecting lines
-    for u = 1:nunits
-        values = [corr_tavg(u), corr_cross(u), corr_dn(u)];
+    % Connecting lines (subsampled)
+    for ii = 1:n_sub
+        values = [corr_tavg_sub(ii), corr_cross_sub(ii), corr_dn_sub(ii)];
         if ~any(isnan(values))
-            plot(ax13, x_positions + x_jitter(u), values, 'Color', [0.5 0.5 0.5], 'LineWidth', 0.3);
+            plot(ax13, x_positions + x_jitter_sub(ii), values, 'Color', [0.5 0.5 0.5], 'LineWidth', 0.3);
         end
     end
 
-    % Scatter points
-    scatter(ax13, x_positions(1) + x_jitter, corr_tavg, 15, 'blue', 'filled', 'MarkerFaceAlpha', 0.4);
-    scatter(ax13, x_positions(2) + x_jitter, corr_cross, 15, [1 0.84 0], 'filled', 'MarkerFaceAlpha', 0.4);
-    scatter(ax13, x_positions(3) + x_jitter, corr_dn, 15, [0.5 0.8 0.3], 'filled', 'MarkerFaceAlpha', 0.4);
+    % Scatter points (subsampled)
+    scatter(ax13, x_positions(1) + x_jitter_sub, corr_tavg_sub, 15, 'blue', 'filled', 'MarkerFaceAlpha', 0.4);
+    scatter(ax13, x_positions(2) + x_jitter_sub, corr_cross_sub, 15, [1 0.84 0], 'filled', 'MarkerFaceAlpha', 0.4);
+    scatter(ax13, x_positions(3) + x_jitter_sub, corr_dn_sub, 15, [0.5 0.8 0.3], 'filled', 'MarkerFaceAlpha', 0.4);
 
-    % Means
+    % Means (FULL population)
     mean_tavg = nanmean(corr_tavg);
     mean_cross = nanmean(corr_cross);
     mean_dn = nanmean(corr_dn);
@@ -693,7 +891,7 @@ function fig = visualization(data, results, varargin)
     scatter(ax13, x_positions(2), mean_cross, 100, [1 0.84 0], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
     scatter(ax13, x_positions(3), mean_dn, 100, [0.2 0.6 0.2], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
 
-    % Labels
+    % Labels (FULL population means)
     y_offset = 0.08;
     text(ax13, x_positions(1), mean_tavg + y_offset, sprintf('%.3f', mean_tavg), ...
         'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
@@ -713,16 +911,16 @@ function fig = visualization(data, results, varargin)
         valid_B = sum(~any(isnan(data_B), 1), 3);
         avg_valid_A = mean(valid_A(valid_A > 0));
         avg_valid_B = mean(valid_B(valid_B > 0));
-        title(ax13, sprintf('Split-Half Reliability\n(%.1f vs %.1f avg trials)', avg_valid_A, avg_valid_B));
+        title(ax13, sprintf('Split-Half Reliability\n(%.1f vs %.1f avg trials)%s', avg_valid_A, avg_valid_B, subsample_suffix_units));
     else
-        title(ax13, sprintf('Split-Half Reliability\n(%d vs %d trials)', size(data_A,3), size(data_B,3)));
+        title(ax13, sprintf('Split-Half Reliability\n(%d vs %d trials)%s', size(data_A,3), size(data_B,3), subsample_suffix_units));
     end
     grid(ax13, 'on');
     xlim(ax13, [0.5, 3.5]);
     yline(ax13, 0, 'k-', 'LineWidth', 1);
 
-    % Set y-limits
-    all_corr = [corr_tavg; corr_cross; corr_dn];
+    % Set y-limits (use subsampled data for visualization range)
+    all_corr = [corr_tavg_sub; corr_cross_sub; corr_dn_sub];
     valid_corr = all_corr(~isnan(all_corr));
     if ~isempty(valid_corr)
         y_min_c = min(valid_corr);
@@ -735,7 +933,7 @@ function fig = visualization(data, results, varargin)
     end
 
     % =====================================================================
-    % Plot 14-17: Signal/Noise Diagnostics
+    % Plot 14-17: Signal/Noise Diagnostics (use subsampling for scatter, full pop for means)
     % =====================================================================
 
     % Extract signal/noise variance data
@@ -753,28 +951,40 @@ function fig = visualization(data, results, varargin)
         noiseceiling_before = 100 * (ncsnr_before.^2 ./ (ncsnr_before.^2 + 1/ntrials_avg));
         noiseceiling_after = 100 * (ncsnr_after.^2 ./ (ncsnr_after.^2 + 1/ntrials_avg));
 
+        % Subsampled versions for plotting
+        sv_before_sub = sv_before(subsample_idx);
+        sv_after_sub = sv_after(subsample_idx);
+        nv_before_sub = nv_before(subsample_idx);
+        nv_after_sub = nv_after(subsample_idx);
+        ncsnr_before_sub = ncsnr_before(subsample_idx);
+        ncsnr_after_sub = ncsnr_after(subsample_idx);
+        noiseceiling_before_sub = noiseceiling_before(subsample_idx);
+        noiseceiling_after_sub = noiseceiling_after(subsample_idx);
+        n_sub = length(subsample_idx);
+
         % Define x positions
         x_before = 1;
         x_after = 2;
-        x_jitter_diag = (rand(nunits, 1) - 0.5) * 0.1;
+        x_jitter_diag = (rand(n_sub, 1) - 0.5) * 0.1;
 
         % Plot 14: Signal Variance
         ax14 = nexttile(t, [1 2]);  % Row 4, columns 1-2
         hold(ax14, 'on');
-        for u = 1:nunits
-            plot(ax14, [x_before, x_after] + x_jitter_diag(u), [sv_before(u), sv_after(u)], ...
+        for ii = 1:n_sub
+            plot(ax14, [x_before, x_after] + x_jitter_diag(ii), [sv_before_sub(ii), sv_after_sub(ii)], ...
                 'Color', [0.7 0.7 0.7], 'LineWidth', 0.5);
         end
-        scatter(ax14, x_before + x_jitter_diag, sv_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
-        scatter(ax14, x_after + x_jitter_diag, sv_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax14, x_before + x_jitter_diag, sv_before_sub, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax14, x_after + x_jitter_diag, sv_after_sub, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
 
+        % Means from FULL population
         mean_sv_before = mean(sv_before);
         mean_sv_after = mean(sv_after);
         scatter(ax14, x_before, mean_sv_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
         scatter(ax14, x_after, mean_sv_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
 
-        % Calculate y_offset dynamically
-        y_range_sv = max([sv_before; sv_after]) - min([sv_before; sv_after]);
+        % Calculate y_offset dynamically (use subsampled for range)
+        y_range_sv = max([sv_before_sub; sv_after_sub]) - min([sv_before_sub; sv_after_sub]);
         y_offset_sv = y_range_sv * 0.08;
 
         text(ax14, x_before, mean_sv_before + y_offset_sv, sprintf('%.3f', mean_sv_before), ...
@@ -786,26 +996,27 @@ function fig = visualization(data, results, varargin)
         xlim(ax14, [0.5, 2.5]);
         set(ax14, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
         ylabel(ax14, 'Signal Variance');
-        title(ax14, 'Signal Variance');
+        title(ax14, ['Signal Variance' subsample_suffix_units]);
         grid(ax14, 'on');
 
         % Plot 15: Noise Variance
         ax15 = nexttile(t, [1 2]);  % Row 4, columns 3-4
         hold(ax15, 'on');
-        for u = 1:nunits
-            plot(ax15, [x_before, x_after] + x_jitter_diag(u), [nv_before(u), nv_after(u)], ...
+        for ii = 1:n_sub
+            plot(ax15, [x_before, x_after] + x_jitter_diag(ii), [nv_before_sub(ii), nv_after_sub(ii)], ...
                 'Color', [0.7 0.7 0.7], 'LineWidth', 0.5);
         end
-        scatter(ax15, x_before + x_jitter_diag, nv_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
-        scatter(ax15, x_after + x_jitter_diag, nv_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax15, x_before + x_jitter_diag, nv_before_sub, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax15, x_after + x_jitter_diag, nv_after_sub, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
 
+        % Means from FULL population
         mean_nv_before = mean(nv_before);
         mean_nv_after = mean(nv_after);
         scatter(ax15, x_before, mean_nv_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
         scatter(ax15, x_after, mean_nv_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
 
         % Calculate y_offset dynamically
-        y_range_nv = max([nv_before; nv_after]) - min([nv_before; nv_after]);
+        y_range_nv = max([nv_before_sub; nv_after_sub]) - min([nv_before_sub; nv_after_sub]);
         y_offset_nv = y_range_nv * 0.08;
 
         text(ax15, x_before, mean_nv_before + y_offset_nv, sprintf('%.3f', mean_nv_before), ...
@@ -817,14 +1028,14 @@ function fig = visualization(data, results, varargin)
         xlim(ax15, [0.5, 2.5]);
         set(ax15, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
         ylabel(ax15, 'Noise Variance / ntrials');
-        title(ax15, 'Trial-Averaged Noise Variance');
+        title(ax15, ['Trial-Averaged Noise Variance' subsample_suffix_units]);
         grid(ax15, 'on');
 
-        % Set unified ylims for both signal and noise variance plots
-        all_sv_vals = [sv_before; sv_after];
-        all_nv_vals = [nv_before; nv_after];
-        all_variance_vals = [all_sv_vals; all_nv_vals];
-        y_max_unified = max(all_variance_vals);
+        % Set unified ylims for both signal and noise variance plots (use subsampled for range)
+        all_sv_vals_sub = [sv_before_sub; sv_after_sub];
+        all_nv_vals_sub = [nv_before_sub; nv_after_sub];
+        all_variance_vals_sub = [all_sv_vals_sub; all_nv_vals_sub];
+        y_max_unified = max(all_variance_vals_sub);
         y_pad_unified = y_max_unified * 0.05;  % 5% padding at bottom
         unified_ylim = [-y_pad_unified, y_max_unified + y_max_unified * 0.15];
 
@@ -838,20 +1049,21 @@ function fig = visualization(data, results, varargin)
         % Plot 16: NCSNR
         ax16 = nexttile(t, [1 2]);  % Row 4, columns 5-6
         hold(ax16, 'on');
-        for u = 1:nunits
-            plot(ax16, [x_before, x_after] + x_jitter_diag(u), [ncsnr_before(u), ncsnr_after(u)], ...
+        for ii = 1:n_sub
+            plot(ax16, [x_before, x_after] + x_jitter_diag(ii), [ncsnr_before_sub(ii), ncsnr_after_sub(ii)], ...
                 'Color', [0.7 0.7 0.7], 'LineWidth', 0.5);
         end
-        scatter(ax16, x_before + x_jitter_diag, ncsnr_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
-        scatter(ax16, x_after + x_jitter_diag, ncsnr_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax16, x_before + x_jitter_diag, ncsnr_before_sub, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax16, x_after + x_jitter_diag, ncsnr_after_sub, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
 
+        % Means from FULL population
         mean_ncsnr_before = mean(ncsnr_before);
         mean_ncsnr_after = mean(ncsnr_after);
         scatter(ax16, x_before, mean_ncsnr_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
         scatter(ax16, x_after, mean_ncsnr_after, 120, [0.6 0.1 0.1], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
 
         % Calculate y_offset dynamically
-        y_range_ncsnr = max([ncsnr_before; ncsnr_after]) - min([ncsnr_before; ncsnr_after]);
+        y_range_ncsnr = max([ncsnr_before_sub; ncsnr_after_sub]) - min([ncsnr_before_sub; ncsnr_after_sub]);
         y_offset_ncsnr = y_range_ncsnr * 0.08;
 
         text(ax16, x_before, mean_ncsnr_before + y_offset_ncsnr, sprintf('%.3f', mean_ncsnr_before), ...
@@ -859,9 +1071,9 @@ function fig = visualization(data, results, varargin)
         text(ax16, x_after, mean_ncsnr_after + y_offset_ncsnr, sprintf('%.3f', mean_ncsnr_after), ...
             'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
 
-        % Set ylims with padding
-        all_ncsnr_vals = [ncsnr_before; ncsnr_after];
-        y_max_ncsnr = max(all_ncsnr_vals);
+        % Set ylims with padding (use subsampled for range)
+        all_ncsnr_vals_sub = [ncsnr_before_sub; ncsnr_after_sub];
+        y_max_ncsnr = max(all_ncsnr_vals_sub);
         y_pad_ncsnr_bottom = y_max_ncsnr * 0.05;  % 5% padding at bottom
         y_pad_ncsnr_top = y_max_ncsnr * 0.15;  % 15% padding at top
         ylim(ax16, [-y_pad_ncsnr_bottom, y_max_ncsnr + y_pad_ncsnr_top]);
@@ -871,19 +1083,20 @@ function fig = visualization(data, results, varargin)
         xlim(ax16, [0.5, 2.5]);
         set(ax16, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
         ylabel(ax16, 'NCSNR');
-        title(ax16, 'Noise Ceiling SNR (NCSNR)');
+        title(ax16, ['Noise Ceiling SNR (NCSNR)' subsample_suffix_units]);
         grid(ax16, 'on');
 
         % Plot 17: Noise Ceiling %
         ax17 = nexttile(t, [1 2]);  % Row 4, columns 7-8
         hold(ax17, 'on');
-        for u = 1:nunits
-            plot(ax17, [x_before, x_after] + x_jitter_diag(u), [noiseceiling_before(u), noiseceiling_after(u)], ...
+        for ii = 1:n_sub
+            plot(ax17, [x_before, x_after] + x_jitter_diag(ii), [noiseceiling_before_sub(ii), noiseceiling_after_sub(ii)], ...
                 'Color', [0.7 0.7 0.7], 'LineWidth', 0.5);
         end
-        scatter(ax17, x_before + x_jitter_diag, noiseceiling_before, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
-        scatter(ax17, x_after + x_jitter_diag, noiseceiling_after, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax17, x_before + x_jitter_diag, noiseceiling_before_sub, 40, [0.3 0.5 0.8], 'filled', 'MarkerFaceAlpha', 0.6);
+        scatter(ax17, x_after + x_jitter_diag, noiseceiling_after_sub, 40, [0.8 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
 
+        % Means from FULL population
         mean_nc_before = mean(noiseceiling_before);
         mean_nc_after = mean(noiseceiling_after);
         scatter(ax17, x_before, mean_nc_before, 120, [0.1 0.3 0.6], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
@@ -905,9 +1118,9 @@ function fig = visualization(data, results, varargin)
         set(ax17, 'XTick', [1, 2], 'XTickLabel', {'Before', 'After'});
         ylabel(ax17, 'Noise Ceiling (%)');
         if has_nans
-            title(ax17, sprintf('Noise Ceiling Percentage (%.1f avg trials)', ntrials_avg));
+            title(ax17, sprintf('Noise Ceiling Percentage (%.1f avg trials)%s', ntrials_avg, subsample_suffix_units));
         else
-            title(ax17, sprintf('Noise Ceiling Percentage (%d trials)', ntrials));
+            title(ax17, sprintf('Noise Ceiling Percentage (%d trials)%s', ntrials, subsample_suffix_units));
         end
         grid(ax17, 'on');
     end

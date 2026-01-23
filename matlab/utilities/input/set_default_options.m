@@ -29,6 +29,7 @@ function opt = set_default_options(opt, nunits)
 %   wantfig            = 1
 %   figurepath         = '' (empty = display only, no save)
 %   wantverbose        = 1
+%   cmap               = [] (uses cmapsign4 in visualization)
 
     % Normalize string inputs to char for consistent strcmp behavior
     % MATLAB string type ("text") vs char array ('text') behave differently with ischar()
@@ -91,6 +92,10 @@ function opt = set_default_options(opt, nunits)
 
     if ~isfield(opt, 'figurepath')
         opt.figurepath = '';
+    end
+
+    if ~isfield(opt, 'cmap')
+        opt.cmap = [];  % Will use default cmapsign4 in visualization
     end
 
     % Auto-detect: if allowable_thresholds is a single value, force threshold_method to 'global'
