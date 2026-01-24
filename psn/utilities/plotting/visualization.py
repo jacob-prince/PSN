@@ -374,6 +374,9 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                       results['basis_eigenvalues'] is not None and
                       len(results['basis_eigenvalues']) > 0)
 
+    # Check if prediction ordering was used
+    use_prediction_ordering = (basis_ordering == 'prediction')
+
     if use_eigenvalues:
         # Show eigenvalues (SORTED - what was actually used for ranking)
         evals = results['basis_eigenvalues']  # Already sorted in descending order
@@ -392,7 +395,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                 # Add rotated text annotation (top of text on right side of line)
                 ylims = ax4.get_ylim()
                 y_pos = ylims[0] + 0.7 * (ylims[1] - ylims[0])
-                ax4.text(best_t, y_pos, f'  Threshold = {int(best_t)}',
+                ax4.text(best_t * 1.05 if use_logscale else best_t + 0.5, y_pos, f'Threshold = {int(best_t)}',
                         color='r', fontsize=9, rotation=90,
                         ha='left', va='top')
             elif hasattr(best_t, '__len__') and np.mean(best_t) > 0:
@@ -401,7 +404,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                 # Add rotated text annotation (top of text on right side of line)
                 ylims = ax4.get_ylim()
                 y_pos = ylims[0] + 0.7 * (ylims[1] - ylims[0])
-                ax4.text(mean_thresh, y_pos, f'  Mean Threshold = {mean_thresh:.1f}',
+                ax4.text(mean_thresh * 1.05 if use_logscale else mean_thresh + 0.5, y_pos, f'Mean Threshold = {mean_thresh:.1f}',
                         color='r', fontsize=9, rotation=90,
                         ha='left', va='top')
 
@@ -414,6 +417,51 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
             ax4.set_xlim([0.8, len(evals) + 1])
         else:
             ax4.set_xlim([-0.5, len(evals) - 0.5])
+
+    elif use_prediction_ordering and 'signalvar' in results and 'noisevar' in results:
+        # Show prediction ordering criterion (signal - noise/ntrials) and signal variance
+        signal_vars = results['signalvar']
+        noise_vars = results['noisevar']
+        prediction_obj = signal_vars - noise_vars / ntrials_avg
+
+        if use_logscale:
+            x_vals = np.arange(len(signal_vars)) + 1
+        else:
+            x_vals = np.arange(len(signal_vars))
+
+        # Plot both signal variance and prediction objective
+        ax4.plot(x_vals, signal_vars, linewidth=1.5, color='blue', label='Signal Var')
+        ax4.plot(x_vals, prediction_obj, linewidth=1.5, color=[0.5, 0, 0.5], label='SigVar - NoiseVar/ntrials')
+
+        # Add threshold indicators (only if threshold > 0)
+        if 'best_threshold' in results:
+            best_t = results['best_threshold']
+            if np.isscalar(best_t) and best_t > 0:
+                ax4.axvline(x=best_t, color='r', linestyle='--', linewidth=2)
+                ylims = ax4.get_ylim()
+                y_pos = ylims[0] + 0.7 * (ylims[1] - ylims[0])
+                ax4.text(best_t * 1.05 if use_logscale else best_t + 0.5, y_pos, f'Threshold = {int(best_t)}',
+                        color='r', fontsize=9, rotation=90,
+                        ha='left', va='top')
+            elif hasattr(best_t, '__len__') and np.mean(best_t) > 0:
+                mean_thresh = np.mean(best_t)
+                ax4.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=2)
+                ylims = ax4.get_ylim()
+                y_pos = ylims[0] + 0.7 * (ylims[1] - ylims[0])
+                ax4.text(mean_thresh * 1.05 if use_logscale else mean_thresh + 0.5, y_pos, f'Mean Threshold = {mean_thresh:.1f}',
+                        color='r', fontsize=9, rotation=90,
+                        ha='left', va='top')
+
+        ax4.set_xlabel('Dimension')
+        ax4.set_ylabel('Variance')
+        ax4.set_title('Ordering Criterion')
+        ax4.legend(loc='best', fontsize=7)
+        ax4.grid(True)
+        if use_logscale:
+            ax4.set_xscale('log')
+            ax4.set_xlim([0.8, len(signal_vars) + 1])
+        else:
+            ax4.set_xlim([-0.5, len(signal_vars) - 0.5])
 
     elif 'signalvar' in results:
         # Show signal variance (SORTED - what was actually used for ranking)
@@ -433,7 +481,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                 # Add rotated text annotation (top of text on right side of line)
                 ylims = ax4.get_ylim()
                 y_pos = ylims[0] + 0.7 * (ylims[1] - ylims[0])
-                ax4.text(best_t, y_pos, f'  Threshold = {int(best_t)}',
+                ax4.text(best_t * 1.05 if use_logscale else best_t + 0.5, y_pos, f'Threshold = {int(best_t)}',
                         color='r', fontsize=9, rotation=90,
                         ha='left', va='top')
             elif hasattr(best_t, '__len__') and np.mean(best_t) > 0:
@@ -442,7 +490,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                 # Add rotated text annotation (top of text on right side of line)
                 ylims = ax4.get_ylim()
                 y_pos = ylims[0] + 0.7 * (ylims[1] - ylims[0])
-                ax4.text(mean_thresh, y_pos, f'  Mean Threshold = {mean_thresh:.1f}',
+                ax4.text(mean_thresh * 1.05 if use_logscale else mean_thresh + 0.5, y_pos, f'Mean Threshold = {mean_thresh:.1f}',
                         color='r', fontsize=9, rotation=90,
                         ha='left', va='top')
 
@@ -500,7 +548,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                     # Add rotated text annotation (top of text on right side of line)
                     ylims = ax5_left.get_ylim()
                     y_pos = ylims[0] + 0.7 * (ylims[1] - ylims[0])
-                    ax5_left.text(best_t, y_pos, f'  Threshold = {int(best_t)}',
+                    ax5_left.text(best_t * 1.05 if use_logscale else best_t + 0.5, y_pos, f'Threshold = {int(best_t)}',
                             color='r', fontsize=9, rotation=90,
                             ha='left', va='top')
                 elif hasattr(best_t, '__len__') and np.mean(best_t) > 0:
@@ -509,7 +557,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                     # Add rotated text annotation (top of text on right side of line)
                     ylims = ax5_left.get_ylim()
                     y_pos = ylims[0] + 0.7 * (ylims[1] - ylims[0])
-                    ax5_left.text(mean_thresh, y_pos, f'  Mean Threshold = {mean_thresh:.1f}',
+                    ax5_left.text(mean_thresh * 1.05 if use_logscale else mean_thresh + 0.5, y_pos, f'Mean Threshold = {mean_thresh:.1f}',
                             color='r', fontsize=9, rotation=90,
                             ha='left', va='top')
 

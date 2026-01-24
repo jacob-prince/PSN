@@ -19,7 +19,7 @@ function validate_options(opt, nunits)
 % - basis: must be 'signal', 'difference', 'noise', 'pca', 'random', or numeric matrix
 % - criterion: must be 'prediction', 'variance', or 'variance_eigenvalues'
 % - threshold_method: must be 'global', 'hybrid', or 'unit'
-% - basis_ordering: must be 'eigenvalues' or 'signalvariance'
+% - basis_ordering: must be 'eigenvalues', 'signalvariance', or 'prediction'
 % - variance_threshold: must be in [0,1]
 % - allowable_thresholds: must be numeric vector with non-negative values
 % - unit_groups: must have length nunits, contain non-negative integers
@@ -45,7 +45,7 @@ function validate_options(opt, nunits)
         error('threshold_method must be one of: %s', strjoin(valid_methods, ', '));
     end
 
-    valid_orderings = {'eigenvalues', 'signalvariance'};
+    valid_orderings = {'eigenvalues', 'signalvariance', 'prediction'};
     if ~ismember(opt.basis_ordering, valid_orderings)
         error('basis_ordering must be one of: %s', strjoin(valid_orderings, ', '));
     end

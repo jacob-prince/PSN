@@ -344,6 +344,7 @@ def psn(*args):
     # We order the basis dimensions according to their importance based on basis_ordering:
     # - 'eigenvalues': rank by eigenvalues (if available)
     # - 'signalvariance': rank by signal variance
+    # - 'prediction': rank by signal variance - noise variance / ntrials
 
     if opt['wantverbose']:
         print('PSN: Ranking basis dimensions globally...')
@@ -353,6 +354,12 @@ def psn(*args):
         sort_idx_global = np.argsort(basis_eigenvalues)[::-1]  # Descending
         if opt['wantverbose']:
             print('PSN: Using eigenvalue-based ordering')
+    elif opt['basis_ordering'] == 'prediction':
+        # Use prediction objective (signal - noise/ntrials) for ranking
+        prediction_obj = signal_proj - noise_proj / ntrials_avg
+        sort_idx_global = np.argsort(prediction_obj)[::-1]  # Descending
+        if opt['wantverbose']:
+            print('PSN: Using prediction-based ordering (signalvar - noisevar/ntrials)')
     else:
         # Use signal variance-based ranking (or fallback when eigenvalues unavailable)
         sort_idx_global = np.argsort(signal_proj)[::-1]  # Descending

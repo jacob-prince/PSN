@@ -354,6 +354,9 @@ function fig = visualization(data, results, varargin)
                       isfield(results, 'basis_eigenvalues') && ...
                       ~isempty(results.basis_eigenvalues);
 
+    % Check if prediction ordering was used
+    use_prediction_ordering = strcmp(basis_ordering, 'prediction');
+
     if use_eigenvalues
         % Show eigenvalues (SORTED - what was actually used for ranking)
         evals = results.basis_eigenvalues;  % Already sorted in descending order
@@ -371,7 +374,12 @@ function fig = visualization(data, results, varargin)
                 % Add rotated text annotation for threshold (top of text on right side of line)
                 ylims = ylim(ax4);
                 y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                text(ax4, thresh_val, y_pos, sprintf('  Threshold = %d', thresh_val), ...
+                if use_logscale
+                    text_x = thresh_val * 1.05;
+                else
+                    text_x = thresh_val + 0.5;
+                end
+                text(ax4, text_x, y_pos, sprintf('Threshold = %d', thresh_val), ...
                     'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
                     'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
             elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
@@ -380,7 +388,12 @@ function fig = visualization(data, results, varargin)
                 % Add rotated text annotation for mean threshold (top of text on right side of line)
                 ylims = ylim(ax4);
                 y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                text(ax4, mean_thresh, y_pos, sprintf('  Mean Threshold = %.1f', mean_thresh), ...
+                if use_logscale
+                    text_x = mean_thresh * 1.05;
+                else
+                    text_x = mean_thresh + 0.5;
+                end
+                text(ax4, text_x, y_pos, sprintf('Mean Threshold = %.1f', mean_thresh), ...
                     'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
                     'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
             end
@@ -396,6 +409,61 @@ function fig = visualization(data, results, varargin)
             xlim(ax4, [0.8, length(evals) + 1]);
         else
             xlim(ax4, [0.5, length(evals) + 0.5]);
+        end
+
+    elseif use_prediction_ordering && isfield(results, 'signalvar') && isfield(results, 'noisevar')
+        % Show prediction ordering criterion (signal - noise/ntrials) and signal variance
+        signal_vars = results.signalvar;
+        noise_vars = results.noisevar;
+        prediction_obj = signal_vars - noise_vars / ntrials_avg;
+
+        x_dims_4 = 1:length(signal_vars);
+        plot(ax4, x_dims_4, signal_vars, 'LineWidth', 1.5, 'Color', 'blue', 'DisplayName', 'Signal Var');
+        hold(ax4, 'on');
+        plot(ax4, x_dims_4, prediction_obj, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5], 'DisplayName', 'SigVar - NoiseVar/ntrials');
+
+        % Add threshold indicators (only if threshold > 0)
+        if isfield(results, 'best_threshold')
+            if isscalar(results.best_threshold) && results.best_threshold > 0
+                thresh_val = results.best_threshold;
+                xline(ax4, thresh_val, 'r--', 'LineWidth', 2);
+                ylims = ylim(ax4);
+                y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
+                if use_logscale
+                    text_x = thresh_val * 1.05;
+                else
+                    text_x = thresh_val + 0.5;
+                end
+                text(ax4, text_x, y_pos, sprintf('Threshold = %d', thresh_val), ...
+                    'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
+                    'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
+            elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
+                mean_thresh = mean(results.best_threshold);
+                xline(ax4, mean_thresh, 'r--', 'LineWidth', 2);
+                ylims = ylim(ax4);
+                y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
+                if use_logscale
+                    text_x = mean_thresh * 1.05;
+                else
+                    text_x = mean_thresh + 0.5;
+                end
+                text(ax4, text_x, y_pos, sprintf('Mean Threshold = %.1f', mean_thresh), ...
+                    'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
+                    'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
+            end
+        end
+        hold(ax4, 'off');
+
+        xlabel(ax4, 'Dimension');
+        ylabel(ax4, 'Variance');
+        title(ax4, 'Ordering Criterion');
+        legend(ax4, 'Location', 'best', 'FontSize', 7);
+        grid(ax4, 'on');
+        if use_logscale
+            set(ax4, 'XScale', 'log');
+            xlim(ax4, [0.8, length(signal_vars) + 1]);
+        else
+            xlim(ax4, [0.5, length(signal_vars) + 0.5]);
         end
 
     elseif isfield(results, 'signalvar')
@@ -415,7 +483,12 @@ function fig = visualization(data, results, varargin)
                 % Add rotated text annotation for threshold (top of text on right side of line)
                 ylims = ylim(ax4);
                 y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                text(ax4, thresh_val, y_pos, sprintf('  Threshold = %d', thresh_val), ...
+                if use_logscale
+                    text_x = thresh_val * 1.05;
+                else
+                    text_x = thresh_val + 0.5;
+                end
+                text(ax4, text_x, y_pos, sprintf('Threshold = %d', thresh_val), ...
                     'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
                     'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
             elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
@@ -424,7 +497,12 @@ function fig = visualization(data, results, varargin)
                 % Add rotated text annotation for mean threshold (top of text on right side of line)
                 ylims = ylim(ax4);
                 y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                text(ax4, mean_thresh, y_pos, sprintf('  Mean Threshold = %.1f', mean_thresh), ...
+                if use_logscale
+                    text_x = mean_thresh * 1.05;
+                else
+                    text_x = mean_thresh + 0.5;
+                end
+                text(ax4, text_x, y_pos, sprintf('Mean Threshold = %.1f', mean_thresh), ...
                     'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
                     'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
             end
@@ -481,7 +559,12 @@ function fig = visualization(data, results, varargin)
                     % Add rotated text annotation for threshold
                     ylims = ylim(ax5);
                     y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                    text(ax5, thresh_val, y_pos, sprintf('  Threshold = %d', thresh_val), ...
+                    if use_logscale
+                        text_x = thresh_val * 1.05;
+                    else
+                        text_x = thresh_val + 0.5;
+                    end
+                    text(ax5, text_x, y_pos, sprintf('Threshold = %d', thresh_val), ...
                         'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
                         'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
                 elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
@@ -490,7 +573,12 @@ function fig = visualization(data, results, varargin)
                     % Add rotated text annotation for mean threshold
                     ylims = ylim(ax5);
                     y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                    text(ax5, mean_thresh, y_pos, sprintf('  Mean Threshold = %.1f', mean_thresh), ...
+                    if use_logscale
+                        text_x = mean_thresh * 1.05;
+                    else
+                        text_x = mean_thresh + 0.5;
+                    end
+                    text(ax5, text_x, y_pos, sprintf('Mean Threshold = %.1f', mean_thresh), ...
                         'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
                         'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
                 end

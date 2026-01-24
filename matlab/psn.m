@@ -365,6 +365,7 @@ basis_eigenvalues_viz = basis_eigenvalues;  % Save original order for visualizat
 % We order the basis dimensions according to their importance based on basis_ordering:
 % - 'eigenvalues': rank by eigenvalues (if available)
 % - 'signalvariance': rank by signal variance
+% - 'prediction': rank by signal variance - noise variance / ntrials
 
 if opt.wantverbose
     fprintf('PSN: Ranking basis dimensions globally...\n');
@@ -375,6 +376,13 @@ if strcmp(opt.basis_ordering, 'eigenvalues') && ~isempty(basis_eigenvalues)
     [~, sort_idx_global] = sort(basis_eigenvalues, 'descend');
     if opt.wantverbose
         fprintf('PSN: Using eigenvalue-based ordering\n');
+    end
+elseif strcmp(opt.basis_ordering, 'prediction')
+    % Use prediction objective (signal - noise/ntrials) for ranking
+    prediction_obj = signal_proj - noise_proj / ntrials_avg;
+    [~, sort_idx_global] = sort(prediction_obj, 'descend');
+    if opt.wantverbose
+        fprintf('PSN: Using prediction-based ordering (signalvar - noisevar/ntrials)\n');
     end
 else
     % Use signal variance-based ranking (or fallback when eigenvalues unavailable)

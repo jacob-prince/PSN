@@ -27,7 +27,7 @@ def validate_options(opt, nunits):
     - basis: must be 'signal', 'difference', 'noise', 'pca', 'random', or numeric matrix
     - criterion: must be 'prediction', 'variance', or 'variance_eigenvalues'
     - threshold_method: must be 'global', 'hybrid', or 'unit'
-    - basis_ordering: must be 'eigenvalues' or 'signalvariance'
+    - basis_ordering: must be 'eigenvalues', 'signalvariance', or 'prediction'
     - variance_threshold: must be in [0,1]
     - allowable_thresholds: must be numeric vector with non-negative values
     - unit_groups: must have length nunits, contain non-negative integers
@@ -49,7 +49,7 @@ def validate_options(opt, nunits):
     if opt['threshold_method'] not in valid_methods:
         raise ValueError(f"threshold_method must be one of: {', '.join(valid_methods)}")
 
-    valid_orderings = ['eigenvalues', 'signalvariance']
+    valid_orderings = ['eigenvalues', 'signalvariance', 'prediction']
     if opt['basis_ordering'] not in valid_orderings:
         raise ValueError(f"basis_ordering must be one of: {', '.join(valid_orderings)}")
 
