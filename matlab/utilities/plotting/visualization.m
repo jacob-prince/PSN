@@ -426,7 +426,8 @@ function fig = visualization(data, results, varargin)
         if isfield(results, 'best_threshold')
             if isscalar(results.best_threshold) && results.best_threshold > 0
                 thresh_val = results.best_threshold;
-                xline(ax4, thresh_val, 'r--', 'LineWidth', 2);
+                hxl = xline(ax4, thresh_val, 'r--', 'LineWidth', 2);
+                hxl.HandleVisibility = 'off';  % Exclude from legend
                 ylims = ylim(ax4);
                 y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
                 if use_logscale
@@ -439,7 +440,8 @@ function fig = visualization(data, results, varargin)
                     'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
             elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
                 mean_thresh = mean(results.best_threshold);
-                xline(ax4, mean_thresh, 'r--', 'LineWidth', 2);
+                hxl = xline(ax4, mean_thresh, 'r--', 'LineWidth', 2);
+                hxl.HandleVisibility = 'off';  % Exclude from legend
                 ylims = ylim(ax4);
                 y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
                 if use_logscale
