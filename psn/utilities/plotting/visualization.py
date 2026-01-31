@@ -572,9 +572,9 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
 
             if use_logscale:
                 ax5_left.set_xscale('log')
-                ax5_left.set_xlim([0.8, len(sv) + 1])
+                ax5_left.set_xlim([0.8, len(sv) * 1.1])  # Push x-axis limit beyond final dimension
             else:
-                ax5_left.set_xlim([-0.5, len(sv) - 0.5])
+                ax5_left.set_xlim([-0.5, len(sv) * 1.02])  # Push x-axis limit beyond final dimension
         else:
             ax5.text(0.5, 0.5, 'Per-Unit Variance\n(Averaged across units)',
                     ha='center', va='center', transform=ax5.transAxes)
@@ -612,11 +612,23 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                     h_units = line
 
             # Mark each unit's chosen threshold (on left axis) - use subsampling
+            # Color by unit_groups if available
             if 'best_threshold' in results:
                 best_t = results['best_threshold']
                 if hasattr(best_t, '__len__'):
+                    # Check if unit_groups are available for coloring
+                    unit_groups = opt.get('unit_groups', None)
+                    if unit_groups is not None:
+                        unique_groups = np.unique(unit_groups)
+                        n_groups = len(unique_groups)
+                        # Use hsv colormap which handles arbitrary numbers of groups
+                        group_colors = plt.cm.hsv(np.linspace(0, 0.9, n_groups))  # 0.9 to avoid wrapping back to red
+                        # Create mapping from group to color
+                        group_to_color = {g: group_colors[i] for i, g in enumerate(unique_groups)}
+
                     x_thresh = []
                     y_thresh = []
+                    c_thresh = []  # colors for each point
                     for u in subsample_idx:
                         if u < len(best_t):
                             u_obj = results['unit_objectives'][u]
@@ -630,9 +642,18 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                                 else:
                                     x_thresh.append(k_u)
                                 y_thresh.append(u_obj[k_u])
+                                # Get color based on unit group
+                                if unit_groups is not None and u < len(unit_groups):
+                                    c_thresh.append(group_to_color[unit_groups[u]])
+                                else:
+                                    c_thresh.append([1, 0.3, 0.3, 0.6])  # default red
                     if x_thresh:
-                        ax6_left.scatter(x_thresh, y_thresh, s=20, color=[1, 0.3, 0.3],
-                                   alpha=0.6, zorder=5)
+                        if unit_groups is not None:
+                            ax6_left.scatter(x_thresh, y_thresh, s=20, c=c_thresh,
+                                       alpha=0.6, zorder=5)
+                        else:
+                            ax6_left.scatter(x_thresh, y_thresh, s=20, color=[1, 0.3, 0.3],
+                                       alpha=0.6, zorder=5)
 
             ax6_left.set_ylabel('Unit-Specific Objective\n(SignalVar - NoiseVar/ntrials)', color=[0.4, 0.4, 0.4])
             ax6_left.tick_params(axis='y', labelcolor=[0.4, 0.4, 0.4])

@@ -593,9 +593,9 @@ function fig = visualization(data, results, varargin)
             grid(ax5, 'on');
             if use_logscale
                 set(ax5, 'XScale', 'log');
-                xlim(ax5, [0.8, length(results.signalvar) + 1]);
+                xlim(ax5, [0.8, length(results.signalvar) * 1.1]);  % Push x-axis limit beyond final dimension
             else
-                xlim(ax5, [0.5, length(results.signalvar) + 0.5]);
+                xlim(ax5, [-0.5, length(results.signalvar) * 1.02]);  % Push x-axis limit beyond final dimension
             end
         else
             text(ax5, 0.5, 0.5, {'Per-Unit Variance', '(Averaged across units)'}, ...
@@ -639,9 +639,24 @@ function fig = visualization(data, results, varargin)
             end
 
             % Mark each unit's chosen threshold (on left axis) - use subsampling
+            % Check if unit_groups are available for coloring
+            unit_groups = [];
+            if isfield(opt, 'unit_groups') && ~isempty(opt.unit_groups)
+                unit_groups = opt.unit_groups;
+                unique_groups = unique(unit_groups);
+                n_groups = length(unique_groups);
+                % Use hsv colormap which handles arbitrary numbers of groups
+                % Scale from 0 to 0.9 to avoid wrapping back to red
+                hsv_vals = hsv(ceil(n_groups / 0.9));
+                group_colors = hsv_vals(1:n_groups, :);
+                % Create mapping from group to color index
+                group_to_idx = containers.Map(unique_groups, 1:n_groups);
+            end
+
             if isfield(results, 'best_threshold')
                 x_thresh = [];
                 y_thresh = [];
+                c_thresh = [];  % Colors for each threshold point
                 for ii = 1:length(units_to_plot)
                     u = units_to_plot(ii);
                     k_u = results.best_threshold(u);
@@ -657,10 +672,17 @@ function fig = visualization(data, results, varargin)
                             x_thresh(end+1) = k_u;
                         end
                         y_thresh(end+1) = curve_u(k_u+1);  % +1 for MATLAB 1-indexing
+
+                        % Determine color for this point
+                        if ~isempty(unit_groups) && u <= length(unit_groups)
+                            c_thresh(end+1, :) = group_colors(group_to_idx(unit_groups(u)), :);
+                        else
+                            c_thresh(end+1, :) = [1 0.3 0.3];  % Default red
+                        end
                     end
                 end
                 if ~isempty(x_thresh)
-                    scatter(ax6, x_thresh, y_thresh, 20, [1 0.3 0.3], 'filled', 'MarkerFaceAlpha', 0.6);
+                    scatter(ax6, x_thresh, y_thresh, 20, c_thresh, 'filled', 'MarkerFaceAlpha', 0.6);
                 end
             end
             ylabel(ax6, {'Unit-Specific Objective', '(SignalVar - NoiseVar/ntrials)'});
