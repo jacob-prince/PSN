@@ -958,26 +958,39 @@ function fig = visualization(data, results, varargin)
     end
 
     % Compute correlations for ALL units (for means)
+    % Use nanstd to handle NaN values properly
     corr_tavg = zeros(nunits, 1);
     corr_cross = zeros(nunits, 1);
     corr_dn = zeros(nunits, 1);
 
     for u = 1:nunits
-        if std(tavg_A(u,:)) > 0 && std(tavg_B(u,:)) > 0
-            corr_tavg(u) = corr(tavg_A(u,:)', tavg_B(u,:)');
+        % Get valid (non-NaN) indices for this unit
+        valid_tavg = ~isnan(tavg_A(u,:)) & ~isnan(tavg_B(u,:));
+        valid_cross_AB = ~isnan(tavg_A(u,:)) & ~isnan(dn_B(u,:));
+        valid_cross_BA = ~isnan(dn_A(u,:)) & ~isnan(tavg_B(u,:));
+        valid_dn = ~isnan(dn_A(u,:)) & ~isnan(dn_B(u,:));
+
+        % TAvg vs TAvg correlation
+        if sum(valid_tavg) > 1 && std(tavg_A(u, valid_tavg)) > 0 && std(tavg_B(u, valid_tavg)) > 0
+            corr_tavg(u) = corr(tavg_A(u, valid_tavg)', tavg_B(u, valid_tavg)');
         else
             corr_tavg(u) = NaN;
         end
 
         % Cross-method (average both directions)
-        if std(tavg_A(u,:)) > 0 && std(dn_B(u,:)) > 0 && std(dn_A(u,:)) > 0 && std(tavg_B(u,:)) > 0
-            corr_cross(u) = (corr(tavg_A(u,:)', dn_B(u,:)') + corr(dn_A(u,:)', tavg_B(u,:)')) / 2;
+        if sum(valid_cross_AB) > 1 && sum(valid_cross_BA) > 1 && ...
+           std(tavg_A(u, valid_cross_AB)) > 0 && std(dn_B(u, valid_cross_AB)) > 0 && ...
+           std(dn_A(u, valid_cross_BA)) > 0 && std(tavg_B(u, valid_cross_BA)) > 0
+            corr_AB = corr(tavg_A(u, valid_cross_AB)', dn_B(u, valid_cross_AB)');
+            corr_BA = corr(dn_A(u, valid_cross_BA)', tavg_B(u, valid_cross_BA)');
+            corr_cross(u) = (corr_AB + corr_BA) / 2;
         else
             corr_cross(u) = NaN;
         end
 
-        if std(dn_A(u,:)) > 0 && std(dn_B(u,:)) > 0
-            corr_dn(u) = corr(dn_A(u,:)', dn_B(u,:)');
+        % Denoised vs Denoised correlation
+        if sum(valid_dn) > 1 && std(dn_A(u, valid_dn)) > 0 && std(dn_B(u, valid_dn)) > 0
+            corr_dn(u) = corr(dn_A(u, valid_dn)', dn_B(u, valid_dn)');
         else
             corr_dn(u) = NaN;
         end

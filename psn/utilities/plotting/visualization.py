@@ -880,22 +880,36 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     corr_dn = np.zeros(nunits)
 
     for u in range(nunits):
-        if np.std(tavg_A[u, :]) > 0 and np.std(tavg_B[u, :]) > 0:
-            corr_tavg[u] = np.corrcoef(tavg_A[u, :], tavg_B[u, :])[0, 1]
+        if np.nanstd(tavg_A[u, :]) > 0 and np.nanstd(tavg_B[u, :]) > 0:
+            # Use masked arrays to handle NaNs in corrcoef
+            mask = ~(np.isnan(tavg_A[u, :]) | np.isnan(tavg_B[u, :]))
+            if np.sum(mask) > 1:
+                corr_tavg[u] = np.corrcoef(tavg_A[u, mask], tavg_B[u, mask])[0, 1]
+            else:
+                corr_tavg[u] = np.nan
         else:
             corr_tavg[u] = np.nan
 
         # Cross-method (average both directions)
-        if (np.std(tavg_A[u, :]) > 0 and np.std(dn_B[u, :]) > 0 and
-            np.std(dn_A[u, :]) > 0 and np.std(tavg_B[u, :]) > 0):
-            corr_AB = np.corrcoef(tavg_A[u, :], dn_B[u, :])[0, 1]
-            corr_BA = np.corrcoef(dn_A[u, :], tavg_B[u, :])[0, 1]
-            corr_cross[u] = (corr_AB + corr_BA) / 2
+        if (np.nanstd(tavg_A[u, :]) > 0 and np.nanstd(dn_B[u, :]) > 0 and
+            np.nanstd(dn_A[u, :]) > 0 and np.nanstd(tavg_B[u, :]) > 0):
+            mask_AB = ~(np.isnan(tavg_A[u, :]) | np.isnan(dn_B[u, :]))
+            mask_BA = ~(np.isnan(dn_A[u, :]) | np.isnan(tavg_B[u, :]))
+            if np.sum(mask_AB) > 1 and np.sum(mask_BA) > 1:
+                corr_AB = np.corrcoef(tavg_A[u, mask_AB], dn_B[u, mask_AB])[0, 1]
+                corr_BA = np.corrcoef(dn_A[u, mask_BA], tavg_B[u, mask_BA])[0, 1]
+                corr_cross[u] = (corr_AB + corr_BA) / 2
+            else:
+                corr_cross[u] = np.nan
         else:
             corr_cross[u] = np.nan
 
-        if np.std(dn_A[u, :]) > 0 and np.std(dn_B[u, :]) > 0:
-            corr_dn[u] = np.corrcoef(dn_A[u, :], dn_B[u, :])[0, 1]
+        if np.nanstd(dn_A[u, :]) > 0 and np.nanstd(dn_B[u, :]) > 0:
+            mask = ~(np.isnan(dn_A[u, :]) | np.isnan(dn_B[u, :]))
+            if np.sum(mask) > 1:
+                corr_dn[u] = np.corrcoef(dn_A[u, mask], dn_B[u, mask])[0, 1]
+            else:
+                corr_dn[u] = np.nan
         else:
             corr_dn[u] = np.nan
 
