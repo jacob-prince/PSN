@@ -850,10 +850,12 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # =========================================================================
     ax13 = fig.add_subplot(gs[2, 6:8])  # Row 2, columns 6-7
 
-    # Split trials
-    half_idx = ntrials // 2
-    data_A = data[:, :, :half_idx]
-    data_B = data[:, :, half_idx:]
+    # Split trials by odd/even indices (interleaved) to handle NaN patterns
+    # where later trials may have more NaNs due to variable repetition counts
+    odd_idx = np.arange(0, ntrials, 2)   # 0, 2, 4, ...
+    even_idx = np.arange(1, ntrials, 2)  # 1, 3, 5, ...
+    data_A = data[:, :, odd_idx]
+    data_B = data[:, :, even_idx]
 
     # Trial averages (use nanmean to handle NaNs)
     tavg_A = np.nanmean(data_A, axis=2) if has_nans else np.mean(data_A, axis=2)

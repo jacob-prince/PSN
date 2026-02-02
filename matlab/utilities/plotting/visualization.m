@@ -926,10 +926,12 @@ function fig = visualization(data, results, varargin)
     % =====================================================================
     ax13 = nexttile(t, [1 2]);  % Row 3, columns 7-8
 
-    % Split trials
-    half_idx = floor(ntrials / 2);
-    data_A = data(:, :, 1:half_idx);
-    data_B = data(:, :, half_idx+1:end);
+    % Split trials by odd/even indices (interleaved) to handle NaN patterns
+    % where later trials may have more NaNs due to variable repetition counts
+    odd_idx = 1:2:ntrials;   % 1, 3, 5, ... (MATLAB is 1-indexed)
+    even_idx = 2:2:ntrials;  % 2, 4, 6, ...
+    data_A = data(:, :, odd_idx);
+    data_B = data(:, :, even_idx);
 
     % Trial averages (use nanmean to handle NaNs)
     if has_nans
