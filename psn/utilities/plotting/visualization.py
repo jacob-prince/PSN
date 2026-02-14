@@ -78,7 +78,8 @@ def redblue(n=256):
     return cmap
 
 
-def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap=None):
+def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap=None,
+                            split_half_metric='correlation'):
     """
     Generate diagnostic figures for PSN denoising results (NEW API).
 
@@ -98,6 +99,10 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     cmap : colormap, optional
         Colormap for input data, denoised data, and residual plots.
         Default: cmapsign4()
+    split_half_metric : str, optional
+        Metric for the split-half reliability plot.
+        'correlation' (default) — Pearson r per unit.
+        'mse' — mean squared error per unit.
     """
     # Set default colormap for data plots
     if cmap is None:
@@ -208,7 +213,12 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         ntrials_avg = ntrials
 
     # Create title (order: Basis, Criterion, Method to match API)
-    if has_nans:
+    if basis_desc == 'wiener':
+        # Full-rank Wiener bypasses criterion/threshold — show simplified title
+        data_str = (f'{nunits} units × {nconds} conditions × {ntrials} max trials (avg {ntrials_avg:.1f})'
+                    if has_nans else f'{nunits} units × {nconds} conditions × {ntrials} trials')
+        title_text = f'Data: {data_str}  |  Full-Rank Matrix Wiener Filter'
+    elif has_nans:
         title_text = f'Data: {nunits} units × {nconds} conditions × {ntrials} max trials (avg {ntrials_avg:.1f})  |  Basis: {basis_desc}  |  Criterion: {criterion}  |  Method: {threshold_method}'
     else:
         title_text = f'Data: {nunits} units × {nconds} conditions × {ntrials} trials  |  Basis: {basis_desc}  |  Criterion: {criterion}  |  Method: {threshold_method}'
@@ -377,6 +387,9 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # Check if prediction ordering was used
     use_prediction_ordering = (basis_ordering == 'prediction')
 
+    # Flag for full-rank Wiener (changes how threshold lines are labeled)
+    is_fullrank_wiener = (basis_desc == 'wiener')
+
     if use_eigenvalues:
         # Show eigenvalues (SORTED - what was actually used for ranking)
         evals = results['basis_eigenvalues']  # Already sorted in descending order
@@ -385,32 +398,29 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
             x_vals = np.arange(len(evals)) + 1
         else:
             x_vals = np.arange(len(evals))  # 0-indexed
-        ax4.plot(x_vals, evals, linewidth=1.5, color=[0.5, 0, 0.5])
+        ax4.plot(x_vals, evals, linewidth=1.5, color=[0.5, 0, 0.5], label='$\\lambda_k(\\Sigma_S)$')
 
         # Add threshold indicators (only if threshold > 0)
         if 'best_threshold' in results:
             best_t = results['best_threshold']
             if np.isscalar(best_t) and best_t > 0:
-                ax4.axvline(x=best_t, color='r', linestyle='--', linewidth=2)
-                # Add rotated text annotation (top of text on right side of line)
-                ylims = ax4.get_ylim()
-                y_pos = ylims[0] + 0.7 * (ylims[1] - ylims[0])
-                ax4.text(best_t * 1.05 if use_logscale else best_t + 0.5, y_pos, f'Threshold = {int(best_t)}',
-                        color='r', fontsize=9, rotation=90,
-                        ha='left', va='top')
+                if is_fullrank_wiener:
+                    thresh_label = f'$\\mathrm{{tr}}(D) = {best_t:.1f}$'
+                else:
+                    thresh_label = f'Threshold $K = {int(best_t)}$'
+                ax4.axvline(x=best_t, color='r', linestyle='--', linewidth=2, label=thresh_label)
             elif hasattr(best_t, '__len__') and np.mean(best_t) > 0:
                 mean_thresh = np.mean(best_t)
-                ax4.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=2)
-                # Add rotated text annotation (top of text on right side of line)
-                ylims = ax4.get_ylim()
-                y_pos = ylims[0] + 0.7 * (ylims[1] - ylims[0])
-                ax4.text(mean_thresh * 1.05 if use_logscale else mean_thresh + 0.5, y_pos, f'Mean Threshold = {mean_thresh:.1f}',
-                        color='r', fontsize=9, rotation=90,
-                        ha='left', va='top')
+                thresh_label = f'Mean threshold $= {mean_thresh:.1f}$'
+                ax4.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=2, label=thresh_label)
 
-        ax4.set_xlabel('Dimension')
+        ax4.set_xlabel('Dimension $k$ (signal eigenbasis)')
         ax4.set_ylabel('Eigenvalue')
-        ax4.set_title('Basis Eigenvalues')
+        if is_fullrank_wiener:
+            ax4.set_title('$\\Sigma_S$ Eigenvalues (signal basis)')
+        else:
+            ax4.set_title('Basis Eigenvalues')
+        ax4.legend(loc='best', fontsize=7)
         ax4.grid(True)
         if use_logscale:
             ax4.set_xscale('log')
@@ -541,31 +551,27 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
             ax5_right.tick_params(axis='y', labelcolor='magenta')
 
             # Add threshold (on left axis, only if > 0)
+            line_thresh = None
             if 'best_threshold' in results:
                 best_t = results['best_threshold']
                 if np.isscalar(best_t) and best_t > 0:
-                    ax5_left.axvline(x=best_t, color='r', linestyle='--', linewidth=2)
-                    # Add rotated text annotation (top of text on right side of line)
-                    ylims = ax5_left.get_ylim()
-                    y_pos = ylims[0] + 0.7 * (ylims[1] - ylims[0])
-                    ax5_left.text(best_t * 1.05 if use_logscale else best_t + 0.5, y_pos, f'Threshold = {int(best_t)}',
-                            color='r', fontsize=9, rotation=90,
-                            ha='left', va='top')
+                    if is_fullrank_wiener:
+                        thresh_label = f'$\\mathrm{{tr}}(D) = {best_t:.1f}$  where $D = \\Sigma_S(\\Sigma_S + \\Sigma_N/t)^{{-1}}$'
+                    else:
+                        thresh_label = f'Threshold $K = {int(best_t)}$'
+                    line_thresh = ax5_left.axvline(x=best_t, color='r', linestyle='--', linewidth=2, label=thresh_label)
                 elif hasattr(best_t, '__len__') and np.mean(best_t) > 0:
                     mean_thresh = np.mean(best_t)
-                    ax5_left.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=2)
-                    # Add rotated text annotation (top of text on right side of line)
-                    ylims = ax5_left.get_ylim()
-                    y_pos = ylims[0] + 0.7 * (ylims[1] - ylims[0])
-                    ax5_left.text(mean_thresh * 1.05 if use_logscale else mean_thresh + 0.5, y_pos, f'Mean Threshold = {mean_thresh:.1f}',
-                            color='r', fontsize=9, rotation=90,
-                            ha='left', va='top')
+                    thresh_label = f'Mean threshold $= {mean_thresh:.1f}$'
+                    line_thresh = ax5_left.axvline(x=mean_thresh, color='r', linestyle='--', linewidth=2, label=thresh_label)
 
-            ax5_left.set_xlabel('Dimension')
+            ax5_left.set_xlabel('Dimension $k$ (signal eigenbasis)' if is_fullrank_wiener else 'Dimension')
             ax5_left.set_title('Signal and Noise Variance')
 
             # Combine legends
             lines = line1 + line2 + line2b + line3
+            if line_thresh is not None:
+                lines = lines + [line_thresh]
             labels = [l.get_label() for l in lines]
             ax5_left.legend(lines, labels, loc='best', fontsize=7)
             ax5_left.grid(True)
@@ -583,10 +589,79 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                 ha='center', va='center', transform=ax5.transAxes)
 
     # =========================================================================
-    # Plot 6: Objective function (row 2, col 1)
+    # Plot 6: Objective function (or Wiener weights if denoiser_type='wiener')
     # =========================================================================
     ax6 = fig.add_subplot(gs[1, 0:2])  # Row 1, columns 0-1
-    if 'objective' in results:
+
+    # Check if Wiener mode (includes all Wiener-family denoisers)
+    denoiser_type = opt.get('denoiser_type', 'truncation')
+    is_wiener = (denoiser_type == 'wiener')
+
+    if is_wiener and 'wiener_weights' in results:
+        # Wiener mode: show Wiener weights and cumulative objective on dual y-axes
+        wiener_weights = results['wiener_weights']
+        n_weights = len(wiener_weights)
+
+        # For log scale, use x=0.5 for dimension 0, then 1, 2, 3...
+        zero_placeholder = 0.5
+        if use_logscale:
+            x_dims = np.arange(1, n_weights + 1)
+        else:
+            x_dims = np.arange(n_weights)
+
+        # Left y-axis: Wiener weights (line plot)
+        line_weights, = ax6.plot(x_dims, wiener_weights, linewidth=2, color=[0.3, 0.5, 0.8],
+                                  label='Wiener weights (w_k)')
+
+        # Add a horizontal line at w=0.5 for reference
+        ax6.axhline(y=0.5, color='gray', linestyle=':', linewidth=1, alpha=0.5)
+
+        # Mark the effective dimensionality (sum of weights)
+        effective_dims = np.sum(wiener_weights)
+        ax6.axvline(x=effective_dims, color='red', linestyle='--', linewidth=2)
+
+        ax6.set_ylabel('Wiener Weight (w_k)', color=[0.3, 0.5, 0.8])
+        ax6.tick_params(axis='y', labelcolor=[0.3, 0.5, 0.8])
+        ax6.set_ylim([0, 1.05])
+
+        # Right y-axis: Cumulative objective (SignalVar - NoiseVar/ntrials)
+        ax6_right = ax6.twinx()
+        if 'objective' in results:
+            obj = results['objective']
+            # Objective has n+1 values (0 to n dims), align with weights
+            if use_logscale:
+                x_obj = np.concatenate([[zero_placeholder], np.arange(1, len(obj))])
+            else:
+                x_obj = np.arange(len(obj))
+            line_obj, = ax6_right.plot(x_obj, obj, linewidth=2, color=[0.3, 0.7, 0.3],
+                                        label='Cumsum SignalVar - NoiseVar/nt')
+            ax6_right.set_ylabel('Cumulative SignalVar - NoiseVar/ntrials', color=[0.3, 0.7, 0.3])
+            ax6_right.tick_params(axis='y', labelcolor=[0.3, 0.7, 0.3])
+
+            # Star at max of global cumsum objective
+            max_idx = np.argmax(obj)
+            h_star, = ax6_right.plot(x_obj[max_idx], obj[max_idx], '*', markersize=14,
+                                      color=[0.3, 0.7, 0.3], markeredgecolor='black',
+                                      markeredgewidth=0.8, zorder=10,
+                                      label=f'Max objective (K={max_idx})')
+
+            # Combined legend
+            lines = [line_weights, line_obj, h_star]
+            labels = [l.get_label() for l in lines]
+            ax6.legend(lines, labels, loc='best', fontsize=8)
+
+        ax6.set_xlabel('Dimension')
+        ax6.set_title(f'Wiener Weights & Objective (eff. dims = {effective_dims:.1f})')
+        ax6.grid(True, alpha=0.3)
+
+        # Use log scale for x-axis if many dimensions
+        if use_logscale:
+            ax6.set_xscale('log')
+            ax6.set_xlim([0.8, n_weights * 1.1])
+        else:
+            ax6.set_xlim([-0.5, n_weights - 0.5])
+
+    elif 'objective' in results and results['objective'] is not None:
         obj = results['objective']
 
         # For log scale, we need to handle x=0 specially
@@ -668,8 +743,14 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
             ax6_right.set_ylabel('Population Objective', color=[0.3, 0.7, 0.3])
             ax6_right.tick_params(axis='y', labelcolor=[0.3, 0.7, 0.3])
 
+            # Star at max of global cumsum objective
+            max_idx = np.argmax(obj)
+            h_star, = ax6_right.plot(x_obj[max_idx], obj[max_idx], '*', markersize=14,
+                                      color=[0.3, 0.7, 0.3], markeredgecolor='black',
+                                      markeredgewidth=0.8, zorder=10)
+
             # Add legend
-            ax6_left.legend([h_units, h_sum], ['Units', 'Population (=Global)'], loc='best')
+            ax6_left.legend([h_units, h_sum, h_star], ['Units', 'Population (=Global)', f'Max objective (K={max_idx})'], loc='best')
 
             ax6.set_title(f'Objective Function (unit-specific){subsample_suffix_units}')
         else:
@@ -692,17 +773,16 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                     else:
                         x_marker = k
                     ax6.plot(x_marker, obj[k], 'ro', markersize=8, linewidth=2)
+
+            # Star at max of global cumsum objective
+            max_idx = np.argmax(obj)
+            if use_logscale:
+                x_star = zero_placeholder if max_idx == 0 else max_idx
             else:
-                # Fallback to maximum if no threshold stored
-                max_idx = np.argmax(obj)
-                if use_logscale:
-                    if max_idx == 0:
-                        x_marker = zero_placeholder
-                    else:
-                        x_marker = max_idx
-                else:
-                    x_marker = max_idx
-                ax6.plot(x_marker, obj[max_idx], 'ro', markersize=8, linewidth=2)
+                x_star = max_idx
+            ax6.plot(x_star, obj[max_idx], '*', markersize=14,
+                     color=[0.3, 0.7, 0.3], markeredgecolor='black',
+                     markeredgewidth=0.8, zorder=10)
 
             ax6.set_title('Objective Function')
 
@@ -734,6 +814,75 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                     tick_labels.append(str(lt))
             ax6.set_xticks(tick_vals)
             ax6.set_xticklabels(tick_labels)
+    elif basis_desc == 'wiener' and 'signalvar' in results and 'noisevar' in results:
+        # Full-rank Wiener: show implied per-dimension weights and cumulative objective
+        signal_proj = results['signalvar']
+        noise_proj = results['noisevar']
+        n_dims = len(signal_proj)
+
+        # Compute implied Wiener weights: w_k = s_k / (s_k + n_k/t)
+        denom = signal_proj + noise_proj / ntrials_avg
+        wiener_weights = np.zeros_like(signal_proj)
+        valid = denom > 0
+        wiener_weights[valid] = signal_proj[valid] / denom[valid]
+        wiener_weights = np.clip(wiener_weights, 0.0, 1.0)
+
+        # Compute cumulative prediction objective: cumsum(s_k - n_k/t)
+        prediction_obj = signal_proj - noise_proj / ntrials_avg
+        cumsum_obj = np.concatenate([[0], np.cumsum(prediction_obj)])
+
+        if use_logscale:
+            x_dims = np.arange(1, n_dims + 1)
+            zero_placeholder = 0.5
+        else:
+            x_dims = np.arange(n_dims)
+
+        # Left y-axis: Wiener weights
+        line_weights, = ax6.plot(x_dims, wiener_weights, linewidth=2, color=[0.3, 0.5, 0.8],
+                                  label='Wiener weight $w_k = s_k / (s_k + n_k/t)$')
+        ax6.axhline(y=0.5, color='gray', linestyle=':', linewidth=1, alpha=0.5)
+        ax6.set_ylabel('Wiener Weight ($w_k$)', color=[0.3, 0.5, 0.8])
+        ax6.tick_params(axis='y', labelcolor=[0.3, 0.5, 0.8])
+        ax6.set_ylim([0, 1.05])
+
+        # Right y-axis: Cumulative prediction objective
+        ax6_right = ax6.twinx()
+        if use_logscale:
+            x_obj = np.concatenate([[zero_placeholder], np.arange(1, len(cumsum_obj))])
+        else:
+            x_obj = np.arange(len(cumsum_obj))
+        line_obj, = ax6_right.plot(x_obj, cumsum_obj, linewidth=2, color=[0.3, 0.7, 0.3],
+                                    label='Cumsum($s_k - n_k/t$)')
+        ax6_right.set_ylabel('Cumulative $s_k - n_k/t$', color=[0.3, 0.7, 0.3])
+        ax6_right.tick_params(axis='y', labelcolor=[0.3, 0.7, 0.3])
+
+        # Star at max of global cumsum objective
+        max_idx = np.argmax(cumsum_obj)
+        h_star, = ax6_right.plot(x_obj[max_idx], cumsum_obj[max_idx], '*', markersize=14,
+                                  color=[0.3, 0.7, 0.3], markeredgecolor='black',
+                                  markeredgewidth=0.8, zorder=10,
+                                  label=f'Max objective (K={max_idx})')
+
+        # Mark effective dimensionality
+        effective_dims = results.get('best_threshold', np.sum(wiener_weights))
+        ax6.axvline(x=effective_dims if not use_logscale else max(effective_dims, 0.5),
+                    color='red', linestyle='--', linewidth=2, label=f'Eff. dims = {effective_dims:.1f}')
+
+        # Legend
+        lines = [line_weights, line_obj, h_star]
+        labels = [l.get_label() for l in lines]
+        ax6.legend(lines, labels, loc='best', fontsize=8)
+
+        ax6.set_xlabel('Dimension (cSb eigenbasis)')
+        ax6.set_title(f'Implied Wiener Weights in Signal Basis (eff. dims = {effective_dims:.1f})')
+        ax6.grid(True, alpha=0.3)
+
+        if use_logscale:
+            ax6.set_xscale('log')
+            ax6.set_xlim([0.8, n_dims * 1.1])
+        else:
+            ax6.set_xlim([-0.5, n_dims - 0.5])
+
     else:
         ax6.text(0.5, 0.5, 'Objective\nNot Available',
                 ha='center', va='center', transform=ax6.transAxes)
@@ -786,12 +935,18 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # =========================================================================
     ax10 = fig.add_subplot(gs[2, 0:2])  # Row 2, columns 0-1
     denoiser = results['denoiser']
+    if basis_desc == 'wiener' and 'wiener_matrix' in results:
+        plot_matrix_10 = results['wiener_matrix']
+        title_10 = 'Wiener Filter Matrix'
+    else:
+        plot_matrix_10 = denoiser
+        title_10 = 'Denoiser Matrix'
     # Compute symmetric colorbar limits around 0 (use 99th percentile for better contrast)
-    data_absmax = np.nanpercentile(np.abs(denoiser), 99) if has_nans else np.percentile(np.abs(denoiser), 99)
+    data_absmax = np.nanpercentile(np.abs(plot_matrix_10), 99) if has_nans else np.percentile(np.abs(plot_matrix_10), 99)
     clim_10 = [-data_absmax, data_absmax] if data_absmax > 0 else [-1, 1]
-    im10 = ax10.imshow(denoiser, vmin=clim_10[0], vmax=clim_10[1], cmap=redblue(), aspect='equal', interpolation='none')
+    im10 = ax10.imshow(plot_matrix_10, vmin=clim_10[0], vmax=clim_10[1], cmap=redblue(), aspect='equal', interpolation='none')
     plt.colorbar(im10, ax=ax10)
-    ax10.set_title('Denoiser Matrix')
+    ax10.set_title(title_10)
     ax10.set_xlabel('Units')
     ax10.set_ylabel('Units')
 
@@ -864,59 +1019,70 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # Denoise both splits
     unit_means = results['unit_means']
 
-    # Handle symmetric vs non-symmetric denoiser
-    if threshold_method == 'global':
-        # Symmetric: standard multiplication
-        dn_A = denoiser @ (tavg_A - unit_means[:, np.newaxis]) + unit_means[:, np.newaxis]
-        dn_B = denoiser @ (tavg_B - unit_means[:, np.newaxis]) + unit_means[:, np.newaxis]
-    else:
-        # Non-symmetric: transpose multiplication
-        dn_A = denoiser.T @ (tavg_A - unit_means[:, np.newaxis]) + unit_means[:, np.newaxis]
-        dn_B = denoiser.T @ (tavg_B - unit_means[:, np.newaxis]) + unit_means[:, np.newaxis]
+    # Apply denoiser via denoiser.T @ x (correct for all modes:
+    # symmetric global denoisers have denoiser.T == denoiser,
+    # and non-symmetric denoisers like hybrid/unit/wiener need the transpose)
+    dn_A = denoiser.T @ (tavg_A - unit_means[:, np.newaxis]) + unit_means[:, np.newaxis]
+    dn_B = denoiser.T @ (tavg_B - unit_means[:, np.newaxis]) + unit_means[:, np.newaxis]
 
-    # Compute correlations for ALL units (for means)
-    corr_tavg = np.zeros(nunits)
-    corr_cross = np.zeros(nunits)
-    corr_dn = np.zeros(nunits)
+    # Compute per-unit split-half metric for ALL units
+    metric_tavg = np.zeros(nunits)
+    metric_cross = np.zeros(nunits)
+    metric_dn = np.zeros(nunits)
+
+    use_mse = (split_half_metric == 'mse')
 
     for u in range(nunits):
-        if np.nanstd(tavg_A[u, :]) > 0 and np.nanstd(tavg_B[u, :]) > 0:
-            # Use masked arrays to handle NaNs in corrcoef
+        if use_mse:
+            # MSE: mean squared error across conditions
             mask = ~(np.isnan(tavg_A[u, :]) | np.isnan(tavg_B[u, :]))
-            if np.sum(mask) > 1:
-                corr_tavg[u] = np.corrcoef(tavg_A[u, mask], tavg_B[u, mask])[0, 1]
-            else:
-                corr_tavg[u] = np.nan
-        else:
-            corr_tavg[u] = np.nan
+            metric_tavg[u] = np.mean((tavg_A[u, mask] - tavg_B[u, mask])**2) if np.sum(mask) > 0 else np.nan
 
-        # Cross-method (average both directions)
-        if (np.nanstd(tavg_A[u, :]) > 0 and np.nanstd(dn_B[u, :]) > 0 and
-            np.nanstd(dn_A[u, :]) > 0 and np.nanstd(tavg_B[u, :]) > 0):
             mask_AB = ~(np.isnan(tavg_A[u, :]) | np.isnan(dn_B[u, :]))
             mask_BA = ~(np.isnan(dn_A[u, :]) | np.isnan(tavg_B[u, :]))
-            if np.sum(mask_AB) > 1 and np.sum(mask_BA) > 1:
-                corr_AB = np.corrcoef(tavg_A[u, mask_AB], dn_B[u, mask_AB])[0, 1]
-                corr_BA = np.corrcoef(dn_A[u, mask_BA], tavg_B[u, mask_BA])[0, 1]
-                corr_cross[u] = (corr_AB + corr_BA) / 2
-            else:
-                corr_cross[u] = np.nan
-        else:
-            corr_cross[u] = np.nan
+            mse_AB = np.mean((tavg_A[u, mask_AB] - dn_B[u, mask_AB])**2) if np.sum(mask_AB) > 0 else np.nan
+            mse_BA = np.mean((dn_A[u, mask_BA] - tavg_B[u, mask_BA])**2) if np.sum(mask_BA) > 0 else np.nan
+            metric_cross[u] = (mse_AB + mse_BA) / 2 if not (np.isnan(mse_AB) or np.isnan(mse_BA)) else np.nan
 
-        if np.nanstd(dn_A[u, :]) > 0 and np.nanstd(dn_B[u, :]) > 0:
-            mask = ~(np.isnan(dn_A[u, :]) | np.isnan(dn_B[u, :]))
-            if np.sum(mask) > 1:
-                corr_dn[u] = np.corrcoef(dn_A[u, mask], dn_B[u, mask])[0, 1]
-            else:
-                corr_dn[u] = np.nan
+            mask_dn = ~(np.isnan(dn_A[u, :]) | np.isnan(dn_B[u, :]))
+            metric_dn[u] = np.mean((dn_A[u, mask_dn] - dn_B[u, mask_dn])**2) if np.sum(mask_dn) > 0 else np.nan
         else:
-            corr_dn[u] = np.nan
+            # Correlation (default)
+            if np.nanstd(tavg_A[u, :]) > 0 and np.nanstd(tavg_B[u, :]) > 0:
+                mask = ~(np.isnan(tavg_A[u, :]) | np.isnan(tavg_B[u, :]))
+                if np.sum(mask) > 1:
+                    metric_tavg[u] = np.corrcoef(tavg_A[u, mask], tavg_B[u, mask])[0, 1]
+                else:
+                    metric_tavg[u] = np.nan
+            else:
+                metric_tavg[u] = np.nan
 
-    # Subsampled correlations for plotting
-    corr_tavg_sub = corr_tavg[subsample_idx]
-    corr_cross_sub = corr_cross[subsample_idx]
-    corr_dn_sub = corr_dn[subsample_idx]
+            if (np.nanstd(tavg_A[u, :]) > 0 and np.nanstd(dn_B[u, :]) > 0 and
+                np.nanstd(dn_A[u, :]) > 0 and np.nanstd(tavg_B[u, :]) > 0):
+                mask_AB = ~(np.isnan(tavg_A[u, :]) | np.isnan(dn_B[u, :]))
+                mask_BA = ~(np.isnan(dn_A[u, :]) | np.isnan(tavg_B[u, :]))
+                if np.sum(mask_AB) > 1 and np.sum(mask_BA) > 1:
+                    corr_AB = np.corrcoef(tavg_A[u, mask_AB], dn_B[u, mask_AB])[0, 1]
+                    corr_BA = np.corrcoef(dn_A[u, mask_BA], tavg_B[u, mask_BA])[0, 1]
+                    metric_cross[u] = (corr_AB + corr_BA) / 2
+                else:
+                    metric_cross[u] = np.nan
+            else:
+                metric_cross[u] = np.nan
+
+            if np.nanstd(dn_A[u, :]) > 0 and np.nanstd(dn_B[u, :]) > 0:
+                mask = ~(np.isnan(dn_A[u, :]) | np.isnan(dn_B[u, :]))
+                if np.sum(mask) > 1:
+                    metric_dn[u] = np.corrcoef(dn_A[u, mask], dn_B[u, mask])[0, 1]
+                else:
+                    metric_dn[u] = np.nan
+            else:
+                metric_dn[u] = np.nan
+
+    # Subsampled metrics for plotting
+    metric_tavg_sub = metric_tavg[subsample_idx]
+    metric_cross_sub = metric_cross[subsample_idx]
+    metric_dn_sub = metric_dn[subsample_idx]
     n_sub = len(subsample_idx)
 
     # Plot
@@ -928,23 +1094,23 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
 
     # Connecting lines (subsampled)
     for ii in range(n_sub):
-        values = [corr_tavg_sub[ii], corr_cross_sub[ii], corr_dn_sub[ii]]
+        values = [metric_tavg_sub[ii], metric_cross_sub[ii], metric_dn_sub[ii]]
         if not np.any(np.isnan(values)):
             ax13.plot(x_positions + x_jitter_sub[ii], values,
                      color=[0.5, 0.5, 0.5], linewidth=0.3)
 
     # Scatter points (subsampled)
-    ax13.scatter(x_positions[0] + x_jitter_sub, corr_tavg_sub, s=15, color='blue',
+    ax13.scatter(x_positions[0] + x_jitter_sub, metric_tavg_sub, s=15, color='blue',
                 alpha=0.4, zorder=2)
-    ax13.scatter(x_positions[1] + x_jitter_sub, corr_cross_sub, s=15, color=[1, 0.84, 0],
+    ax13.scatter(x_positions[1] + x_jitter_sub, metric_cross_sub, s=15, color=[1, 0.84, 0],
                 alpha=0.4, zorder=2)
-    ax13.scatter(x_positions[2] + x_jitter_sub, corr_dn_sub, s=15, color=[0.5, 0.8, 0.3],
+    ax13.scatter(x_positions[2] + x_jitter_sub, metric_dn_sub, s=15, color=[0.5, 0.8, 0.3],
                 alpha=0.4, zorder=2)
 
     # Means (FULL population)
-    mean_tavg = np.nanmean(corr_tavg)
-    mean_cross = np.nanmean(corr_cross)
-    mean_dn = np.nanmean(corr_dn)
+    mean_tavg = np.nanmean(metric_tavg)
+    mean_cross = np.nanmean(metric_cross)
+    mean_dn = np.nanmean(metric_dn)
 
     ax13.scatter(x_positions[0], mean_tavg, s=100, color='blue',
                 edgecolors='white', linewidths=2, zorder=3)
@@ -954,7 +1120,10 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                 edgecolors='white', linewidths=2, zorder=3)
 
     # Labels (FULL population means)
-    y_offset = 0.08
+    all_vals_sub = np.concatenate([metric_tavg_sub, metric_cross_sub, metric_dn_sub])
+    valid_vals = all_vals_sub[~np.isnan(all_vals_sub)]
+    y_range_metric = (np.max(valid_vals) - np.min(valid_vals)) if len(valid_vals) > 0 else 1
+    y_offset = y_range_metric * 0.06
     ax13.text(x_positions[0], mean_tavg + y_offset, f'{mean_tavg:.3f}',
              ha='center', va='bottom', fontsize=10, fontweight='bold')
     ax13.text(x_positions[1], mean_cross + y_offset, f'{mean_cross:.3f}',
@@ -964,33 +1133,32 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
 
     ax13.set_xticks(x_positions)
     ax13.set_xticklabels(labels, rotation=0, fontsize=7)
-    ax13.set_ylabel('Pearson r')
+    ax13.set_ylabel('MSE' if use_mse else 'Pearson r')
 
+    metric_label = 'MSE' if use_mse else 'Reliability'
     if has_nans:
-        # Count actual valid trials per split
         valid_A = np.sum(~np.any(np.isnan(data_A), axis=0), axis=1)
         valid_B = np.sum(~np.any(np.isnan(data_B), axis=0), axis=1)
         avg_valid_A = np.mean(valid_A[valid_A > 0])
         avg_valid_B = np.mean(valid_B[valid_B > 0])
-        ax13.set_title(f'Split-Half Reliability\n({avg_valid_A:.1f} vs {avg_valid_B:.1f} avg trials){subsample_suffix_units}')
+        ax13.set_title(f'Split-Half {metric_label}\n({avg_valid_A:.1f} vs {avg_valid_B:.1f} avg trials){subsample_suffix_units}')
     else:
-        ax13.set_title(f'Split-Half Reliability\n({data_A.shape[2]} vs {data_B.shape[2]} trials){subsample_suffix_units}')
+        ax13.set_title(f'Split-Half {metric_label}\n({data_A.shape[2]} vs {data_B.shape[2]} trials){subsample_suffix_units}')
 
     ax13.grid(True)
     ax13.set_xlim([0.5, 3.5])
-    ax13.axhline(y=0, color='k', linewidth=1)
+    if not use_mse:
+        ax13.axhline(y=0, color='k', linewidth=1)
 
-    # Set y-limits (use subsampled data for visualization range)
-    all_corr = np.concatenate([corr_tavg_sub, corr_cross_sub, corr_dn_sub])
-    valid_corr = all_corr[~np.isnan(all_corr)]
-    if len(valid_corr) > 0:
-        y_min_c = np.min(valid_corr)
-        y_max_c = np.max(valid_corr)
+    # Set y-limits
+    if len(valid_vals) > 0:
+        y_min_c = np.min(valid_vals)
+        y_max_c = np.max(valid_vals)
         y_range_c = y_max_c - y_min_c
-        y_pad = max(0.1, y_range_c * 0.15)
+        y_pad = max(0.1 if not use_mse else y_range_c * 0.1, y_range_c * 0.15)
         ax13.set_ylim([y_min_c - y_pad, y_max_c + y_pad])
     else:
-        ax13.set_ylim([-1, 1])
+        ax13.set_ylim([-1, 1] if not use_mse else [0, 1])
 
     # =========================================================================
     # Plot 14-17: Signal/Noise Diagnostics (use subsampling for scatter, full pop for means)

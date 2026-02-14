@@ -31,12 +31,14 @@ def visualize_results(results, opt):
 
     figurepath = opt.get('figurepath', None)
     cmap = opt.get('cmap', None)
+    split_half_metric = opt.get('split_half_metric', 'correlation')
 
     try:
         from .visualization import plot_diagnostic_figures
 
         # Call visualization with figurepath and cmap - it will save before plt.show()
-        fig = plot_diagnostic_figures(results['input_data'], results, figurepath=figurepath, cmap=cmap)
+        fig = plot_diagnostic_figures(results['input_data'], results, figurepath=figurepath,
+                                      cmap=cmap, split_half_metric=split_half_metric)
 
         if figurepath is not None:
             if opt.get('wantverbose', True):

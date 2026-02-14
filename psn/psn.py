@@ -14,6 +14,9 @@ from .utilities.basis.construct_basis import construct_basis
 from .utilities.basis.project_covs import project_covs
 from .utilities.denoise.denoise_global import denoise_global
 from .utilities.denoise.denoise_unitwise import denoise_unitwise
+from .utilities.denoise.denoise_wiener import (
+    denoise_wiener_global, denoise_fullrank_wiener
+)
 from .utilities.diagnostics.compute_signal_noise_diagnostics import compute_signal_noise_diagnostics
 from .utilities.plotting.visualize_results import visualize_results
 from .utils import perform_gsn
@@ -69,6 +72,10 @@ def psn(*args):
         'signal'     -> use signal basis (eigenvectors of signal covariance, cSb)
         'difference' -> use "difference" basis (eigenvectors of cSb - cNb / ntrials_avg)
                         where ntrials_avg is the average number of trials (handles NaNs)
+        'wiener'     -> full-rank matrix Wiener filter: D = Σ_S @ (Σ_S + Σ_N/t)^{-1}.
+                        Bypasses basis construction, ordering, criterion, and thresholding.
+                        All other options (criterion, threshold_method, basis_ordering,
+                        denoiser_type) are ignored. Only ntrials_eval and gsn_args apply.
         B            -> user-supplied basis vectors B, size [nunits x D], D >= 1, with
                         orthonormal columns (B.T @ B = I).
         'noise'      -> [NOT RECOMMENDED] use noise basis (eigenvectors of noise covariance, cNb)
@@ -124,6 +131,17 @@ def psn(*args):
           each unit forms its own group (i.e., distinct threshold for each unit).
           For <threshold_method> = 'global', <unit_groups> is ignored (defaults to
           all zeros internally).
+
+      <denoiser_type> (optional) - string. Type of denoising operator:
+        'truncation'    -> hard truncation (keep first K dims, drop rest) [default]
+        'wiener'        -> Wiener shrinkage (apply continuous weights w_k to each dim)
+                           w_k = s_k / (s_k + n_k / t_eval)
+        Note: Wiener is only supported with threshold_method='global'.
+
+      <ntrials_eval> (optional) - scalar. Number of trials used to form the
+        trial average being denoised. This affects Wiener weights via noise/t_eval.
+        Default: None (uses ntrials_avg from the data).
+        Set this if denoising held-out data with different trial counts.
 
       <gsn_args> (optional) - dict of options passed directly to the GSN routine
           (perform_gsn). Typical fields might include:
@@ -224,6 +242,11 @@ def psn(*args):
       results['unit_noise_vars']  - list of noise variances per unit
       results['unit_objectives']  - list of objective curves per unit
 
+    Special outputs for Wiener denoiser (denoiser_type='wiener'):
+
+      results['wiener_weights'] - [dims]. Shrinkage weight applied to each dimension.
+                            w_k = s_k / (s_k + n_k / t_eval) in [0, 1].
+
     Visualization outputs (original order before global ranking):
 
       results['basis_viz']       - [nunits x dims]. Basis vectors in original order
@@ -297,6 +320,31 @@ def psn(*args):
     gsn_result = perform_gsn(data, gsn_opt)
     cSb = gsn_result['cSb']  # signal covariance (symmetric)
     cNb = gsn_result['cNb']  # noise covariance (symmetric)
+
+    # =========================================================================
+    # FULL-RANK WIENER SHORT-CIRCUIT (basis='wiener')
+    # =========================================================================
+    # If basis='wiener', skip steps 4-7 and apply the full-rank matrix Wiener
+    # filter directly: D = Σ_S @ (Σ_S + Σ_N/t)^{-1}. This is the Bayes-optimal
+    # linear estimator when the signal and noise covariances are known.
+
+    if isinstance(opt['basis'], str) and opt['basis'] == 'wiener':
+        if opt['wantverbose']:
+            print('PSN: Applying full-rank matrix Wiener filter...')
+
+        results = denoise_fullrank_wiener(
+            cSb, cNb, data, trial_avg, unit_means, ntrials_avg, nunits, gsn_result, opt
+        )
+
+        if opt['wantfig']:
+            if opt['wantverbose']:
+                print('PSN: Generating diagnostic figures...')
+            visualize_results(results, opt)
+
+        if opt['wantverbose']:
+            print(f"PSN: Complete! Full-rank Wiener filter ({results['best_threshold']:.1f} effective dimensions).")
+
+        return results
 
     # =========================================================================
     # STEP 4: Construct the denoising basis
@@ -387,8 +435,23 @@ def psn(*args):
     if opt['wantverbose']:
         print(f"PSN: Selecting thresholds (method: {opt['threshold_method']}, criterion: {opt['criterion']})...")
 
-    if opt['threshold_method'] == 'global':
-        # GLOBAL (POPULATION) MODE
+    # Initialize wiener_weights (only populated for Wiener denoiser)
+    wiener_weights = None
+
+    if opt['denoiser_type'] == 'wiener':
+        # WIENER SHRINKAGE MODE (threshold_method forced to 'global' in set_default_options)
+        if opt['wantverbose']:
+            print('PSN: Using Wiener shrinkage denoiser...')
+
+        denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_curves, \
+        unit_signal_vars, unit_noise_vars, wiener_weights = \
+            denoise_wiener_global(basis, signal_proj, noise_proj, basis_eigenvalues,
+                                  ntrials_avg, opt)
+
+        unit_orderings = np.tile(np.arange(basis.shape[1]), (nunits, 1))
+
+    elif opt['threshold_method'] == 'global':
+        # GLOBAL (POPULATION) MODE with hard truncation
         denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_curves, \
         unit_signal_vars, unit_noise_vars = \
             denoise_global(basis, signal_proj, noise_proj, basis_eigenvalues,
@@ -429,8 +492,22 @@ def psn(*args):
     # STEP 10: Compute signal and noise variances before/after denoising
     # =========================================================================
 
-    svnv_before, svnv_after = compute_signal_noise_diagnostics(
-        opt['threshold_method'], unit_signal_vars, unit_noise_vars, best_threshold, nunits, ntrials_avg)
+    if opt['denoiser_type'] == 'wiener':
+        # For Wiener-family denoisers, compute weighted signal/noise variances
+        # using the Wiener weights instead of hard thresholding
+        svnv_before = np.zeros((nunits, 2))
+        svnv_after = np.zeros((nunits, 2))
+        for u in range(nunits):
+            sig_u = unit_signal_vars[u]
+            noi_u = unit_noise_vars[u]
+            # Before: sum of all variances
+            svnv_before[u, :] = [np.sum(sig_u), np.sum(noi_u) / ntrials_avg]
+            # After: weighted sum using Wiener weights (w_k^2 for variance)
+            w_sq = wiener_weights ** 2
+            svnv_after[u, :] = [np.sum(w_sq * sig_u), np.sum(w_sq * noi_u) / ntrials_avg]
+    else:
+        svnv_before, svnv_after = compute_signal_noise_diagnostics(
+            opt['threshold_method'], unit_signal_vars, unit_noise_vars, best_threshold, nunits, ntrials_avg)
 
     # =========================================================================
     # STEP 11: Package results
@@ -474,8 +551,8 @@ def psn(*args):
     # Input data
     results['input_data'] = data
 
-    # Special outputs for global thresholding
-    if opt['threshold_method'] == 'global':
+    # Special outputs for global thresholding (not applicable for Wiener-family denoisers)
+    if opt['threshold_method'] == 'global' and opt['denoiser_type'] != 'wiener':
         if best_threshold > 0:
             results['signalsubspace'] = basis[:, :best_threshold]
             # Project data onto signal subspace (dimensionality reduction)
@@ -493,6 +570,10 @@ def psn(*args):
         results['unit_noise_vars'] = unit_noise_vars
         results['unit_objectives'] = unit_cumsum_curves
 
+    # Wiener denoiser outputs
+    if wiener_weights is not None:
+        results['wiener_weights'] = wiener_weights
+
     # Store options for visualization
     results['opt_used'] = opt
 
@@ -506,7 +587,9 @@ def psn(*args):
         visualize_results(results, opt)
 
     if opt['wantverbose']:
-        if opt['threshold_method'] == 'global':
+        if opt['denoiser_type'] == 'wiener':
+            print(f"PSN: Complete! Wiener denoiser with {best_threshold:.1f} effective dimensions.")
+        elif opt['threshold_method'] == 'global':
             print(f"PSN: Complete! Retained {best_threshold} dimensions.")
         else:
             print(f"PSN: Complete! Retained {np.mean(best_threshold):.1f} dimensions on average (range: {np.min(best_threshold)}-{np.max(best_threshold)}).")

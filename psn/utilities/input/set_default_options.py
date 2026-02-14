@@ -31,6 +31,8 @@ def set_default_options(opt, nunits):
       variance_threshold = 0.99
       allowable_thresholds = None
       unit_groups        = np.arange(nunits) for hybrid/unit modes, zeros for global
+      denoiser_type      = 'truncation' ('truncation' or 'wiener')
+      ntrials_eval       = None (defaults to ntrials_avg)
       gsn_args           = {}
       wantfig            = True
       wantverbose        = True
@@ -80,6 +82,15 @@ def set_default_options(opt, nunits):
     if 'cmap' not in opt:
         opt['cmap'] = None  # Will use default cmapsign4 in visualization
 
+    if 'split_half_metric' not in opt:
+        opt['split_half_metric'] = 'correlation'  # 'correlation' or 'mse'
+
+    if 'denoiser_type' not in opt:
+        opt['denoiser_type'] = 'truncation'  # 'truncation' (default) or 'wiener'
+
+    if 'ntrials_eval' not in opt:
+        opt['ntrials_eval'] = None  # defaults to ntrials_avg; can differ for held-out data
+
     # Auto-detect: if allowable_thresholds is a single value, force threshold_method to 'global'
     if opt['allowable_thresholds'] is not None:
         allowable_arr = np.asarray(opt['allowable_thresholds'])
@@ -90,6 +101,30 @@ def set_default_options(opt, nunits):
                 opt['threshold_method'] = 'global'
                 # Update unit_groups to match global mode
                 opt['unit_groups'] = np.zeros(nunits, dtype=int)
+
+    # Auto-detect: if basis='wiener', warn about ignored options
+    if isinstance(opt['basis'], str) and opt['basis'] == 'wiener':
+        ignored = []
+        if opt['criterion'] != 'prediction':
+            ignored.append(f"criterion='{opt['criterion']}'")
+        if opt['threshold_method'] != 'hybrid':
+            ignored.append(f"threshold_method='{opt['threshold_method']}'")
+        if opt['basis_ordering'] != 'eigenvalues':
+            ignored.append(f"basis_ordering='{opt['basis_ordering']}'")
+        if opt['denoiser_type'] != 'truncation':
+            ignored.append(f"denoiser_type='{opt['denoiser_type']}'")
+        if opt['allowable_thresholds'] is not None:
+            ignored.append('allowable_thresholds')
+        if ignored and opt['wantverbose']:
+            print(f"PSN: basis='wiener' bypasses basis/criterion/threshold pipeline; ignoring {', '.join(ignored)}")
+
+    # Auto-detect: if denoiser_type is 'wiener', force threshold_method to 'global'
+    if opt['denoiser_type'] == 'wiener' and opt['threshold_method'] != 'global':
+        if opt['wantverbose']:
+            print("PSN: denoiser_type='wiener' requires threshold_method='global', setting automatically")
+        opt['threshold_method'] = 'global'
+        # Update unit_groups to match global mode
+        opt['unit_groups'] = np.zeros(nunits, dtype=int)
 
     _validate_options(opt, nunits)
     return opt

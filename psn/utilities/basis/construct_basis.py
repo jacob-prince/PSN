@@ -105,6 +105,10 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
         if basis.shape[1] < 1 or basis.shape[1] > nunits:
             raise ValueError(f'Custom basis must have between 1 and {nunits} columns')
 
+        # Ensure basis is real (in case user provides complex-valued basis from eigendecomposition)
+        if np.iscomplexobj(basis):
+            basis = np.real(basis)
+
         basis = _normalize_orthonormalize_basis(basis)
         basis_eigenvalues = None
 

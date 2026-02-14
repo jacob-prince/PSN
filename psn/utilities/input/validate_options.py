@@ -34,7 +34,7 @@ def validate_options(opt, nunits):
     - Compatibility: 'variance_eigenvalues' requires named basis (not custom/random)
       and only works with 'global' threshold_method
     """
-    valid_basis_strings = ['signal', 'difference', 'noise', 'pca', 'random']
+    valid_basis_strings = ['signal', 'difference', 'noise', 'pca', 'random', 'wiener']
     if isinstance(opt['basis'], str):
         if opt['basis'] not in valid_basis_strings:
             raise ValueError(f"basis must be one of: {', '.join(valid_basis_strings)}, or a matrix")
