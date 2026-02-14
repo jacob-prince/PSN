@@ -215,7 +215,8 @@ def plot_data_diagnostic(data, ground_truth, params):
     # Plot 9: Alignment visualization (dot products between signal and noise eigenvectors)
     ax9 = fig.add_subplot(gs[2, 2])
     # Calculate full alignment matrix for all dimensions
-    full_alignment_matrix = U_signal.T @ U_noise
+    # Use absolute values because eigenvectors are defined up to sign
+    full_alignment_matrix = np.abs(U_signal.T @ U_noise)
 
     # Determine how many dimensions to display in the visualization
     # If nvox is large, subsample the matrix but ensure we include the aligned dimensions
@@ -252,8 +253,8 @@ def plot_data_diagnostic(data, ground_truth, params):
 
     # Create the visualization
     im9 = ax9.imshow(alignment_matrix, aspect='equal', cmap='viridis', vmin=0, vmax=1)
-    plt.colorbar(im9, ax=ax9, label='Dot product')
-    ax9.set_title('Eigenvector Alignment (dot products)')
+    plt.colorbar(im9, ax=ax9, label='|Dot product|')
+    ax9.set_title('Eigenvector Alignment (|dot products|)')
     ax9.set_xlabel('Noise dimension')
     ax9.set_ylabel('Signal dimension')
 

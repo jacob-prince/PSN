@@ -76,12 +76,23 @@ def adjust_alignment_gradient_descent(U_signal, U_noise_init, alpha, k,
             if verbose:
                 print(f"\t\tOptimization complete. Step {step}/{num_steps}: align_err={max_align_err:.2e}, orth_err={orth_err:.2e}")
             # Ensure perfect orthonormality before returning
-            U, _ = np.linalg.qr(U)
+            U = _qr_preserve_alignment(U, U_signal, k)
             return U
 
     if verbose:
         print(f"Optimization did not converge. Step {step}/{num_steps}: align_err={max_align_err:.2e}, orth_err={orth_err:.2e}")
 
     # Ensure orthonormality even if didn't fully converge
-    U, _ = np.linalg.qr(U)
+    U = _qr_preserve_alignment(U, U_signal, k)
     return U
+
+
+def _qr_preserve_alignment(U, U_signal, k):
+    """QR orthonormalization that preserves alignment signs for the first k columns."""
+    Q, _ = np.linalg.qr(U)
+    # QR can flip column signs — fix by ensuring dot(Q[:,i], U_signal[:,i])
+    # has the same sign as dot(U[:,i], U_signal[:,i]) for the aligned columns
+    for i in range(k):
+        if np.dot(Q[:, i], U_signal[:, i]) < 0:
+            Q[:, i] = -Q[:, i]
+    return Q
