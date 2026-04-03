@@ -110,8 +110,20 @@ def psn(*args):
         (Note that when <basis> is B or 'random', eigenvalues are not available, so we
          necessarily fall back to 'signalvariance'.)
 
+      <alpha> (optional) - scalar in [0,1] or None. Interpolation parameter
+        between the prediction peak and a variance retention target:
+          alpha=0   -> prediction peak (same as criterion='prediction')
+          alpha=1   -> variance retention (same as criterion='variance')
+          alpha=0.3 -> retain an additional 30% of the signal variance gap
+                       between the prediction peak and the variance target
+        When set, overrides the criterion setting. Uses variance_threshold
+        to define the variance target. Does not apply to basis='wiener'
+        or denoiser_type='wiener'.
+        Default: None (disabled; existing criterion logic used).
+
       <variance_threshold> (optional) - scalar in [0,1]. Fraction used
-        when <criterion> is 'variance' or 'variance_eigenvalues'.
+        when <criterion> is 'variance' or 'variance_eigenvalues', or as
+        the variance target when <alpha> is set.
         Default: 0.99.
 
       <allowable_thresholds> (optional) is an array of thresholds that are acceptable.
@@ -468,6 +480,24 @@ def psn(*args):
             denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues,
                            ntrials_avg, opt, unitwise_threshold_only)
 
+    # Compute alpha_info for visualization (if alpha is active)
+    alpha_info = None
+    if opt.get('alpha') is not None:
+        diff = signalvar - noisevar / ntrials_avg
+        pred_obj = np.concatenate([[0], np.cumsum(diff)])
+        k_pred = int(np.argmax(pred_obj))
+        sig_cs = np.concatenate([[0], np.cumsum(signalvar)])
+        total_signal = sig_cs[-1]
+        vt = np.clip(opt['variance_threshold'], 0, 1)
+        S_var = vt * total_signal
+        if total_signal <= 0:
+            k_var = 0
+        else:
+            idx = np.where(sig_cs >= S_var)[0]
+            k_var = int(idx[0]) if len(idx) > 0 else int(basis.shape[1])
+            k_var = min(k_var, int(basis.shape[1]))
+        alpha_info = {'k_pred': k_pred, 'k_var': k_var, 'alpha': opt['alpha']}
+
     # =========================================================================
     # STEP 8: Apply denoising to data
     # =========================================================================
@@ -573,6 +603,10 @@ def psn(*args):
     # Wiener denoiser outputs
     if wiener_weights is not None:
         results['wiener_weights'] = wiener_weights
+
+    # Alpha info for visualization
+    if alpha_info is not None:
+        results['alpha_info'] = alpha_info
 
     # Store options for visualization
     results['opt_used'] = opt

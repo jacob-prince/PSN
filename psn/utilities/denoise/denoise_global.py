@@ -80,7 +80,7 @@ def denoise_global(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, o
         else:
             # Normal optimization with constraint
             # Threshold selection
-            if use_diff_basis and use_prediction and basis_eigenvalues is not None:
+            if use_diff_basis and use_prediction and basis_eigenvalues is not None and opt.get('alpha') is None:
                 # FAST PATH: difference basis eigenvalues ARE the net benefit
                 objective = np.concatenate([[0], np.cumsum(basis_eigenvalues)])
                 k = np.argmax(objective)
@@ -93,7 +93,7 @@ def denoise_global(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, o
             k = constrain_to_allowable(k, opt['allowable_thresholds'])
     else:
         # No constraint: normal optimization
-        if use_diff_basis and use_prediction and basis_eigenvalues is not None:
+        if use_diff_basis and use_prediction and basis_eigenvalues is not None and opt.get('alpha') is None:
             # FAST PATH: difference basis eigenvalues ARE the net benefit
             objective = np.concatenate([[0], np.cumsum(basis_eigenvalues)])
             k = np.argmax(objective)

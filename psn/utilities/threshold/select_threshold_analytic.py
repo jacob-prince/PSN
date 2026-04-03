@@ -58,6 +58,31 @@ def select_threshold_analytic(signal, noise, basis_eigenvalues, ntrials, opt):
     scaled_noise = noise / ntrials
     diff = signal - scaled_noise
 
+    # Alpha interpolation: blend between prediction peak and variance target
+    if opt.get('alpha') is not None:
+        alpha = opt['alpha']
+        # 1. Compute prediction peak
+        pred_objective = np.concatenate([[0], np.cumsum(diff)])
+        k_pred = np.argmax(pred_objective)
+        # 2. Compute signal cumsum (prepend 0 for index alignment)
+        sig_cumsum = np.concatenate([[0], np.cumsum(signal)])
+        S_pred = sig_cumsum[k_pred]
+        total_signal = sig_cumsum[-1]
+        vt = np.clip(opt['variance_threshold'], 0, 1)
+        S_var = vt * total_signal
+        # 3. Interpolate
+        target = S_pred + alpha * max(0, S_var - S_pred)
+        # 4. Find threshold
+        if total_signal <= 0:
+            k = 0
+        else:
+            idx = np.where(sig_cumsum >= target)[0]
+            k = idx[0] if len(idx) > 0 else ndims
+            k = max(k, k_pred)  # never go below prediction peak
+            k = min(k, ndims)
+        objective = pred_objective  # return prediction curve for viz
+        return k, objective
+
     if opt['criterion'] == 'prediction':
         # Maximize expected out-of-sample prediction quality
         objective = np.concatenate([[0], np.cumsum(diff)])

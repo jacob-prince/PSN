@@ -89,7 +89,28 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
         group_mask = (opt['unit_groups'] == g)
         group_indices = np.where(group_mask)[0]
 
-        if opt['criterion'] == 'prediction':
+        if opt.get('alpha') is not None:
+            # Alpha interpolation: blend prediction peak and variance target
+            alpha_val = opt['alpha']
+            vt = np.clip(opt['variance_threshold'], 0, 1)
+            # Average signal vars and prediction curves across group
+            avg_signal = np.mean(np.column_stack([unit_signal_vars[i] for i in group_indices]), axis=1)
+            avg_curve = np.mean(np.column_stack([unit_cumsum_curves[i] for i in group_indices]), axis=1)
+            k_pred = np.argmax(avg_curve)
+            # Signal cumsum
+            sig_cs = np.concatenate([[0], np.cumsum(avg_signal)])
+            S_pred = sig_cs[k_pred]
+            total = sig_cs[-1]
+            S_var = vt * total
+            target = S_pred + alpha_val * max(0, S_var - S_pred)
+            if total <= 0:
+                k_group = 0
+            else:
+                idx = np.where(sig_cs >= target)[0]
+                k_group = idx[0] if len(idx) > 0 else ndims
+                k_group = max(k_group, k_pred)
+                k_group = min(k_group, ndims)
+        elif opt['criterion'] == 'prediction':
             # Average objective curves across units in this group
             # All curves should have the same length (ndims+1)
             avg_curve = np.mean(np.column_stack([unit_cumsum_curves[i] for i in group_indices]), axis=1)

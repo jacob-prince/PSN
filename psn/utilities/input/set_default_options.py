@@ -31,6 +31,7 @@ def set_default_options(opt, nunits):
       variance_threshold = 0.99
       allowable_thresholds = None
       unit_groups        = np.arange(nunits) for hybrid/unit modes, zeros for global
+      alpha              = None (disabled; interpolates between prediction and variance)
       denoiser_type      = 'truncation' ('truncation' or 'wiener')
       ntrials_eval       = None (defaults to ntrials_avg)
       gsn_args           = {}
@@ -84,6 +85,9 @@ def set_default_options(opt, nunits):
 
     if 'split_half_metric' not in opt:
         opt['split_half_metric'] = 'correlation'  # 'correlation' or 'mse'
+
+    if 'alpha' not in opt:
+        opt['alpha'] = None
 
     if 'denoiser_type' not in opt:
         opt['denoiser_type'] = 'truncation'  # 'truncation' (default) or 'wiener'

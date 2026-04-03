@@ -219,9 +219,15 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                     if has_nans else f'{nunits} units × {nconds} conditions × {ntrials} trials')
         title_text = f'Data: {data_str}  |  Full-Rank Matrix Wiener Filter'
     elif has_nans:
-        title_text = f'Data: {nunits} units × {nconds} conditions × {ntrials} max trials (avg {ntrials_avg:.1f})  |  Basis: {basis_desc}  |  Criterion: {criterion}  |  Method: {threshold_method}'
+        if opt.get('alpha') is not None:
+            title_text = f'Data: {nunits} units × {nconds} conditions × {ntrials} max trials (avg {ntrials_avg:.1f})  |  Basis: {basis_desc}  |  Alpha: {opt["alpha"]}  |  Method: {threshold_method}'
+        else:
+            title_text = f'Data: {nunits} units × {nconds} conditions × {ntrials} max trials (avg {ntrials_avg:.1f})  |  Basis: {basis_desc}  |  Criterion: {criterion}  |  Method: {threshold_method}'
     else:
-        title_text = f'Data: {nunits} units × {nconds} conditions × {ntrials} trials  |  Basis: {basis_desc}  |  Criterion: {criterion}  |  Method: {threshold_method}'
+        if opt.get('alpha') is not None:
+            title_text = f'Data: {nunits} units × {nconds} conditions × {ntrials} trials  |  Basis: {basis_desc}  |  Alpha: {opt["alpha"]}  |  Method: {threshold_method}'
+        else:
+            title_text = f'Data: {nunits} units × {nconds} conditions × {ntrials} trials  |  Basis: {basis_desc}  |  Criterion: {criterion}  |  Method: {threshold_method}'
 
     # Add threshold info if conservative mode or variance criterion is used
     threshold_info = []
@@ -234,7 +240,10 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                 threshold_info.append(f"Allowable thresholds: {list(allowable)}")
         else:
             threshold_info.append(f"Forced threshold: {int(allowable)}")
-    if criterion in ['variance', 'variance_eigenvalues']:
+    if opt.get('alpha') is not None:
+        vt = opt.get('variance_threshold', 0.99)
+        threshold_info.append(f"Variance target: {vt}")
+    elif criterion in ['variance', 'variance_eigenvalues']:
         vt = opt.get('variance_threshold', 0.99)
         threshold_info.append(f"Variance threshold: {vt}")
 
@@ -743,16 +752,42 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
             ax6_right.set_ylabel('Population Objective', color=[0.3, 0.7, 0.3])
             ax6_right.tick_params(axis='y', labelcolor=[0.3, 0.7, 0.3])
 
-            # Star at max of global cumsum objective
+            # Star at max of global cumsum objective (= prediction peak)
             max_idx = np.argmax(obj)
             h_star, = ax6_right.plot(x_obj[max_idx], obj[max_idx], '*', markersize=14,
                                       color=[0.3, 0.7, 0.3], markeredgecolor='black',
                                       markeredgewidth=0.8, zorder=10)
 
-            # Add legend
-            ax6_left.legend([h_units, h_sum, h_star], ['Units', 'Population (=Global)', f'Max objective (K={max_idx})'], loc='best')
+            alpha_info = results.get('alpha_info')
+            legend_handles = [h_units, h_sum, h_star]
+            legend_labels = ['Units', 'Population (=Global)', f'Prediction peak (K={max_idx})']
 
-            ax6.set_title(f'Objective Function (unit-specific){subsample_suffix_units}')
+            # Alpha-specific: add variance target diamond on right axis
+            if alpha_info is not None:
+                k_var = alpha_info['k_var']
+                if k_var >= 0 and k_var < len(obj):
+                    if use_logscale:
+                        x_var = zero_placeholder if k_var == 0 else k_var
+                    else:
+                        x_var = k_var
+                    h_diamond, = ax6_right.plot(x_var, obj[k_var], 'D', markersize=8,
+                                                color=[0.2, 0.4, 0.9], markeredgecolor='black',
+                                                markeredgewidth=0.8, zorder=10)
+                    legend_handles.append(h_diamond)
+                    legend_labels.append(f'Variance target (K={k_var})')
+                # Shaded interpolation range
+                k_pred = alpha_info['k_pred']
+                x_lo = (zero_placeholder if k_pred == 0 else k_pred) if use_logscale else k_pred
+                x_hi = (zero_placeholder if k_var == 0 else k_var) if use_logscale else k_var
+                if x_lo != x_hi:
+                    ax6.axvspan(x_lo, x_hi, alpha=0.08, color='blue')
+
+            ax6_left.legend(legend_handles, legend_labels, loc='best', fontsize=7)
+
+            if alpha_info is not None:
+                ax6.set_title(f'Objective Function (alpha={alpha_info["alpha"]}){subsample_suffix_units}')
+            else:
+                ax6.set_title(f'Objective Function (unit-specific){subsample_suffix_units}')
         else:
             # Global mode: single curve
             if use_logscale:
@@ -761,30 +796,62 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                 x_obj = np.arange(len(obj))
             ax6.plot(x_obj, obj, linewidth=1.5, color=[0.3, 0.7, 0.3])
 
+            alpha_info = results.get('alpha_info')
+
             # Mark chosen threshold (not maximum - threshold may be constrained)
             if 'best_threshold' in results and np.isscalar(results['best_threshold']):
                 k = int(results['best_threshold'])
                 if k >= 0 and k < len(obj):
                     if use_logscale:
-                        if k == 0:
-                            x_marker = zero_placeholder
-                        else:
-                            x_marker = k
+                        x_marker = zero_placeholder if k == 0 else k
                     else:
                         x_marker = k
-                    ax6.plot(x_marker, obj[k], 'ro', markersize=8, linewidth=2)
+                    if alpha_info is not None:
+                        ax6.plot(x_marker, obj[k], 'ro', markersize=8, linewidth=2,
+                                 label=f'Alpha threshold (K={k})')
+                    else:
+                        ax6.plot(x_marker, obj[k], 'ro', markersize=8, linewidth=2)
 
-            # Star at max of global cumsum objective
+            # Star at max of global cumsum objective (= prediction peak)
             max_idx = np.argmax(obj)
             if use_logscale:
                 x_star = zero_placeholder if max_idx == 0 else max_idx
             else:
                 x_star = max_idx
-            ax6.plot(x_star, obj[max_idx], '*', markersize=14,
-                     color=[0.3, 0.7, 0.3], markeredgecolor='black',
-                     markeredgewidth=0.8, zorder=10)
+            if alpha_info is not None:
+                ax6.plot(x_star, obj[max_idx], '*', markersize=14,
+                         color=[0.3, 0.7, 0.3], markeredgecolor='black',
+                         markeredgewidth=0.8, zorder=10,
+                         label=f'Prediction peak (K={max_idx})')
+            else:
+                ax6.plot(x_star, obj[max_idx], '*', markersize=14,
+                         color=[0.3, 0.7, 0.3], markeredgecolor='black',
+                         markeredgewidth=0.8, zorder=10)
 
-            ax6.set_title('Objective Function')
+            # Alpha-specific markers: variance target diamond + shaded range
+            if alpha_info is not None:
+                k_var = alpha_info['k_var']
+                if k_var >= 0 and k_var < len(obj):
+                    if use_logscale:
+                        x_var = zero_placeholder if k_var == 0 else k_var
+                    else:
+                        x_var = k_var
+                    ax6.plot(x_var, obj[k_var], 'D', markersize=8,
+                             color=[0.2, 0.4, 0.9], markeredgecolor='black',
+                             markeredgewidth=0.8, zorder=10,
+                             label=f'Variance target (K={k_var})')
+                # Shaded interpolation range
+                k_pred = alpha_info['k_pred']
+                x_lo = (zero_placeholder if k_pred == 0 else k_pred) if use_logscale else k_pred
+                x_hi = (zero_placeholder if k_var == 0 else k_var) if use_logscale else k_var
+                if x_lo != x_hi:
+                    ax6.axvspan(x_lo, x_hi, alpha=0.08, color='blue')
+                ax6.legend(loc='best', fontsize=7)
+
+            if alpha_info is not None:
+                ax6.set_title(f'Objective Function (alpha={alpha_info["alpha"]})')
+            else:
+                ax6.set_title('Objective Function')
 
         ax6.set_xlabel('Number of Dimensions')
 
