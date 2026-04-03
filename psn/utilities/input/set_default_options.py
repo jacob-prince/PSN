@@ -34,6 +34,7 @@ def set_default_options(opt, nunits):
       alpha              = None (disabled; interpolates between prediction and variance)
       denoiser_type      = 'truncation' ('truncation' or 'wiener')
       ntrials_eval       = None (defaults to ntrials_avg)
+      gsn_result         = None (pass previous results['gsn_result'] to skip GSN)
       gsn_args           = {}
       wantfig            = True
       wantverbose        = True
@@ -67,6 +68,9 @@ def set_default_options(opt, nunits):
             opt['unit_groups'] = np.zeros(nunits, dtype=int)
         else:
             opt['unit_groups'] = np.arange(nunits)
+
+    if 'gsn_result' not in opt:
+        opt['gsn_result'] = None
 
     if 'gsn_args' not in opt or opt['gsn_args'] is None or not isinstance(opt['gsn_args'], dict):
         opt['gsn_args'] = {}

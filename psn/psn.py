@@ -155,6 +155,13 @@ def psn(*args):
         Default: None (uses ntrials_avg from the data).
         Set this if denoising held-out data with different trial counts.
 
+      <gsn_result> (optional) - dict with keys 'cSb' and 'cNb' from a previous
+        PSN call (i.e. results['gsn_result']). When provided, PSN skips the
+        expensive GSN estimation and uses these covariances directly. This is
+        useful for sweeping over hyperparameters (alpha, basis, criterion, etc.)
+        on the same data without re-running GSN each time.
+        Default: None (run GSN normally).
+
       <gsn_args> (optional) - dict of options passed directly to the GSN routine
           (perform_gsn). Typical fields might include:
               wantshrinkage  - whether to use covariance shrinkage (default: True)
@@ -228,6 +235,8 @@ def psn(*args):
                                 .cSb  - signal covariance
                                 .cNb  - noise covariance
                             plus any additional outputs from the GSN code.
+                            This can be passed back via opt['gsn_result'] to skip
+                            recomputing GSN on subsequent calls with the same data.
 
       results['input_data']  - copy of the original input data
 
@@ -320,16 +329,26 @@ def psn(*args):
     # GSN (Generative Modeling of Signal and Noise) estimates the covariance matrices
     # that describe the signal and noise in the data.
 
-    if opt['wantverbose']:
-        print('PSN: Running GSN to estimate signal and noise covariances...')
+    if opt.get('gsn_result') is not None:
+        gsn_result = opt['gsn_result']
+        if 'cSb' not in gsn_result or 'cNb' not in gsn_result:
+            raise ValueError("opt['gsn_result'] must contain 'cSb' and 'cNb' keys")
+        if gsn_result['cSb'].shape[0] != nunits:
+            raise ValueError(
+                f"gsn_result covariance size ({gsn_result['cSb'].shape[0]}) "
+                f"does not match data ({nunits} units)")
+        if opt['wantverbose']:
+            print('PSN: Using provided GSN result (skipping GSN estimation)...')
+    else:
+        if opt['wantverbose']:
+            print('PSN: Running GSN to estimate signal and noise covariances...')
+        gsn_opt = opt['gsn_args'] if opt['gsn_args'] is not None else {}
+        if 'wantverbose' not in gsn_opt:
+            gsn_opt['wantverbose'] = False
+        if 'wantshrinkage' not in gsn_opt:
+            gsn_opt['wantshrinkage'] = True
+        gsn_result = perform_gsn(data, gsn_opt)
 
-    gsn_opt = opt['gsn_args'] if opt['gsn_args'] is not None else {}
-    if 'wantverbose' not in gsn_opt:
-        gsn_opt['wantverbose'] = False
-    if 'wantshrinkage' not in gsn_opt:
-        gsn_opt['wantshrinkage'] = True
-
-    gsn_result = perform_gsn(data, gsn_opt)
     cSb = gsn_result['cSb']  # signal covariance (symmetric)
     cNb = gsn_result['cNb']  # noise covariance (symmetric)
 
