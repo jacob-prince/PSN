@@ -34,93 +34,28 @@ cd PSN
 pip install -e .
 ```
 
-#### Basic Usage (Sklearn API)
+#### Basic Usage
 
-PSN provides a scikit-learn compatible API with `fit()`, `transform()`, and `fit_transform()` methods:
+PSN exposes a single functional entry point, `psn(data, opt)`, where `data` has shape
+`(n_units, n_conditions, n_trials)`. The simulation utility `generate_data` is included
+for quickly producing realistic synthetic data to experiment with.
 
 ```python
 import numpy as np
-from psn import PSN
+from psn import psn, generate_data
 
-# Generate test data (10 units, 25 conditions, 3 trials)
-np.random.seed(42)
-data = np.random.randn(10, 25, 3)
+# Generate synthetic data with known signal and noise structure
+train_data, test_data, gt = generate_data(
+    nvox=50, ncond=200, ntrial=5, random_seed=42
+)
+# train_data shape: (50, 200, 5) -> (n_units, n_conditions, n_trials)
 
-# Create and fit the model
-model = PSN()
-model.fit(data)
-
-# Access denoised data
-print(f"Denoised shape: {model.denoiseddata_.shape}")  # (10, 25)
-print(f"Retained {model.best_threshold_} dimensions")
-
-# Or use fit_transform for one-step denoising
-denoised = PSN().fit_transform(data)
-```
-
-#### Applying to New Data
-
-Once fitted, the model can denoise new data with the same units:
-
-```python
-# Fit on training data
-model = PSN()
-model.fit(train_data)
-
-# Apply to new test data (must have same number of units)
-denoised_test = model.transform(test_data)
-
-# Works with 3D (trial) or 2D (already averaged) data
-denoised_2d = model.transform(test_data_2d)
-```
-
-#### Saving and Loading Models
-
-Fitted models can be saved and loaded using pickle:
-
-```python
-import pickle
-
-# Save fitted model
-with open('psn_model.pkl', 'wb') as f:
-    pickle.dump(model, f)
-
-# Load and use
-with open('psn_model.pkl', 'rb') as f:
-    loaded_model = pickle.load(f)
-
-denoised = loaded_model.transform(new_data)
-```
-
-#### Diagnostic Visualization
-
-Generate diagnostic plots after fitting:
-
-```python
-model = PSN()
-model.fit(data)
-
-# Generate diagnostic figure
-fig = model.plot_diagnostics()
-fig.savefig('diagnostics.png')
-
-# Or visualize during fit
-model.fit(data, visualize=True)
-```
-
-#### Functional API
-
-For simple one-shot denoising, use the functional `psn()` interface:
-
-```python
-from psn import psn
-
-# Apply PSN denoising with default settings
-results = psn(data)
+# Apply PSN denoising with default settings ('standard' preset)
+results = psn(train_data)
 
 # Access denoised data
-denoised_data = results['denoiseddata']  # Shape: (10, 25)
-print(f"Retained {results['best_threshold']} dimensions on average")
+print(f"Denoised shape: {results['denoiseddata'].shape}")  # (50, 200)
+print(f"Retained {results['best_threshold']} dimensions")
 ```
 
 #### Using Presets
@@ -130,84 +65,113 @@ By default, PSN uses the `'standard'` preset. You can optionally specify a diffe
 ```python
 # Standard (default): balances signal retention and out-of-sample generalization
 # Uses: basis='signal', criterion='prediction', threshold_method='hybrid'
-model = PSN()  # equivalent to PSN(mode='standard')
+results = psn(train_data, 'standard')
 
 # Conservative: prioritizes retaining signal
 # Uses: basis='signal', criterion='variance', threshold_method='global'
-model = PSN(mode='conservative')
+results = psn(train_data, 'conservative')
 
 # Aggressive: maximizes out-of-sample generalization with unit-specific adaptation
 # Uses: basis='difference', criterion='prediction', threshold_method='unit'
-model = PSN(mode='aggressive')
+results = psn(train_data, 'aggressive')
 ```
 
 #### Custom Configuration
 
 ```python
-# Sklearn API: pass parameters directly to constructor
-model = PSN(
-    mode=None,                       # Use None for fully custom config
-    basis='signal',                  # 'signal', 'difference', 'pca', or custom matrix
-    criterion='prediction',          # 'prediction', 'variance', or 'variance_eigenvalues'
-    threshold_method='hybrid',       # 'global', 'hybrid', or 'unit'
-    variance_threshold=0.95,         # Used when criterion='variance'
-    wantverbose=True                 # Print progress messages
-)
-model.fit(data)
+opt = {
+    'basis': 'signal',                # 'signal', 'difference', 'pca', 'wiener', or custom matrix
+    'criterion': 'prediction',        # 'prediction', 'variance', or 'variance_eigenvalues'
+    'threshold_method': 'hybrid',     # 'global', 'hybrid', or 'unit'
+    'basis_ordering': 'eigenvalues',  # 'eigenvalues' or 'signalvariance'
+    'variance_threshold': 0.95,       # Used when criterion='variance'
+    'wantverbose': True,
+    'wantfig': True,                  # Display diagnostic figures
+}
+results = psn(train_data, opt)
+```
 
-# Access results as attributes (with trailing underscore)
-denoised_data = model.denoiseddata_      # Denoised estimates
-residuals = model.residuals_             # data - denoiseddata
-thresholds = model.best_threshold_       # Number of dimensions retained
-basis = model.fullbasis_                 # Basis vectors used
-denoiser = model.denoiser_               # Learned denoising matrix
+#### Interpolating Between Prediction and Variance Targets
 
-# Functional API: pass options as dict
+The `alpha` parameter smoothly interpolates between the prediction-optimal threshold
+and a variance-retention target, letting you trade off generalization vs. signal
+preservation without committing to either extreme:
+
+```python
+opt = {
+    'alpha': 0.3,                 # 0 = prediction peak, 1 = variance retention target
+    'variance_threshold': 0.95,   # Defines the variance target
+}
+results = psn(train_data, opt)
+```
+
+#### Caching GSN Output Across Hyperparameter Sweeps
+
+GSN covariance estimation is the expensive step. To sweep over PSN hyperparameters
+(`alpha`, `basis`, `criterion`, ...) on the same data without re-running GSN each time,
+pass the previously computed `gsn_result` back in:
+
+```python
+# First call computes GSN
+results = psn(train_data, {'criterion': 'prediction'})
+
+# Subsequent calls reuse the cached covariances
+for alpha in [0.0, 0.25, 0.5, 0.75, 1.0]:
+    out = psn(train_data, {
+        'alpha': alpha,
+        'gsn_result': results['gsn_result'],
+    })
+```
+
+#### Wiener Denoising
+
+For full-rank matrix Wiener filtering (no basis truncation):
+
+```python
+results = psn(train_data, {'basis': 'wiener'})
+```
+
+To apply Wiener shrinkage on top of a global truncation:
+
+```python
 opt = {
     'basis': 'signal',
-    'criterion': 'prediction',
-    'threshold_method': 'hybrid',
-    'variance_threshold': 0.95,
-    'wantverbose': True,
-    'wantfig': True
+    'threshold_method': 'global',
+    'denoiser_type': 'wiener',
 }
-results = psn(data, opt)
+results = psn(train_data, opt)
+```
+
+#### Applying the Denoiser to Held-Out Data
+
+The learned denoising matrix can be applied to new trial-averaged data from the same units:
+
+```python
+results = psn(train_data)
+denoiser = results['denoiser']
+unit_means = results['unit_means'][:, None]
+
+# Apply to held-out test data (n_units, n_conditions)
+test_avg = np.nanmean(test_data, axis=2)
+denoised_test = denoiser.T @ (test_avg - unit_means) + unit_means
 ```
 
 #### Output Structure
 
-**Sklearn API** - Access results as attributes (with trailing underscore):
+`psn` returns a dictionary. The most commonly used fields:
 
 ```python
-model = PSN()
-model.fit(data)
-
-# Primary outputs
-model.denoiseddata_       # (n_units, n_conditions) - Denoised estimates
-model.residuals_          # (n_units, n_conditions, n_trials) - data - denoiseddata
-model.denoiser_           # (n_units, n_units) - Learned denoising matrix
-model.unit_means_         # (n_units,) - Mean per unit for centering
-
-# Diagnostics
-model.best_threshold_     # Number of dimensions retained (scalar or array)
-model.fullbasis_          # (n_units, n_dims) - Basis vectors
-model.signalvar_          # Signal variance per dimension
-model.noisevar_           # Noise variance per dimension
-model.svnv_before_        # Signal/noise variance before denoising
-model.svnv_after_         # Signal/noise variance after denoising
-```
-
-**Functional API** - Returns a dictionary:
-
-```python
-results = psn(data, opt)
-
-results['denoiseddata']    # (n_units, n_conditions) - Denoised estimates
-results['residuals']       # (n_units, n_conditions, n_trials) - data - denoiseddata
-results['denoiser']        # (n_units, n_units) - Denoising matrix
-results['best_threshold']  # Number of dimensions retained
-results['fullbasis']       # (n_units, n_dims) - Basis vectors
-results['gsn_result']      # Full GSN results dict
+results['denoiseddata']      # (n_units, n_conditions) - Denoised estimates
+results['residuals']         # (n_units, n_conditions, n_trials) - data - denoiseddata
+results['denoiser']          # (n_units, n_units) - Denoising matrix
+results['unit_means']        # (n_units,) - Per-unit means used for centering
+results['best_threshold']    # Number of dimensions retained (scalar or per-unit array)
+results['fullbasis']         # (n_units, n_dims) - Basis vectors after global ordering
+results['signalvar']         # Signal variance per dimension
+results['noisevar']          # Noise variance per dimension
+results['svnv_before']       # (n_units, 2) - Signal/noise variance before denoising
+results['svnv_after']        # (n_units, 2) - Signal/noise variance after denoising
+results['gsn_result']        # GSN output dict (cSb, cNb, ...) for reuse / caching
 ```
 
 ---
@@ -258,7 +222,6 @@ results = psn(data, 'aggressive');
 #### Custom Configuration
 
 ```matlab
-% Customize PSN parameters
 opt = struct();
 opt.basis = 'signal';              % 'signal', 'difference', 'pca', or custom matrix
 opt.criterion = 'prediction';      % 'prediction', 'variance', 'variance_eigenvalues'
@@ -278,7 +241,6 @@ cd('path/to/PSN/matlab')
 
 % Test GSN dependency
 test_gsn_dependency
-
 ```
 
 #### Troubleshooting
@@ -293,10 +255,14 @@ test_gsn_dependency
 
 | Parameter | Options | Description |
 |-----------|---------|-------------|
-| **basis** | `'signal'`, `'difference'`, `'pca'`, custom matrix | Basis for dimensionality reduction |
+| **basis** | `'signal'`, `'difference'`, `'pca'`, `'wiener'`, custom matrix | Basis for dimensionality reduction |
 | **criterion** | `'prediction'`, `'variance'`, `'variance_eigenvalues'` | How to determine dimensionality threshold |
 | **threshold_method** | `'global'`, `'hybrid'`, `'unit'` | How to apply thresholds across units |
-| **variance_threshold** | 0.0 to 1.0 (default: 0.99) | Target variance fraction (for `criterion='variance'`) |
+| **basis_ordering** | `'eigenvalues'`, `'signalvariance'` | Initial global order of basis vectors |
+| **alpha** | `0.0` to `1.0` (or `None`) | Interpolates between prediction peak (0) and variance target (1) |
+| **variance_threshold** | `0.0` to `1.0` (default: `0.99`) | Target variance fraction (for `criterion='variance'` or with `alpha`) |
+| **denoiser_type** | `'truncation'`, `'wiener'` | Hard truncation or Wiener shrinkage (Wiener requires `threshold_method='global'`) |
+| **gsn_result** | dict | Reuse precomputed GSN covariances to skip estimation |
 
 ---
 
