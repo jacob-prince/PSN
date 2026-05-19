@@ -2,7 +2,7 @@
 
 **PSN** is a library for denoising neural data by adaptively partitioning signal and noise.
 
-> **Note:** As of December 2025, PSN is under active development. The API and algorithm are subject to change.
+> **Note:** As of May 2026, PSN is under active development. The API and algorithm are subject to change.
 
 ## What is PSN?
 
