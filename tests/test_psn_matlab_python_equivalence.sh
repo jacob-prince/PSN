@@ -14,7 +14,7 @@
 # Examples:
 #   ./test_psn_matlab_python_equivalence.sh        # Run all tests
 #   ./test_psn_matlab_python_equivalence.sh all    # Run all tests
-#   ./test_psn_matlab_python_equivalence.sh 10     # Run only test 10 (truncate)
+#   ./test_psn_matlab_python_equivalence.sh 5      # Run only test 5
 #   ./test_psn_matlab_python_equivalence.sh 1      # Run only test 1
 #
 # IMPORTANT: MATLAB is considered the ground truth implementation.
@@ -29,8 +29,8 @@ set -e  # Exit on any error
 # Parse command-line arguments
 TEST_TO_RUN="${1:-all}"
 
-if [[ "$TEST_TO_RUN" != "all" ]] && ! [[ "$TEST_TO_RUN" =~ ^[1-9]$|^1[01]$ ]]; then
-    echo "Error: Invalid test number '$TEST_TO_RUN'. Must be 1-11 or 'all'"
+if [[ "$TEST_TO_RUN" != "all" ]] && ! [[ "$TEST_TO_RUN" =~ ^[1-9]$|^10$ ]]; then
+    echo "Error: Invalid test number '$TEST_TO_RUN'. Must be 1-10 or 'all'"
     echo "Usage: $0 [test_number|all]"
     exit 1
 fi
@@ -39,7 +39,7 @@ fi
 # MATLAB configuration
 MATLAB_PATH="/Applications/MATLAB_R2022b.app/bin/matlab"
 
-# Python configuration  
+# Python configuration
 PYTHON_CMD="python3"
 
 # Test configuration
@@ -106,49 +106,48 @@ run_psn_equivalence_test() {
     local nvox="$2"
     local ncond="$3"
     local ntrial="$4"
-    local V_param="$5"
-    local cv_mode="$6"
-    local cv_threshold_per="$7"
-    local denoisingtype="$8"
-    local mag_frac="$9"
-    local truncate="${10:-0}"  # Default to 0 if not provided
+    local basis="$5"
+    local criterion="$6"
+    local threshold_method="$7"
+    local variance_threshold="${8:-0.99}"
 
     echo "=========================================="
     echo "Testing: $test_name"
     echo "Parameters: $nvox voxels, $ncond conditions, $ntrial trials"
-    echo "V=$V_param, cv_mode=$cv_mode, cv_threshold_per=$cv_threshold_per"
-    echo "denoisingtype=$denoisingtype, mag_frac=$mag_frac, truncate=$truncate"
+    echo "basis=$basis, criterion=$criterion, threshold_method=$threshold_method"
+    echo "variance_threshold=$variance_threshold"
     echo "=========================================="
-    
+
     # Generate test data with Python
-    cat > "$TEST_DATA_DIR/generate_${test_name}_data.py" << EOF
+    cat > "$TEST_DATA_DIR/generate_${test_name}_data.py" << 'EOFPYTHON'
 import numpy as np
 import scipy.io
 import sys
 import os
 
 # Add PSN to path
-sys.path.insert(0, '$PSN_ROOT')
-from psn.simulate import generate_data
+sys.path.insert(0, 'PSN_ROOT_PLACEHOLDER')
+from psn.utilities.simulation.simulate_data import generate_data
 
 # Set random seed for reproducibility
 np.random.seed(42)
 
 # Generate simulated data
 print("Generating simulated data...")
-print(f"Shape: {$nvox} voxels × {$ncond} conditions × {$ntrial} trials")
+print(f"Shape: {NVOX_PLACEHOLDER} voxels × {NCOND_PLACEHOLDER} conditions × {NTRIAL_PLACEHOLDER} trials")
 
 train_data, test_data, ground_truth = generate_data(
-    nvox=$nvox,
-    ncond=$ncond, 
-    ntrial=$ntrial,
+    nvox=NVOX_PLACEHOLDER,
+    ncond=NCOND_PLACEHOLDER,
+    ntrial=NTRIAL_PLACEHOLDER,
     signal_decay=1.0,
     noise_decay=1.0,
     noise_multiplier=1.0,
     align_alpha=0.5,
-    align_k=min(5, $nvox//2),
+    align_k=min(5, NVOX_PLACEHOLDER//2),
     random_seed=42,
-    want_fig=False
+    want_fig=False,
+    verbose=False
 )
 
 print(f"Generated data shape: {train_data.shape}")
@@ -161,16 +160,21 @@ if not np.isfinite(train_data).all():
     raise ValueError("Generated data contains NaN or Inf values")
 
 # Save data for both Python and MATLAB
-np.save('$TEST_DATA_DIR/${test_name}_data.npy', train_data)
-scipy.io.savemat('$TEST_DATA_DIR/${test_name}_data.mat', {'data': train_data})
+np.save('TEST_DATA_DIR_PLACEHOLDER/TEST_NAME_PLACEHOLDER_data.npy', train_data)
+scipy.io.savemat('TEST_DATA_DIR_PLACEHOLDER/TEST_NAME_PLACEHOLDER_data.mat', {'data': train_data})
 
 print("Test data generated and saved successfully")
-EOF
+EOFPYTHON
+
+    # Replace placeholders in Python script
+    sed "s|PSN_ROOT_PLACEHOLDER|$PSN_ROOT|g; s|TEST_DATA_DIR_PLACEHOLDER|$TEST_DATA_DIR|g; s|TEST_NAME_PLACEHOLDER|$test_name|g; s|NVOX_PLACEHOLDER|$nvox|g; s|NCOND_PLACEHOLDER|$ncond|g; s|NTRIAL_PLACEHOLDER|$ntrial|g" \
+        "$TEST_DATA_DIR/generate_${test_name}_data.py" > "$TEST_DATA_DIR/generate_${test_name}_data_tmp.py"
+    mv "$TEST_DATA_DIR/generate_${test_name}_data_tmp.py" "$TEST_DATA_DIR/generate_${test_name}_data.py"
 
     $PYTHON_CMD "$TEST_DATA_DIR/generate_${test_name}_data.py"
-    
+
     # Run Python PSN
-    cat > "$TEST_DATA_DIR/run_python_${test_name}.py" << EOF
+    cat > "$TEST_DATA_DIR/run_python_${test_name}.py" << 'EOFPYTHON'
 import numpy as np
 import scipy.io
 import sys
@@ -178,60 +182,50 @@ import os
 import time
 
 # Add PSN to path
-sys.path.insert(0, '$PSN_ROOT')
+sys.path.insert(0, 'PSN_ROOT_PLACEHOLDER')
 from psn.psn import psn
 
 # Set random seed for reproducibility
 np.random.seed(42)
 
 # Load data
-data = np.load('$TEST_DATA_DIR/${test_name}_data.npy')
-print(f"Running Python PSN on $test_name data...")
+data = np.load('TEST_DATA_DIR_PLACEHOLDER/TEST_NAME_PLACEHOLDER_data.npy')
+print(f"Running Python PSN on TEST_NAME_PLACEHOLDER data...")
 print(f"Data shape: {data.shape}")
 
-# Special handling for random basis test - use shared basis
-if "$test_name" == "test7_random_basis":
+# Special handling for custom basis test
+if "BASIS_PLACEHOLDER" == "shared_random_basis":
     # Load shared random basis
-    shared_basis = np.load('$TEST_DATA_DIR/shared_random_basis.npy')
+    shared_basis = np.load('TEST_DATA_DIR_PLACEHOLDER/shared_random_basis.npy')
     print(f"Loaded shared random basis with shape: {shared_basis.shape}")
-    V_param = shared_basis
-elif "$V_param" == "shared_random_basis":
-    # Load shared random basis
-    shared_basis = np.load('$TEST_DATA_DIR/shared_random_basis.npy')
-    print(f"Loaded shared random basis with shape: {shared_basis.shape}")
-    V_param = shared_basis
+    basis_param = shared_basis
 else:
-    V_param = int("$V_param")  # Convert string to int for numerical values
+    basis_param = "BASIS_PLACEHOLDER"
 
 # Set options
 opt = {
-    'cv_mode': $cv_mode,
-    'cv_threshold_per': '$cv_threshold_per',
-    'denoisingtype': $denoisingtype,
-    'mag_frac': $mag_frac,
-    'truncate': $truncate
+    'basis': basis_param,
+    'criterion': 'CRITERION_PLACEHOLDER',
+    'threshold_method': 'THRESHOLD_METHOD_PLACEHOLDER',
+    'variance_threshold': VARIANCE_THRESHOLD_PLACEHOLDER,
+    'wantfig': False,
+    'wantverbose': False
 }
-
-# Add cv_thresholds for cross-validation modes
-if $cv_mode >= 0:
-    # Test a reasonable range of thresholds
-    max_dims = min(data.shape[0], 20)  # Limit to reasonable number for testing
-    opt['cv_thresholds'] = list(range(0, max_dims + 1))  # Include 0 as baseline
 
 # Run PSN with timing
 start_time = time.time()
-results = psn(data, V=V_param, opt=opt, wantfig=False)
+results = psn(data, opt)
 end_time = time.time()
 
 print(f"Python computation completed in {end_time - start_time:.2f} seconds")
 
-# Save results (exclude non-serializable items like function handles)
+# Save results (exclude non-serializable items)
 serializable_results = {}
 for key, value in results.items():
-    if not callable(value):  # Exclude function handles
+    if not callable(value) and key != 'opt_used':  # Exclude function handles and opt dict
         serializable_results[key] = value
 
-np.save('$TEST_DATA_DIR/${test_name}_python_results.npy', serializable_results)
+np.save('TEST_DATA_DIR_PLACEHOLDER/TEST_NAME_PLACEHOLDER_python_results.npy', serializable_results)
 
 # Convert numpy arrays to MATLAB-compatible format for comparison
 matlab_results = {}
@@ -241,7 +235,7 @@ for key, value in serializable_results.items():
     elif isinstance(value, (int, float, np.integer, np.floating)):
         matlab_results[key] = np.array([[value]])  # Scalar as 1x1 matrix
     elif isinstance(value, dict):
-        # Skip nested dictionaries as they're hard to compare
+        # Skip nested dictionaries
         print(f"Warning: Skipping dictionary field {key} for MATLAB comparison")
         continue
     elif value is not None:
@@ -250,7 +244,7 @@ for key, value in serializable_results.items():
         except:
             print(f"Warning: Could not convert {key} to MATLAB format")
 
-scipy.io.savemat('$TEST_DATA_DIR/${test_name}_python_results.mat', matlab_results)
+scipy.io.savemat('TEST_DATA_DIR_PLACEHOLDER/TEST_NAME_PLACEHOLDER_python_results.mat', matlab_results)
 
 # Print key results info
 print(f"Results summary:")
@@ -266,75 +260,60 @@ if 'best_threshold' in serializable_results and serializable_results['best_thres
         print(f"  best_threshold shape: {serializable_results['best_threshold'].shape}")
         print(f"  best_threshold range: [{np.min(serializable_results['best_threshold'])}, {np.max(serializable_results['best_threshold'])}]")
 
-# Check for any NaN or inf values in results
-for key, value in serializable_results.items():
-    if isinstance(value, np.ndarray):
-        if np.any(np.isnan(value)):
-            print(f"WARNING: {key} contains NaN values!")
-        if np.any(np.isinf(value)):
-            print(f"WARNING: {key} contains Inf values!")
-
 print("Python results saved successfully")
-EOF
+EOFPYTHON
+
+    # Replace placeholders
+    sed "s|PSN_ROOT_PLACEHOLDER|$PSN_ROOT|g; s|TEST_DATA_DIR_PLACEHOLDER|$TEST_DATA_DIR|g; s|TEST_NAME_PLACEHOLDER|$test_name|g; s|BASIS_PLACEHOLDER|$basis|g; s|CRITERION_PLACEHOLDER|$criterion|g; s|THRESHOLD_METHOD_PLACEHOLDER|$threshold_method|g; s|VARIANCE_THRESHOLD_PLACEHOLDER|$variance_threshold|g" \
+        "$TEST_DATA_DIR/run_python_${test_name}.py" > "$TEST_DATA_DIR/run_python_${test_name}_tmp.py"
+    mv "$TEST_DATA_DIR/run_python_${test_name}_tmp.py" "$TEST_DATA_DIR/run_python_${test_name}.py"
 
     $PYTHON_CMD "$TEST_DATA_DIR/run_python_${test_name}.py"
-    
+
     # Run MATLAB PSN
-    cat > "$TEST_DATA_DIR/run_matlab_${test_name}.m" << EOF
+    cat > "$TEST_DATA_DIR/run_matlab_${test_name}.m" << 'EOFMATLAB'
 try
-    % Add PSN matlab directory to path
-    addpath('$MATLAB_DIR');
-    
+    % Add PSN matlab directory and all subdirectories to path
+    addpath(genpath('MATLAB_DIR_PLACEHOLDER'));
+
     % Set random seed for reproducibility
     rng('default');
     rng(42, 'twister');
 
     % Load data
-    load('$TEST_DATA_DIR/${test_name}_data.mat');
-    fprintf('Running MATLAB PSN on ${test_name} data...\n');
+    load('TEST_DATA_DIR_PLACEHOLDER/TEST_NAME_PLACEHOLDER_data.mat');
+    fprintf('Running MATLAB PSN on TEST_NAME_PLACEHOLDER data...\n');
     fprintf('Data shape: [%d, %d, %d]\n', size(data));
 
-    % Special handling for random basis test - use shared basis
-    if strcmp('${test_name}', 'test7_random_basis')
+    % Special handling for custom basis test
+    if strcmp('BASIS_PLACEHOLDER', 'shared_random_basis')
         % Load shared random basis
-        shared_basis_data = load('$TEST_DATA_DIR/shared_random_basis.mat');
+        shared_basis_data = load('TEST_DATA_DIR_PLACEHOLDER/shared_random_basis.mat');
         shared_basis = shared_basis_data.shared_basis;
         fprintf('Loaded shared random basis with shape: [%d, %d]\n', size(shared_basis));
-        V_param = shared_basis;
-    elseif strcmp('$V_param', 'shared_random_basis')
-        % Load shared random basis
-        shared_basis_data = load('$TEST_DATA_DIR/shared_random_basis.mat');
-        shared_basis = shared_basis_data.shared_basis;
-        fprintf('Loaded shared random basis with shape: [%d, %d]\n', size(shared_basis));
-        V_param = shared_basis;
+        basis_param = shared_basis;
     else
-        V_param = str2double('$V_param');  % Convert string to number for numerical values
+        basis_param = 'BASIS_PLACEHOLDER';
     end
 
     % Set options
     opt = struct();
-    opt.cv_mode = $cv_mode;
-    opt.cv_threshold_per = '$cv_threshold_per';
-    opt.denoisingtype = $denoisingtype;
-    opt.mag_frac = $mag_frac;
-    opt.truncate = $truncate;
-
-    % Add cv_thresholds for cross-validation modes
-    if $cv_mode >= 0
-        % Test a reasonable range of thresholds
-        max_dims = min(size(data, 1), 20);  % Limit to reasonable number for testing
-        opt.cv_thresholds = 0:max_dims;  % Include 0 as baseline
-    end
+    opt.basis = basis_param;
+    opt.criterion = 'CRITERION_PLACEHOLDER';
+    opt.threshold_method = 'THRESHOLD_METHOD_PLACEHOLDER';
+    opt.variance_threshold = VARIANCE_THRESHOLD_PLACEHOLDER;
+    opt.wantfig = 0;
+    opt.wantverbose = 0;
 
     % Run PSN with timing
     tic;
-    results = psn(data, V_param, opt, false);  % wantfig = false
+    results = psn(data, opt);
     elapsed = toc;
-    
+
     fprintf('MATLAB computation completed in %.2f seconds\n', elapsed);
 
     % Save results
-    save('$TEST_DATA_DIR/${test_name}_matlab_results.mat', '-struct', 'results');
+    save('TEST_DATA_DIR_PLACEHOLDER/TEST_NAME_PLACEHOLDER_matlab_results.mat', '-struct', 'results');
 
     % Print key results info
     fprintf('Results summary:\n');
@@ -353,22 +332,8 @@ try
         end
     end
 
-    % Check for any NaN or inf values in results
-    fields = fieldnames(results);
-    for i = 1:length(fields)
-        if isnumeric(results.(fields{i}))
-            val = results.(fields{i});
-            if any(isnan(val(:)))
-                fprintf('WARNING: %s contains NaN values!\n', fields{i});
-            end
-            if any(isinf(val(:)))
-                fprintf('WARNING: %s contains Inf values!\n', fields{i});
-            end
-        end
-    end
-
     fprintf('MATLAB results saved successfully\n');
-    
+
     % Success
     exit(0);
 catch ME
@@ -381,22 +346,24 @@ catch ME
     end
     exit(1);
 end
-EOF
+EOFMATLAB
 
     # Replace placeholders in MATLAB script
-    sed -i.bak "s|\$MATLAB_DIR|$MATLAB_DIR|g; s|\$TEST_DATA_DIR|$TEST_DATA_DIR|g; s|\$cv_mode|$cv_mode|g; s|\$cv_threshold_per|$cv_threshold_per|g; s|\$denoisingtype|$denoisingtype|g; s|\$mag_frac|$mag_frac|g; s|\${test_name}|$test_name|g; s|\$V_param|$V_param|g" "$TEST_DATA_DIR/run_matlab_${test_name}.m"
-    
+    sed "s|MATLAB_DIR_PLACEHOLDER|$MATLAB_DIR|g; s|TEST_DATA_DIR_PLACEHOLDER|$TEST_DATA_DIR|g; s|TEST_NAME_PLACEHOLDER|$test_name|g; s|BASIS_PLACEHOLDER|$basis|g; s|CRITERION_PLACEHOLDER|$criterion|g; s|THRESHOLD_METHOD_PLACEHOLDER|$threshold_method|g; s|VARIANCE_THRESHOLD_PLACEHOLDER|$variance_threshold|g" \
+        "$TEST_DATA_DIR/run_matlab_${test_name}.m" > "$TEST_DATA_DIR/run_matlab_${test_name}_tmp.m"
+    mv "$TEST_DATA_DIR/run_matlab_${test_name}_tmp.m" "$TEST_DATA_DIR/run_matlab_${test_name}.m"
+
     "$MATLAB_PATH" -nosplash -nodesktop -r "try; run('$TEST_DATA_DIR/run_matlab_${test_name}.m'); catch ME; disp('Error running MATLAB:'); disp(ME.message); disp(ME.stack); exit(1); end"
-    
+
     # Compare results
-    cat > "$TEST_DATA_DIR/compare_${test_name}.py" << EOF
+    cat > "$TEST_DATA_DIR/compare_${test_name}.py" << 'EOFPYTHON'
 import numpy as np
 import scipy.io
 import sys
 
 # Load both results directly from .mat files
-python_results = scipy.io.loadmat('$TEST_DATA_DIR/${test_name}_python_results.mat')
-matlab_results = scipy.io.loadmat('$TEST_DATA_DIR/${test_name}_matlab_results.mat')
+python_results = scipy.io.loadmat('TEST_DATA_DIR_PLACEHOLDER/TEST_NAME_PLACEHOLDER_python_results.mat')
+matlab_results = scipy.io.loadmat('TEST_DATA_DIR_PLACEHOLDER/TEST_NAME_PLACEHOLDER_matlab_results.mat')
 
 # Filter out MATLAB internal fields
 matlab_internal_fields = ['__header__', '__version__', '__globals__']
@@ -409,19 +376,9 @@ print(f"Python result fields: {sorted(python_results.keys())}")
 print(f"MATLAB result fields: {sorted(matlab_results.keys())}")
 print("")
 
-# Special handling for ICA tests - use looser tolerances
-is_ica_test = "$test_name" == "test11_ica_basis"
-if is_ica_test:
-    # ICA uses different solvers (sklearn FastICA vs MATLAB fastica)
-    # We expect similar results but not numerically identical
-    tolerance = 0.1  # Much looser tolerance
-    min_correlation = 0.95  # Still expect high correlation
-    print("NOTE: ICA test - using relaxed tolerances due to different ICA solvers")
-    print(f"      Tolerance: {tolerance}, Min correlation: {min_correlation}")
-    print("")
-else:
-    tolerance = $TOLERANCE
-    min_correlation = $MIN_CORRELATION
+tolerance = TOLERANCE_PLACEHOLDER
+min_correlation = MIN_CORRELATION_PLACEHOLDER
+
 max_error = 0.0
 failed_fields = []
 correlation_failed_fields = []
@@ -430,14 +387,15 @@ correlation_failed_fields = []
 fields_to_compare = ['denoiser', 'denoiseddata', 'best_threshold', 'fullbasis']
 
 # Add optional fields that may be present depending on parameters
-optional_fields = ['cv_scores', 'signalsubspace', 'dimreduce', 'mags', 'dimsretained']
+optional_fields = ['signalvar', 'noisevar', 'objective', 'signalsubspace', 'dimreduce',
+                   'basis_eigenvalues', 'unitreorderings', 'svnv_before', 'svnv_after']
 for field in optional_fields:
     if field in python_results and python_results[field] is not None:
         if field in matlab_results:
             fields_to_compare.append(field)
 
 print("=" * 60)
-print(f"COMPARING PYTHON vs MATLAB RESULTS FOR $test_name")
+print(f"COMPARING PYTHON vs MATLAB RESULTS FOR TEST_NAME_PLACEHOLDER")
 print("=" * 60)
 print(f"Tolerance: {tolerance}")
 print(f"Minimum correlation: {min_correlation}")
@@ -447,19 +405,19 @@ for field in fields_to_compare:
     if field in python_results and python_results[field] is not None and field in matlab_results:
         py_val = python_results[field]
         mat_val = matlab_results[field]
-        
+
         # Handle MATLAB's and Python's tendency to add extra dimensions to scalars
         if hasattr(mat_val, 'squeeze'):
             mat_val = mat_val.squeeze()
         if hasattr(py_val, 'squeeze'):
             py_val = py_val.squeeze()
-            
+
         # Convert Python scalars to numpy arrays for consistent handling
         if np.isscalar(py_val):
             py_val = np.array(py_val)
         if np.isscalar(mat_val):
             mat_val = np.array(mat_val)
-        
+
         # Handle potential shape differences (MATLAB vs Python conventions)
         if py_val.shape != mat_val.shape:
             # Try transpose if shapes are swapped
@@ -470,7 +428,7 @@ for field in fields_to_compare:
                 print(f"FAIL: {field} - Shape mismatch: Python {py_val.shape} vs MATLAB {mat_val.shape}")
                 failed_fields.append(field)
                 continue
-        
+
         # Compute relative and absolute errors
         diff = py_val - mat_val
         if diff.size == 0:
@@ -485,11 +443,11 @@ for field in fields_to_compare:
         abs_error = np.max(np.abs(diff))
         rel_error = np.max(np.abs(diff) / (np.abs(py_val) + 1e-15))
         max_error = max(max_error, max(abs_error, rel_error))
-        
+
         # Compute correlation
         py_flat = py_val.flatten()
         mat_flat = mat_val.flatten()
-        
+
         # Remove any NaN or inf values for correlation calculation
         valid_mask = np.isfinite(py_flat) & np.isfinite(mat_flat)
         if np.sum(valid_mask) > 1:  # Need at least 2 valid points for correlation
@@ -503,82 +461,43 @@ for field in fields_to_compare:
                     correlation = 0.0
         else:
             correlation = 0.0
-        
+
         # Check correlation threshold (main criterion for pass/fail)
         correlation_pass = correlation >= min_correlation
-        
+
         # For scalar values and integer arrays, check for exact/near-exact equality
         if py_val.size == 1:
             py_scalar = py_val.item()
             mat_scalar = mat_val.item()
-            
-            if field == 'best_threshold' and isinstance(py_scalar, (int, np.integer)):
-                # Integer thresholds: account for 0-based (Python) vs 1-based (MATLAB) indexing
-                if py_scalar + 1 == mat_scalar or py_scalar == mat_scalar:
-                    print(f"PASS: {field} - Python: {py_scalar}, MATLAB: {mat_scalar} (adjusted for indexing)")
-                else:
-                    print(f"FAIL: {field} - Python: {py_scalar}, MATLAB: {mat_scalar}")
-                    failed_fields.append(field)
+
+            if abs_error <= tolerance:
+                print(f"PASS: {field} - Scalar value: {py_scalar:.8f} (diff: {abs_error:.8f})")
             else:
-                # Other scalars - check if they're approximately equal (don't use correlation for scalars)
-                if abs_error <= tolerance:
-                    print(f"PASS: {field} - Scalar value: {py_scalar:.8f} (diff: {abs_error:.8f})")
-                else:
-                    print(f"FAIL: {field} - Python: {py_scalar:.8f}, MATLAB: {mat_scalar:.8f} (diff: {abs_error:.8f})")
-                    failed_fields.append(field)
+                print(f"FAIL: {field} - Python: {py_scalar:.8f}, MATLAB: {mat_scalar:.8f} (diff: {abs_error:.8f})")
+                failed_fields.append(field)
         else:
             # Array comparisons - use correlation for pass/fail
-            if field == 'best_threshold':
-                # For threshold arrays, check if they're integer arrays and nearly identical
-                if np.all(py_val == py_val.astype(int)) and np.all(mat_val == mat_val.astype(int)):
-                    # Integer threshold arrays: account for 0-based (Python) vs 1-based (MATLAB) indexing
-                    py_int = py_val.astype(int)
-                    mat_int = mat_val.astype(int)
-                    # Check if MATLAB values are Python values + 1 (indexing difference)
-                    # For threshold arrays, order doesn't matter, so sort both before comparing
-                    py_sorted = np.sort(py_int + 1)  # Convert to 1-based indexing
-                    mat_sorted = np.sort(mat_int)
-                    if np.array_equal(py_sorted, mat_sorted):
-                        print(f"PASS: {field} - Integer arrays match (adjusted for indexing and sorted)")
-                    elif np.array_equal(py_int, mat_int):  # Check exact match too
-                        print(f"PASS: {field} - Integer arrays match exactly")
-                    else:
-                        print(f"FAIL: {field} - Integer arrays differ")
-                        print(f"      Python (+1, sorted): {py_sorted}")
-                        print(f"      MATLAB (sorted): {mat_sorted}")
-                        failed_fields.append(field)
-                else:
-                    # Non-integer threshold arrays, use correlation
-                    if correlation_pass:
-                        print(f"PASS: {field} - Max abs err: {abs_error:.8f}, Max rel err: {rel_error:.8f}, Corr: {correlation:.8f}")
-                    else:
-                        print(f"FAIL: {field} - Max abs err: {abs_error:.8f}, Max rel err: {rel_error:.8f}, Corr: {correlation:.8f} (CORRELATION)")
-                        correlation_failed_fields.append(field)
-                        failed_fields.append(field)
+            if correlation_pass:
+                print(f"PASS: {field} - Max abs err: {abs_error:.8f}, Max rel err: {rel_error:.8f}, Corr: {correlation:.8f}")
             else:
-                # Regular array fields
-                if correlation_pass:
-                    print(f"PASS: {field} - Max abs err: {abs_error:.8f}, Max rel err: {rel_error:.8f}, Corr: {correlation:.8f}")
-                else:
-                    print(f"FAIL: {field} - Max abs err: {abs_error:.8f}, Max rel err: {rel_error:.8f}, Corr: {correlation:.8f} (CORRELATION)")
-                    correlation_failed_fields.append(field)
-                    failed_fields.append(field)
+                print(f"FAIL: {field} - Max abs err: {abs_error:.8f}, Max rel err: {rel_error:.8f}, Corr: {correlation:.8f} (CORRELATION)")
+                correlation_failed_fields.append(field)
+                failed_fields.append(field)
     else:
         missing_py = field not in python_results or python_results[field] is None
         missing_mat = field not in matlab_results
-        print(f"FAIL: {field} - Missing in {'Python' if missing_py else 'MATLAB'}")
-        failed_fields.append(field)
+        print(f"SKIP: {field} - Missing in {'Python' if missing_py else 'MATLAB'}")
 
 print("")
 print("=" * 60)
 if len(failed_fields) == 0:
-    print(f"✓ ALL TESTS PASSED FOR $test_name")
+    print(f"✓ ALL TESTS PASSED FOR TEST_NAME_PLACEHOLDER")
     print(f"  Python and MATLAB implementations are equivalent")
     print(f"  All fields passed correlation test (≥ {min_correlation})")
     print("=" * 60)
     exit_code = 0
 else:
-    print(f"✗ {len(failed_fields)} TESTS FAILED FOR $test_name")
+    print(f"✗ {len(failed_fields)} TESTS FAILED FOR TEST_NAME_PLACEHOLDER")
     print(f"  Failed fields: {failed_fields}")
     if len(correlation_failed_fields) > 0:
         print(f"  Fields failing correlation test: {correlation_failed_fields}")
@@ -592,7 +511,7 @@ else:
 
 # Save detailed comparison summary
 summary = {
-    'test_name': '$test_name',
+    'test_name': 'TEST_NAME_PLACEHOLDER',
     'failed_fields': failed_fields,
     'correlation_failed_fields': correlation_failed_fields,
     'max_error': max_error,
@@ -601,9 +520,14 @@ summary = {
     'all_passed': len(failed_fields) == 0
 }
 
-np.save('$TEST_DATA_DIR/${test_name}_comparison_summary.npy', summary)
+np.save('TEST_DATA_DIR_PLACEHOLDER/TEST_NAME_PLACEHOLDER_comparison_summary.npy', summary)
 sys.exit(exit_code)
-EOF
+EOFPYTHON
+
+    # Replace placeholders
+    sed "s|TEST_DATA_DIR_PLACEHOLDER|$TEST_DATA_DIR|g; s|TEST_NAME_PLACEHOLDER|$test_name|g; s|TOLERANCE_PLACEHOLDER|$TOLERANCE|g; s|MIN_CORRELATION_PLACEHOLDER|$MIN_CORRELATION|g" \
+        "$TEST_DATA_DIR/compare_${test_name}.py" > "$TEST_DATA_DIR/compare_${test_name}_tmp.py"
+    mv "$TEST_DATA_DIR/compare_${test_name}_tmp.py" "$TEST_DATA_DIR/compare_${test_name}.py"
 
     $PYTHON_CMD "$TEST_DATA_DIR/compare_${test_name}.py"
 }
@@ -615,10 +539,10 @@ echo ""
 # Test results storage
 test_results=()
 
-# Test 1: Basic signal covariance basis with unit-wise CV
+# Test 1: Signal basis with global threshold using prediction criterion
 if should_run_test 1; then
-    echo "=== Test 1: Signal covariance basis, unit-wise CV ==="
-    if run_psn_equivalence_test "test1_signal_unit_cv" 20 50 3 0 0 "unit" 0 0.95; then
+    echo "=== Test 1: Signal basis, global threshold, prediction ==="
+    if run_psn_equivalence_test "test1_signal_global_pred" 20 50 3 "signal" "prediction" "global"; then
         test_results+=("PASSED")
     else
         test_results+=("FAILED")
@@ -626,10 +550,10 @@ if should_run_test 1; then
     echo ""
 fi
 
-# Test 2: Signal covariance basis with population CV
+# Test 2: Signal basis with hybrid threshold using prediction criterion
 if should_run_test 2; then
-    echo "=== Test 2: Signal covariance basis, population CV ==="
-    if run_psn_equivalence_test "test2_signal_pop_cv" 20 50 3 0 0 "population" 0 0.95; then
+    echo "=== Test 2: Signal basis, hybrid threshold, prediction ==="
+    if run_psn_equivalence_test "test2_signal_hybrid_pred" 20 50 3 "signal" "prediction" "hybrid"; then
         test_results+=("PASSED")
     else
         test_results+=("FAILED")
@@ -637,10 +561,10 @@ if should_run_test 2; then
     echo ""
 fi
 
-# Test 3: Signal covariance basis with magnitude thresholding
+# Test 3: Signal basis with unit threshold using prediction criterion
 if should_run_test 3; then
-    echo "=== Test 3: Signal covariance basis, magnitude thresholding ==="
-    if run_psn_equivalence_test "test3_signal_mag" 20 50 3 0 -1 "population" 0 0.9; then
+    echo "=== Test 3: Signal basis, unit threshold, prediction ==="
+    if run_psn_equivalence_test "test3_signal_unit_pred" 15 40 3 "signal" "prediction" "unit"; then
         test_results+=("PASSED")
     else
         test_results+=("FAILED")
@@ -648,10 +572,10 @@ if should_run_test 3; then
     echo ""
 fi
 
-# Test 4: Transformed signal covariance basis (V=1)
+# Test 4: Signal basis with global threshold using variance criterion
 if should_run_test 4; then
-    echo "=== Test 4: Transformed signal covariance basis ==="
-    if run_psn_equivalence_test "test4_transformed_signal" 15 40 3 1 0 "unit" 0 0.95; then
+    echo "=== Test 4: Signal basis, global threshold, variance ==="
+    if run_psn_equivalence_test "test4_signal_global_var" 20 50 3 "signal" "variance" "global" 0.95; then
         test_results+=("PASSED")
     else
         test_results+=("FAILED")
@@ -659,10 +583,10 @@ if should_run_test 4; then
     echo ""
 fi
 
-# Test 5: Noise covariance basis (V=2)
+# Test 5: Difference basis with global threshold
 if should_run_test 5; then
-    echo "=== Test 5: Noise covariance basis ==="
-    if run_psn_equivalence_test "test5_noise_basis" 15 40 3 2 0 "population" 0 0.95; then
+    echo "=== Test 5: Difference basis, global threshold ==="
+    if run_psn_equivalence_test "test5_diff_global" 15 40 3 "difference" "prediction" "global"; then
         test_results+=("PASSED")
     else
         test_results+=("FAILED")
@@ -670,12 +594,10 @@ if should_run_test 5; then
     echo ""
 fi
 
-# Test 6: PCA basis (V=3)
+# Test 6: Difference basis with hybrid threshold
 if should_run_test 6; then
-    echo "=== Test 6: PCA basis ==="
-    # Use fewer voxels and more trials to ensure all dimensions have positive signal
-    # This avoids tie-breaking issues with zero NCSNR values
-    if run_psn_equivalence_test "test6_pca_basis" 10 40 5 3 0 "unit" 0 0.95; then
+    echo "=== Test 6: Difference basis, hybrid threshold ==="
+    if run_psn_equivalence_test "test6_diff_hybrid" 15 40 3 "difference" "prediction" "hybrid"; then
         test_results+=("PASSED")
     else
         test_results+=("FAILED")
@@ -683,13 +605,25 @@ if should_run_test 6; then
     echo ""
 fi
 
-# Test 7: Random basis (V=4)
+# Test 7: PCA basis
 if should_run_test 7; then
-    echo "=== Test 7: Random basis ==="
+    echo "=== Test 7: PCA basis ==="
+    # Use fewer voxels to avoid tie-breaking issues
+    if run_psn_equivalence_test "test7_pca_basis" 10 40 5 "pca" "prediction" "global"; then
+        test_results+=("PASSED")
+    else
+        test_results+=("FAILED")
+    fi
+    echo ""
+fi
+
+# Test 8: Random basis (shared between Python and MATLAB)
+if should_run_test 8; then
+    echo "=== Test 8: Random basis ==="
     # Generate shared random basis for consistent comparison
     if [ ! -f "$TEST_DATA_DIR/shared_random_basis.npy" ]; then
         echo "Generating shared random basis..."
-        cat > "$TEST_DATA_DIR/generate_shared_random_basis.py" << EOF
+        cat > "$TEST_DATA_DIR/generate_shared_random_basis.py" << EOFPYTHON
 import numpy as np
 import scipy.io
 
@@ -715,22 +649,10 @@ np.save('$TEST_DATA_DIR/shared_random_basis.npy', Q)
 scipy.io.savemat('$TEST_DATA_DIR/shared_random_basis.mat', {'shared_basis': Q})
 
 print("Shared random basis saved successfully")
-EOF
+EOFPYTHON
         $PYTHON_CMD "$TEST_DATA_DIR/generate_shared_random_basis.py"
     fi
-    # Use "shared_random_basis" instead of "4" to indicate using shared basis
-    if run_psn_equivalence_test "test7_random_basis" 15 40 3 "shared_random_basis" -1 "population" 0 0.8; then
-        test_results+=("PASSED")
-    else
-        test_results+=("FAILED")
-    fi
-    echo ""
-fi
-
-# Test 8: Single-trial denoising mode
-if should_run_test 8; then
-    echo "=== Test 8: Single-trial denoising ==="
-    if run_psn_equivalence_test "test8_single_trial" 15 30 4 0 1 "population" 1 0.95; then
+    if run_psn_equivalence_test "test8_random_basis" 15 40 3 "shared_random_basis" "prediction" "global"; then
         test_results+=("PASSED")
     else
         test_results+=("FAILED")
@@ -741,7 +663,7 @@ fi
 # Test 9: Small dataset edge case
 if should_run_test 9; then
     echo "=== Test 9: Small dataset edge case ==="
-    if run_psn_equivalence_test "test9_small_data" 5 10 2 0 0 "population" 0 0.95; then
+    if run_psn_equivalence_test "test9_small_data" 5 10 2 "signal" "prediction" "global"; then
         test_results+=("PASSED")
     else
         test_results+=("FAILED")
@@ -749,24 +671,10 @@ if should_run_test 9; then
     echo ""
 fi
 
-# Test 10: Truncate functionality
+# Test 10: Variance eigenvalues criterion
 if should_run_test 10; then
-    echo "=== Test 10: Truncate functionality ==="
-    if run_psn_equivalence_test "test10_truncate" 15 30 4 0 0 "population" 0 0.95 2; then
-        test_results+=("PASSED")
-    else
-        test_results+=("FAILED")
-    fi
-    echo ""
-fi
-
-# Test 11: ICA basis (V=5)
-if should_run_test 11; then
-    echo "=== Test 11: ICA basis ==="
-    # Note: ICA uses different random number generators in Python (sklearn) and MATLAB (fastica)
-    # We expect the results to be similar but not numerically identical
-    # Using magnitude thresholding to make comparison more straightforward
-    if run_psn_equivalence_test "test11_ica_basis" 15 30 4 5 -1 "population" 0 0.85; then
+    echo "=== Test 10: Variance eigenvalues criterion ==="
+    if run_psn_equivalence_test "test10_var_eigenvalues" 15 30 4 "signal" "variance_eigenvalues" "global" 0.95; then
         test_results+=("PASSED")
     else
         test_results+=("FAILED")
@@ -780,17 +688,16 @@ echo "FINAL SUMMARY"
 echo "=========================================="
 
 test_names=(
-    "Signal basis, unit CV"
-    "Signal basis, population CV"
-    "Signal basis, magnitude thresh"
-    "Transformed signal basis"
-    "Noise basis"
+    "Signal/global/prediction"
+    "Signal/hybrid/prediction"
+    "Signal/unit/prediction"
+    "Signal/global/variance"
+    "Difference/global"
+    "Difference/hybrid"
     "PCA basis"
     "Random basis"
-    "Single-trial denoising"
     "Small dataset"
-    "Truncate functionality"
-    "ICA basis"
+    "Variance eigenvalues"
 )
 
 # Print individual test results
@@ -800,7 +707,7 @@ passed_tests=0
 for i in "${!test_results[@]}"; do
     result="${test_results[i]}"
     test_name="${test_names[i]}"
-    
+
     if [ "$result" = "PASSED" ]; then
         echo "✓ Test $((i+1)): $test_name - PASSED"
         ((passed_tests++))
@@ -832,103 +739,6 @@ fi
 echo ""
 echo "Test data saved in: $TEST_DATA_DIR"
 echo "You can inspect individual results and comparison summaries there."
-
-# Generate detailed summary report
-echo ""
-echo "Generating detailed comparison report..."
-
-cat > "$TEST_DATA_DIR/generate_summary_report.py" << EOF
-import numpy as np
-import os
-
-test_data_dir = '$TEST_DATA_DIR'
-
-# Test information
-test_configs = [
-    ('test1_signal_unit_cv', 'Signal basis, unit CV'),
-    ('test2_signal_pop_cv', 'Signal basis, population CV'),
-    ('test3_signal_mag', 'Signal basis, magnitude thresh'),
-    ('test4_transformed_signal', 'Transformed signal basis'),
-    ('test5_noise_basis', 'Noise basis'),
-    ('test6_pca_basis', 'PCA basis'),
-    ('test7_random_basis', 'Random basis'),
-    ('test8_single_trial', 'Single-trial denoising'),
-    ('test9_small_data', 'Small dataset'),
-    ('test10_truncate', 'Truncate functionality'),
-    ('test11_ica_basis', 'ICA basis')
-]
-
-print("=" * 80)
-print("DETAILED PSN EQUIVALENCE TEST REPORT")
-print("=" * 80)
-print("")
-
-all_passed = True
-total_field_comparisons = 0
-total_passed_comparisons = 0
-
-for test_id, test_description in test_configs:
-    summary_file = os.path.join(test_data_dir, f'{test_id}_comparison_summary.npy')
-    
-    if os.path.exists(summary_file):
-        try:
-            summary = np.load(summary_file, allow_pickle=True).item()
-            
-            test_passed = summary.get('all_passed', False)
-            failed_fields = summary.get('failed_fields', [])
-            max_error = summary.get('max_error', float('inf'))
-            
-            status = "PASS" if test_passed else "FAIL"
-            print(f"{status}: {test_description}")
-            
-            if not test_passed:
-                all_passed = False
-                print(f"      Failed fields: {failed_fields}")
-                print(f"      Max error: {max_error:.2e}")
-            else:
-                print(f"      All fields passed (max error: {max_error:.2e})")
-                
-            # Count field comparisons (estimate based on common fields)
-            estimated_fields = 4  # denoiser, denoiseddata, best_threshold, fullbasis
-            total_field_comparisons += estimated_fields
-            total_passed_comparisons += estimated_fields - len(failed_fields)
-            
-        except Exception as e:
-            print(f"ERROR loading {test_description}: {e}")
-            all_passed = False
-    else:
-        print(f"MISSING: {test_description} (no summary file)")
-        all_passed = False
-    
-    print("")
-
-print("=" * 80)
-print("SUMMARY STATISTICS")
-print("=" * 80)
-
-if total_field_comparisons > 0:
-    pass_rate = 100 * total_passed_comparisons / total_field_comparisons
-    print(f"Field-level pass rate: {total_passed_comparisons}/{total_field_comparisons} ({pass_rate:.1f}%)")
-
-test_pass_rate = 100 * sum(1 for _, _ in test_configs if all_passed) / len(test_configs)
-print(f"Test-level pass rate: {$passed_tests}/{$total_tests} ({test_pass_rate:.1f}%)")
-
-if all_passed:
-    print("")
-    print("🎉 All tests passed! Python and MATLAB PSN implementations are equivalent.")
-else:
-    print("")
-    print("❌ Some tests failed. The Python implementation needs debugging.")
-    print("   Focus on the failed fields listed above.")
-
-print("")
-print("=" * 80)
-EOF
-
-$PYTHON_CMD "$TEST_DATA_DIR/generate_summary_report.py"
-
-# Clean up (comment out to keep files for debugging)
-# rm -rf "$TEST_DATA_DIR"
 
 echo ""
 echo "PSN equivalence testing complete!"

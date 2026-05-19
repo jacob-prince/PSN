@@ -37,13 +37,12 @@ def perform_gsn(data, opt=None):
     if opt is None:
         opt = {}
 
-    # Call the external GSN package
-    results = gsn_perform_gsn(data, opt)
-
-    return {
-        'cSb': results['cSb'],
-        'cNb': results['cNb']
-    }
+    # Route through the fast internal backend. It auto-picks:
+    #   torch present  → batched-Cholesky path on CUDA/MPS/CPU
+    #   torch absent   → numpy+scipy path (triangular solve + eigh PSD projection)
+    #   NaN in data    → reference gsn.perform_gsn (uneven-trials path)
+    from ._fast_gsn import fast_perform_gsn
+    return fast_perform_gsn(data, opt)
 
 def compute_noise_ceiling(data_in):
     """
