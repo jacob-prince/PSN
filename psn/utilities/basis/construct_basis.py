@@ -6,7 +6,8 @@ from .eigh_descending_sym import eigh_descending_sym as _eigh_descending_sym
 from .normalize_orthonormalize_basis import normalize_orthonormalize_basis as _normalize_orthonormalize_basis
 
 
-def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_avg, has_nans):
+def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_avg, has_nans,
+                    custom_basis_eigenvalues=None):
     """CONSTRUCT_BASIS  Create the orthonormal basis for denoising
 
     [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, ...)
@@ -97,7 +98,13 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
             raise ValueError(f'Unknown basis type: {basis_spec}')
 
     else:
-        # User-provided custom basis (no eigenvalues available)
+        # User-provided custom basis. Eigenvalues optional — pass them
+        # via `custom_basis_eigenvalues` when the caller already has
+        # them (e.g. when reusing eigvecs cached from a previous GSN
+        # run). When provided, downstream uses 'eigenvalues' ordering
+        # instead of the signalvariance fallback, which makes
+        # opt['basis']=<eigvecs of cSb> equivalent to
+        # opt['basis']='signal' end-to-end.
         basis = basis_spec
 
         if basis.shape[0] != nunits:
@@ -110,6 +117,14 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
             basis = np.real(basis)
 
         basis = _normalize_orthonormalize_basis(basis)
-        basis_eigenvalues = None
+        if custom_basis_eigenvalues is not None:
+            ev = np.asarray(custom_basis_eigenvalues).reshape(-1)
+            if ev.shape[0] != basis.shape[1]:
+                raise ValueError(
+                    f'custom_basis_eigenvalues length ({ev.shape[0]}) must match '
+                    f'basis column count ({basis.shape[1]}).')
+            basis_eigenvalues = ev
+        else:
+            basis_eigenvalues = None
 
     return basis, basis_eigenvalues

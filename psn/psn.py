@@ -493,7 +493,9 @@ def psn(*args):
         else:
             print(f"PSN: Constructing denoising basis (type: custom matrix [{opt['basis'].shape[0]}x{opt['basis'].shape[1]}])...")
 
-    basis, basis_eigenvalues = construct_basis(cSb, cNb, opt['basis'], data, trial_avg, unit_means, ntrials_avg, has_nans)
+    basis, basis_eigenvalues = construct_basis(
+        cSb, cNb, opt['basis'], data, trial_avg, unit_means, ntrials_avg, has_nans,
+        custom_basis_eigenvalues=opt.get('basis_eigenvalues'))
 
     # Validate allowable_thresholds against actual basis dimensions
     ndims = basis.shape[1]
