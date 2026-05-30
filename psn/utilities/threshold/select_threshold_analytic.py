@@ -2,6 +2,8 @@
 
 import numpy as np
 
+from .max_tradeoff import max_tradeoff_threshold
+
 
 def select_threshold_analytic(signal, noise, basis_eigenvalues, ntrials, opt):
     """SELECT_THRESHOLD_ANALYTIC  Choose threshold using analytic or variance criterion
@@ -88,6 +90,13 @@ def select_threshold_analytic(signal, noise, basis_eigenvalues, ntrials, opt):
         objective = np.concatenate([[0], np.cumsum(diff)])
         k = np.argmax(objective)
         # k is already the number of dims (0-indexed argmax)
+
+    elif opt['criterion'] == 'max-tradeoff':
+        # Max-tradeoff: most-unbiased operating point that still captures the
+        # bulk of the achievable recovery (farthest point from the peak->trial-
+        # average chord). The objective curve returned is the recovery curve.
+        objective = np.concatenate([[0], np.cumsum(diff)])
+        k = max_tradeoff_threshold(signal, noise, ntrials)
 
     elif opt['criterion'] == 'variance':
         # Retain fraction of signal variance

@@ -25,7 +25,7 @@ def validate_options(opt, nunits):
     -----
     Validation checks:
     - basis: must be 'signal', 'difference', 'noise', 'pca', 'random', or numeric matrix
-    - criterion: must be 'prediction', 'variance', or 'variance_eigenvalues'
+    - criterion: must be 'prediction', 'max-tradeoff', 'variance', or 'variance_eigenvalues'
     - threshold_method: must be 'global', 'hybrid', or 'unit'
     - basis_ordering: must be 'eigenvalues', 'signalvariance', or 'prediction'
     - variance_threshold: must be in [0,1]
@@ -34,14 +34,14 @@ def validate_options(opt, nunits):
     - Compatibility: 'variance_eigenvalues' requires named basis (not custom/random)
       and only works with 'global' threshold_method
     """
-    valid_basis_strings = ['signal', 'difference', 'noise', 'pca', 'random', 'wiener']
+    valid_basis_strings = ['signal', 'difference', 'noise', 'pca', 'random', 'wiener', 'auto']
     if isinstance(opt['basis'], str):
         if opt['basis'] not in valid_basis_strings:
             raise ValueError(f"basis must be one of: {', '.join(valid_basis_strings)}, or a matrix")
     elif not isinstance(opt['basis'], np.ndarray):
         raise ValueError('basis must be a string or numeric matrix')
 
-    valid_criteria = ['prediction', 'variance', 'variance_eigenvalues']
+    valid_criteria = ['prediction', 'max-tradeoff', 'variance', 'variance_eigenvalues']
     if opt['criterion'] not in valid_criteria:
         raise ValueError(f"criterion must be one of: {', '.join(valid_criteria)}")
 

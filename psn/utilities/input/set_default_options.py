@@ -24,8 +24,8 @@ def set_default_options(opt, nunits):
     -------------------------------------------------------------------------
 
     <opt> - complete dict with all required fields. Defaults are:
-      basis              = 'signal'
-      criterion          = 'prediction'
+      basis              = 'auto'   (auto signal-vs-difference selection)
+      criterion          = 'max-tradeoff'
       threshold_method   = 'hybrid'
       basis_ordering     = 'eigenvalues'
       variance_threshold = 0.99
@@ -46,10 +46,10 @@ def set_default_options(opt, nunits):
     opt = opt.copy()
 
     if 'basis' not in opt:
-        opt['basis'] = 'signal'
+        opt['basis'] = 'auto'
 
     if 'criterion' not in opt:
-        opt['criterion'] = 'prediction'
+        opt['criterion'] = 'max-tradeoff'
 
     if 'threshold_method' not in opt:
         opt['threshold_method'] = 'hybrid'

@@ -18,6 +18,7 @@ from .utilities.denoise.denoise_wiener import (
     denoise_wiener_global, denoise_fullrank_wiener
 )
 from .utilities.diagnostics.compute_signal_noise_diagnostics import compute_signal_noise_diagnostics
+from .utilities.diagnostics.split_half_reliability import split_half_cross_median
 from .utilities.plotting.visualize_results import visualize_results
 from .utils import perform_gsn
 
@@ -25,7 +26,13 @@ from .utils import perform_gsn
 def psn(*args):
     """PSN  Denoise neural data using PSN (Partitioning Signal and Noise).
 
-    results = psn(data) is the default version of PSN and is shorthand for psn(data,'standard')
+    results = psn(data) is the default version of PSN and is shorthand for psn(data,'auto')
+
+    results = psn(data,'auto', opt) is the DEFAULT. It selects a near-unbiased operating point that
+              still captures the bulk of the achievable recovery (the "max-tradeoff" point on the recovery curve),
+              automatically choosing the better of the signal-basis and difference-basis
+              operating point by split-half reliability. It is shorthand for
+              psn(data,{'basis':'auto','criterion':'max-tradeoff','threshold_method':'hybrid'})
 
     results = psn(data,'conservative', opt) prioritizes retaining signal, and is shorthand for
               psn(data,{'basis':'signal','criterion':'variance','threshold_method':'global'})
@@ -38,6 +45,9 @@ def psn(*args):
               to every unit. This approach may yield improved out-of-sample generalization compared to
               'standard' but may yield unstable results in cases of limited data. It is shorthand for
               psn(data,{'basis':'difference','criterion':'prediction','threshold_method':'hybrid'})
+
+    results = psn(data,'wiener', opt) applies the full-rank matrix Wiener filter (Bayes-optimal linear
+              estimator). It is shorthand for psn(data,{'basis':'wiener'})
 
     results = psn(data, opt) is a version of PSN where the user customizes the settings.
 
@@ -69,6 +79,19 @@ def psn(*args):
     <opt> (optional) - dict with the following fields:
 
       <basis> (optional) - basis specifier. Either string or matrix:
+        'auto'       -> run the pipeline for both the 'signal' and 'difference'
+                        bases and keep whichever denoiser maximizes the MEDIAN
+                        per-unit 'TAvg vs Denoised' split-half reliability (the
+                        yellow dots in the diagnostic split-half panel): trials are
+                        split odd/even and one half's trial-average (unbiased) is
+                        correlated against the other half's denoised estimate. This
+                        is a data-driven estimate of correlation between the denoised
+                        output and the unbiased ground-truth signal. Intended with
+                        criterion='max-tradeoff' (the 'auto' mode). The chosen basis and
+                        per-candidate metrics (split_half_reliability, bias_frac,
+                        recovery) are reported in results['auto_basis_selected'] and
+                        results['auto_basis_metrics']. Wiener is excluded; request it
+                        via basis='wiener'.
         'signal'     -> use signal basis (eigenvectors of signal covariance, cSb)
         'difference' -> use "difference" basis (eigenvectors of cSb - cNb / ntrials_avg)
                         where ntrials_avg is the average number of trials (handles NaNs)
@@ -86,6 +109,12 @@ def psn(*args):
       <criterion> (optional) - string. How to determine the threshold:
         'prediction'            -> maximize out-of-sample generalization by analytically
                                    maximizing cumulative signal - noise/ntrials_avg
+        'max-tradeoff'          -> the most-unbiased operating point that still captures the
+                                   bulk of the achievable recovery: farthest from the chord on the
+                                   descending (prediction-peak -> trial-average) limb of the
+                                   recovery curve. Retains more signal variance (less bias)
+                                   than 'prediction' while keeping recovery high. Fully
+                                   analytic. Most meaningful with basis='signal'.
         'variance'              -> retain dimensions until a target fraction of signal variance is reached
         'variance_eigenvalues'  -> retain dimensions until a target fraction of the total sum of
                                    positive eigenvalues associated with the basis is reached
@@ -374,6 +403,80 @@ def psn(*args):
 
         if opt['wantverbose']:
             print(f"PSN: Complete! Full-rank Wiener filter ({results['best_threshold']:.1f} effective dimensions).")
+
+        return results
+
+    # =========================================================================
+    # AUTO BASIS SELECTION (basis='auto')
+    # =========================================================================
+    # Run the denoising pipeline once per candidate basis (signal, difference)
+    # and keep the denoiser with the highest analytic recovery (1 - E[MSE]/total_S)
+    # against the shared GSN covariances. Intended for criterion='max-tradeoff' (the
+    # 'auto' mode), where it picks the better of the signal-basis vs difference-
+    # basis. Wiener is NOT a candidate here (it is the linear optimum and
+    # would always win); request it explicitly via basis='wiener'.
+
+    if isinstance(opt['basis'], str) and opt['basis'] == 'auto':
+        total_S = np.trace(cSb)
+        I_n = np.eye(nunits)
+
+        def _recovery_bias(denoiser):
+            # Analytic context metrics (reported, not used for selection).
+            D = denoiser.T
+            DmI = D - I_n
+            bias_term = np.trace(DmI @ cSb @ DmI.T)
+            var_term = np.trace(D @ cNb @ D.T) / ntrials_avg
+            if total_S <= 0:
+                return 0.0, -np.inf
+            return bias_term / total_S, 1.0 - (bias_term + var_term) / total_S
+
+        # Selection criterion: keep the basis whose denoiser maximizes the
+        # MEDIAN per-unit 'TAvg vs Denoised' split-half reliability (the yellow
+        # dots in the diagnostic split-half panel) -- the best data-driven
+        # estimate of correlation between the denoised output and the unbiased
+        # ground-truth signal.
+        best_basis, best_metric, best_res = None, -np.inf, None
+        cand_metrics = {}
+        for cand in ('signal', 'difference'):
+            sub_opt = dict(opt)
+            sub_opt['basis'] = cand
+            sub_opt['wantfig'] = False
+            sub_opt['wantverbose'] = False
+            sub_opt['gsn_result'] = gsn_result  # reuse one GSN estimate (apples-to-apples)
+            sub_res = psn(data, sub_opt)
+            shr = split_half_cross_median(data, sub_res['denoiser'], unit_means, has_nans)
+            bias_frac, recovery = _recovery_bias(sub_res['denoiser'])
+            cand_metrics[cand] = {'split_half_reliability': shr,
+                                  'bias_frac': bias_frac, 'recovery': recovery}
+            # best_res is None on the first candidate; ties keep the earlier
+            # ('signal', the more near-unbiased) candidate.
+            if best_res is None or shr > best_metric:
+                best_basis, best_metric, best_res = cand, shr, sub_res
+
+        results = best_res
+        results['auto_basis_selected'] = best_basis
+        results['auto_basis_metrics'] = cand_metrics
+
+        if opt['wantverbose']:
+            cand_str = ', '.join(
+                f"{k}(split_half={v['split_half_reliability']:.4f}, "
+                f"bias={v['bias_frac']:.3f}, rec={v['recovery']:.3f})"
+                for k, v in cand_metrics.items())
+            print(f"PSN: auto basis selection chose '{best_basis}' "
+                  f"(max median split-half 'TAvg vs Denoised' reliability; candidates: {cand_str})")
+
+        # Build a figure-opt that reflects the WINNING basis (so all panels are
+        # accurate) but honors the user's figure-related settings.
+        fig_opt = dict(results['opt_used'])
+        for key in ('wantfig', 'figurepath', 'wantverbose', 'cmap', 'split_half_metric'):
+            if key in opt:
+                fig_opt[key] = opt[key]
+        results['opt_used'] = fig_opt
+
+        if opt['wantfig']:
+            if opt['wantverbose']:
+                print('PSN: Generating diagnostic figures...')
+            visualize_results(results, fig_opt)
 
         return results
 

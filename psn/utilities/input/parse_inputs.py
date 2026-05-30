@@ -16,7 +16,7 @@ def parse_inputs(*args):
     -------------------------------------------------------------------------
 
     <args> - Variable input arguments from psn(). Can be:
-      (data,)                     - Use default 'standard' mode
+      (data,)                     - Use default 'auto' mode
       (data, 'mode')              - Use predefined mode ('conservative', 'standard', 'aggressive')
       (data, opt)                 - Use custom options dict
       (data, 'mode', opt)         - Use predefined mode with option overrides
@@ -31,6 +31,9 @@ def parse_inputs(*args):
       'conservative' - Sets basis='signal', criterion='variance', threshold_method='global'
       'standard'     - Sets basis='signal', criterion='prediction', threshold_method='hybrid'
       'aggressive'   - Sets basis='difference', criterion='prediction', threshold_method='hybrid'
+      'auto'         - Sets basis='auto', criterion='max-tradeoff', threshold_method='hybrid'
+                       (auto-selects the better of the signal-basis vs difference-basis operating point)
+      'wiener'       - Sets basis='wiener' (full-rank matrix Wiener filter)
     """
 
     if len(args) < 1:
@@ -60,8 +63,20 @@ def parse_inputs(*args):
                 opt['criterion'] = 'prediction'
                 opt['threshold_method'] = 'hybrid'
 
+            elif mode == 'auto':
+                # Auto-select the better of the signal-basis and difference-basis
+                # max-tradeoff point (by split-half reliability). Near-unbiased,
+                # fully analytic. Wiener is available separately via 'wiener'.
+                opt['basis'] = 'auto'
+                opt['criterion'] = 'max-tradeoff'
+                opt['threshold_method'] = 'hybrid'
+
+            elif mode == 'wiener':
+                # Full-rank matrix Wiener filter (Bayes-optimal linear estimator).
+                opt['basis'] = 'wiener'
+
             else:
-                raise ValueError(f"Unknown mode: {second_arg}. Must be 'conservative', 'standard', or 'aggressive'")
+                raise ValueError(f"Unknown mode: {second_arg}. Must be 'conservative', 'standard', 'aggressive', 'auto', or 'wiener'")
 
             if len(args) >= 3:
                 user_opt = args[2]
@@ -74,9 +89,8 @@ def parse_inputs(*args):
         else:
             raise ValueError('Second argument must be a mode string or options dict')
     else:
-        # Default: standard mode
-        opt['basis'] = 'signal'
-        opt['criterion'] = 'prediction'
-        opt['threshold_method'] = 'hybrid'
+        # Default: 'auto' mode. Leave opt empty so set_default_options supplies
+        # the defaults (basis='auto', criterion='max-tradeoff', threshold_method='hybrid').
+        opt = {}
 
     return data, opt

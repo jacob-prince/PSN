@@ -374,7 +374,12 @@ class TestBasisOrdering:
     @pytest.mark.parametrize('ordering', ['eigenvalues', 'signalvariance', 'prediction'])
     def test_basis_ordering(self, ordering):
         data = _gen_lowrank(80, 60, 4, rank=10, seed=0)
+        # Pin criterion='prediction' to isolate basis-ordering / backend
+        # equivalence (the default 'max-tradeoff' criterion's threshold can differ by
+        # +-1 dim between the fast and reference GSN backends under tiny
+        # covariance perturbations, which is not what this test exercises).
         opt = {'basis': 'signal', 'basis_ordering': ordering,
+               'criterion': 'prediction',
                'wantfig': False, 'wantverbose': False}
         _compare_roundtrip(data, opt, label=f'ordering={ordering}')
 

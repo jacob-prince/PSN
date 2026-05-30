@@ -485,14 +485,16 @@ class TestPresetModes:
         assert results['opt_used']['threshold_method'] == 'hybrid'
 
     def test_default_mode(self, sample_data):
-        """Test that default (no mode specified) uses standard."""
+        """Test that default (no mode specified) uses the 'auto' mode."""
         results = psn(sample_data, {'wantfig': False, 'wantverbose': False})
 
         assert 'denoiseddata' in results
-        # Default should be same as standard mode
-        assert results['opt_used']['basis'] == 'signal'
-        assert results['opt_used']['criterion'] == 'prediction'
+        # Default is now 'auto': signal-vs-difference selection at the max-tradeoff point.
+        assert results['opt_used']['criterion'] == 'max-tradeoff'
         assert results['opt_used']['threshold_method'] == 'hybrid'
+        # auto selects one of the two truncation bases (reported in results)
+        assert results['auto_basis_selected'] in ('signal', 'difference')
+        assert results['opt_used']['basis'] in ('signal', 'difference')
 
 
 # ============================================================================

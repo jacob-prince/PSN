@@ -2,6 +2,7 @@
 
 import numpy as np
 from ..threshold.constrain_to_allowable import constrain_to_allowable
+from ..threshold.max_tradeoff import max_tradeoff_threshold
 from .compute_unit_weighted_projections import compute_unit_weighted_projections
 
 
@@ -116,6 +117,11 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
             avg_curve = np.mean(np.column_stack([unit_cumsum_curves[i] for i in group_indices]), axis=1)
             k_group = np.argmax(avg_curve)
             # k_group is already the number of dims (0-indexed argmax)
+        elif opt['criterion'] == 'max-tradeoff':
+            # Max-tradeoff on this group's averaged recovery curve (per-unit thresholds)
+            avg_signal = np.mean(np.column_stack([unit_signal_vars[i] for i in group_indices]), axis=1)
+            avg_noise = np.mean(np.column_stack([unit_noise_vars[i] for i in group_indices]), axis=1)
+            k_group = max_tradeoff_threshold(avg_signal, avg_noise, ntrials)
         elif opt['criterion'] == 'variance':
             # Average signal variances across units in this group
             avg_signal = np.mean(np.column_stack([unit_signal_vars[i] for i in group_indices]), axis=1)

@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy.stats as stats
 from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.gridspec import GridSpec
+from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 
 
 def cmapsign4(n=256):
@@ -78,6 +78,127 @@ def redblue(n=256):
     return cmap
 
 
+def _plot_recovery_tradeoff(ax, cSb, cNb, t, data, unit_means, has_nans,
+                            denoiser=None, best_threshold=None):
+    """Bias vs. split-half-reliability tradeoff panel.
+
+    x = fraction of signal variance retained (analytic, from cSb).
+    y = MEDIAN per-unit 'TAvg vs Denoised' split-half reliability — the same
+        quantity as the yellow dots in the split-half panel. Trials are split
+        odd/even; for each operating point we correlate one half's
+        trial-average (unbiased) against the other half's denoised estimate,
+        averaged both ways, then take the median over units. This is a
+        data-driven estimate of correlation to the unbiased ground-truth signal,
+        and is exactly the criterion the 'auto' basis selection optimizes.
+
+    Draws signal-basis and difference-basis truncation trajectories plus
+    trial-average and Wiener reference dots, and (if ``denoiser`` is given) marks
+    the actual operating point of the denoising that was implemented.
+    """
+    n = cSb.shape[0]
+    total_S = np.trace(cSb)
+    ax.set_title('Split-half reliability vs. signal retained')
+    if total_S <= 0:
+        ax.text(0.5, 0.5, 'no signal variance', ha='center', va='center',
+                transform=ax.transAxes)
+        return
+
+    def _eig_desc(A):
+        A = (A + A.T) / 2.0
+        w, V = np.linalg.eigh(A)
+        return V[:, np.argsort(w)[::-1]]
+
+    # odd/even trial split (matches the split-half panel below)
+    ntrials = data.shape[2]
+    A = data[:, :, np.arange(0, ntrials, 2)]
+    B = data[:, :, np.arange(1, ntrials, 2)]
+    tavg_A = np.nanmean(A, axis=2) if has_nans else np.mean(A, axis=2)
+    tavg_B = np.nanmean(B, axis=2) if has_nans else np.mean(B, axis=2)
+    um = unit_means[:, np.newaxis]
+
+    def _row_corr(X, Y):
+        if has_nans:
+            out = np.full(X.shape[0], np.nan)
+            for u in range(X.shape[0]):
+                m = ~(np.isnan(X[u]) | np.isnan(Y[u]))
+                if m.sum() > 1 and np.std(X[u, m]) > 0 and np.std(Y[u, m]) > 0:
+                    out[u] = np.corrcoef(X[u, m], Y[u, m])[0, 1]
+            return out
+        Xc = X - X.mean(1, keepdims=True)
+        Yc = Y - Y.mean(1, keepdims=True)
+        den = np.sqrt((Xc ** 2).sum(1) * (Yc ** 2).sum(1))
+        out = np.full(X.shape[0], np.nan)
+        nz = den > 0
+        out[nz] = (Xc * Yc).sum(1)[nz] / den[nz]
+        return out
+
+    def _shr_from_dn(dn_A, dn_B):
+        both = 0.5 * (_row_corr(tavg_A, dn_B) + _row_corr(dn_A, tavg_B))
+        return float(np.nanmedian(both)) if np.any(~np.isnan(both)) else np.nan
+
+    def _shr_for_D(D):
+        return _shr_from_dn(D @ (tavg_A - um) + um, D @ (tavg_B - um) + um)
+
+    def _trunc_curve(V):
+        # x: cumulative signal-variance fraction; y: split-half reliability per K
+        s = np.sum((cSb @ V) * V, axis=0)
+        svf = np.concatenate([[0.0], np.cumsum(s)]) / total_S
+        coefA = V.T @ (tavg_A - um)
+        coefB = V.T @ (tavg_B - um)
+        ys = [_shr_from_dn((V[:, :K] @ coefA[:K, :]) + um,
+                           (V[:, :K] @ coefB[:K, :]) + um) for K in range(n + 1)]
+        return svf, np.array(ys)
+
+    xs, ys = _trunc_curve(_eig_desc(cSb))                  # signal basis
+    xd, yd = _trunc_curve(_eig_desc(cSb - cNb / t))        # difference basis
+
+    # trial-average dot (D = I) -> equals the 'TAvg vs TAvg' median reliability
+    x_ta, y_ta = 1.0, _shr_for_D(np.eye(n))
+
+    # Wiener dot
+    M = cSb + cNb / t
+    M = M + 1e-10 * np.trace(M) / n * np.eye(n)
+    Dw = np.linalg.solve(M, cSb).T                          # cSb @ inv(M)
+    x_w, y_w = np.trace(Dw @ cSb @ Dw.T) / total_S, _shr_for_D(Dw)
+
+    ax.plot(xs, ys, '-', color='#1f77b4', lw=2, label='signal basis')
+    ax.plot(xd, yd, '-', color='#2ca02c', lw=2, label='difference basis')
+    ax.scatter([x_ta], [y_ta], marker='s', s=70, color='0.4', edgecolor='k',
+               linewidth=0.6, zorder=5, label='trial-avg')
+    ax.scatter([x_w], [y_w], marker='D', s=70, color='#d62728', edgecolor='k',
+               linewidth=0.6, zorder=5, label='Wiener')
+
+    # Actual operating point of the denoiser PSN applied (D = denoiser.T).
+    if denoiser is not None:
+        D = np.asarray(denoiser).T
+        x_ch = np.trace(D @ cSb @ D.T) / total_S
+        y_ch = _shr_for_D(D)
+        if best_threshold is None:
+            klab = 'chosen'
+        else:
+            bt = np.asarray(best_threshold, dtype=float)
+            if bt.size == 1:
+                kv = float(bt)
+                klab = f'K={kv:.0f}' if abs(kv - round(kv)) < 1e-6 else f'K={kv:.1f}'
+            else:
+                klab = f'K≈{bt.mean():.1f}'
+        ax.scatter([x_ch], [y_ch], marker='*', s=320, color='gold',
+                   edgecolor='k', linewidth=0.9, zorder=6,
+                   label=f'PSN chosen ({klab})')
+
+    ax.axhline(1.0, color='0.8', lw=0.8)
+    ax.set_xlabel('frac. signal var. retained')
+    ax.set_ylabel('median split-half r (TAvg vs Denoised)')
+    ax.set_xlim(-0.02, 1.02)
+    ax.set_ylim(-0.02, 1.02)
+    ax.set_aspect('equal', adjustable='box')   # square is a square
+    ax.grid(alpha=0.25)
+    # Upper-left is always empty: curves rise from the origin to the right, so
+    # low sv_frac (left) always has low reliability (bottom). Fixed placement
+    # there never collides with the data.
+    ax.legend(fontsize=7, loc='upper left', framealpha=0.85)
+
+
 def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap=None,
                             split_half_metric='correlation'):
     """
@@ -124,14 +245,19 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # Create a large figure with custom grid layout
     # Top row: 5 subplots (cSb, cNb, basis dims (half), eigenvalues (half), sig/noise var)
     # Rows 2-4: standard 4x4 grid
-    fig = plt.figure(figsize=(24, 15))
+    fig = plt.figure(figsize=(27, 15))
 
     # Create GridSpec: 4 rows, 8 columns (to allow half-width subplots)
     # Increase spacing to prevent overlap
     # Use width_ratios to make first 2 columns slightly narrower (for objective plot with twin y-axis)
-    gs = GridSpec(4, 8, figure=fig, hspace=0.45, wspace=0.6,
-                  left=0.05, right=0.95, top=0.93, bottom=0.05,
+    gs = GridSpec(4, 8, figure=fig, hspace=0.35, wspace=0.35,
+                  left=0.04, right=0.985, top=0.95, bottom=0.045,
                   width_ratios=[0.9, 0.9, 1, 1, 1, 1, 1, 1])
+
+    # Feature 1: row 0 gets a 6th panel at the far right (recovery tradeoff),
+    # keeping the original relative widths of the first five panels.
+    gs_row0 = GridSpecFromSubplotSpec(1, 6, subplot_spec=gs[0, :],
+                                      width_ratios=[2, 2, 1, 1, 2, 2], wspace=0.45)
 
     # Extract data dimensions
     nunits, nconds, ntrials = data.shape
@@ -264,7 +390,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # =========================================================================
     # Plot 1: Basis source matrix (signal covariance or basis-specific)
     # =========================================================================
-    ax1 = fig.add_subplot(gs[0, 0:2])  # First 2 columns of row 0
+    ax1 = fig.add_subplot(gs_row0[0, 0])  # Row 0 panel 1
     if 'gsn_result' in results and 'cSb' in results['gsn_result']:
         cSb = results['gsn_result']['cSb']
         cNb = results['gsn_result']['cNb']
@@ -312,7 +438,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # =========================================================================
     # Plot 2: Noise Covariance (cNb)
     # =========================================================================
-    ax2 = fig.add_subplot(gs[0, 2:4])  # Columns 2-3 of row 0
+    ax2 = fig.add_subplot(gs_row0[0, 1])  # Row 0 panel 2
     if 'gsn_result' in results and 'cNb' in results['gsn_result']:
         cNb = results['gsn_result']['cNb']
 
@@ -339,7 +465,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # =========================================================================
     # Plot 3: Top 5 PCs as vertical line plots (half width)
     # =========================================================================
-    ax3 = fig.add_subplot(gs[0, 4:5])  # Column 4 of row 0 (half width)
+    ax3 = fig.add_subplot(gs_row0[0, 2])  # Row 0 panel 3 (half width)
     if 'fullbasis' in results:
         num_pcs = min(5, results['fullbasis'].shape[1])
 
@@ -382,7 +508,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # =========================================================================
     # Plot 4: Global dimension ranking (eigenvalues or signal variance) - half width
     # =========================================================================
-    ax4 = fig.add_subplot(gs[0, 5:6])  # Column 5 of row 0 (half width)
+    ax4 = fig.add_subplot(gs_row0[0, 3])  # Row 0 panel 4 (half width)
 
     # Determine if we should use log scale for x-axis (for large datasets)
     use_logscale = nunits > 50
@@ -529,7 +655,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # =========================================================================
     # Plot 5: Signal vs Noise variance
     # =========================================================================
-    ax5 = fig.add_subplot(gs[0, 6:8])  # Columns 6-7 of row 0
+    ax5 = fig.add_subplot(gs_row0[0, 4])  # Row 0 panel 5
     if 'signalvar' in results and 'noisevar' in results:
         if not isinstance(results['signalvar'], (list, tuple)):
             # Global or averaged
@@ -596,6 +722,22 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     else:
         ax5.text(0.5, 0.5, 'Variance Info\nNot Available',
                 ha='center', va='center', transform=ax5.transAxes)
+
+    # =========================================================================
+    # Plot 5b (NEW, Feature 1): recovery / bias-variance tradeoff (far right of row 0)
+    # =========================================================================
+    ax_rec = fig.add_subplot(gs_row0[0, 5])
+    if 'gsn_result' in results and 'cSb' in results['gsn_result'] \
+            and 'cNb' in results['gsn_result']:
+        _plot_recovery_tradeoff(ax_rec, results['gsn_result']['cSb'],
+                                results['gsn_result']['cNb'], ntrials_avg,
+                                data, results['unit_means'], has_nans,
+                                denoiser=results.get('denoiser'),
+                                best_threshold=results.get('best_threshold'))
+    else:
+        ax_rec.set_title('Recovery vs. signal retained')
+        ax_rec.text(0.5, 0.5, 'no GSN covariances', ha='center', va='center',
+                    transform=ax_rec.transAxes)
 
     # =========================================================================
     # Plot 6: Objective function (or Wiener weights if denoiser_type='wiener')
