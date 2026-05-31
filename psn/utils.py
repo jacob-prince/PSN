@@ -37,12 +37,10 @@ def perform_gsn(data, opt=None):
     if opt is None:
         opt = {}
 
-    # Route through the fast internal backend. It auto-picks:
-    #   torch present  → batched-Cholesky path on CUDA/MPS/CPU
-    #   torch absent   → numpy+scipy path (triangular solve + eigh PSD projection)
-    #   NaN in data    → reference gsn.perform_gsn (uneven-trials path)
-    from ._fast_gsn import fast_perform_gsn
-    return fast_perform_gsn(data, opt)
+    # Route through the installed gsn package (single source of truth).
+    # The legacy `psn._fast_gsn` snapshot is kept on disk for the unit
+    # tests in tests/test_fast_gsn.py — it's no longer used here.
+    return gsn_perform_gsn(data, opt)
 
 def compute_noise_ceiling(data_in):
     """
