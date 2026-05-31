@@ -161,7 +161,8 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
     if not is_cpu(device) and threshold_only and len(unique_thresholds) > 0:
         # GPU hybrid path: do all threshold-group matmuls on device
         # in one shot, then bring the (n, n) denoiser back to host.
-        # At nunits=24640 this drops from ~100 sec CPU to ~2 sec GPU.
+        # The matmul is the dominant cost at large nunits — GPU
+        # cuts it by 1-2 orders of magnitude over multi-threaded CPU.
         import torch
         tdtype = (torch.float64 if basis.dtype == np.float64
                   else torch.float32)

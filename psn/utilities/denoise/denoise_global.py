@@ -106,8 +106,9 @@ def denoise_global(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, o
     best_threshold = k
     device = resolve_device(opt.get('device', 'cpu'))
 
-    # Build symmetric denoiser. The (k, n) @ (n, k) -> (n, n) GEMM at
-    # nunits=24640 is ~100 sec CPU multi-thread, ~1-2 sec on GPU.
+    # Build symmetric denoiser. The (k, n) @ (n, k) -> (n, n) GEMM
+    # dominates wall-clock at large nunits; GPU is 1-2 orders of
+    # magnitude faster than multi-threaded CPU.
     if k > 0:
         if is_cpu(device):
             denoiser = basis[:, :k] @ basis[:, :k].T

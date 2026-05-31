@@ -2,10 +2,10 @@
 
 Background
 ----------
-At large nunits (e.g. EEG / electrode-x-timepoint product = 24640),
-PSN's basis-construction eigh of cSb dominates wall-clock — 5-10 min
-per call on an H100, and PSN's 'auto' mode runs it twice (signal +
-difference) before picking. The fast-GSN branch added an opt-in
+At large nunits, PSN's basis-construction eigh of cSb dominates
+wall-clock (eigh is O(N^3)), and PSN's 'auto' mode runs it twice
+(signal + difference) before picking. The fast-GSN branch added an
+opt-in
 ``opt['returns']`` selector so GSN can ALSO compute and return:
 
     eigvecs_signal,     eigvals_signal       — eigh(cSb)

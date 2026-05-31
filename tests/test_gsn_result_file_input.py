@@ -3,10 +3,10 @@ to cached eigvecs when present.
 
 Background
 ----------
-Running GSN on large EEG datasets (nvox=24640 for the sub-06 cache)
-takes minutes per call. The natural pattern is to persist the GSN
-output to a single .npz file and then point any number of downstream
-PSN calls at that file. This file verifies:
+Running GSN at large nunits takes minutes per call. The natural
+pattern is to persist the GSN output to a single .npz file and then
+point any number of downstream PSN calls at that file. This file
+verifies:
 
   1. opt['gsn_result'] accepts a string path (existing dict path
      remains the legacy default).

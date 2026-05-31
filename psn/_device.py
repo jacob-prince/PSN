@@ -7,9 +7,9 @@ PSN's bottlenecks at large nunits (≥10000) are matmul-heavy:
   - denoise_wiener: full-rank Σ_S @ (Σ_S + Σ_N/t)^{-1}
 
 All of these are pure GEMM / solve work that torch on a CUDA / MPS
-device can do 10-50× faster than numpy on CPU at N=24640. This module
-provides the minimal infrastructure to opt into that without
-restructuring the call sites:
+device can do 10-50× faster than numpy on CPU once N is in the tens
+of thousands. This module provides the minimal infrastructure to
+opt into that without restructuring the call sites:
 
   device = resolve_device(opt.get('device', 'cpu'))
   cS_t = to_device(cS, device)
