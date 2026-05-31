@@ -9,6 +9,8 @@ optimal Wiener weights. Also provides the full-rank matrix Wiener filter
 import numpy as np
 from scipy.linalg import solve
 
+from psn._device import resolve_device, to_device, from_device, is_cpu
+
 
 def compute_wiener_weights(signal_proj, noise_proj, ntrials_eval):
     """Compute Wiener shrinkage weights for each dimension.
@@ -51,7 +53,7 @@ def compute_wiener_weights(signal_proj, noise_proj, ntrials_eval):
     return weights
 
 
-def denoise_wiener(basis, signal_proj, noise_proj, ntrials_eval):
+def denoise_wiener(basis, signal_proj, noise_proj, ntrials_eval, device='cpu'):
     """Build Wiener shrinkage denoiser matrix.
 
     Instead of hard truncation (keep K dims, drop rest), applies continuous
@@ -87,9 +89,25 @@ def denoise_wiener(basis, signal_proj, noise_proj, ntrials_eval):
     # Compute Wiener weights
     weights = compute_wiener_weights(signal_proj, noise_proj, ntrials_eval)
 
-    # Build Wiener denoiser: B @ diag(w) @ B.T
-    # Efficient computation: (B * w) @ B.T
-    denoiser = (basis * weights) @ basis.T
+    # Build Wiener denoiser: B @ diag(w) @ B.T = (B * w) @ B.T.
+    # Same shape as the hybrid denoise's matmul — GPU when requested.
+    dev = resolve_device(device)
+    if is_cpu(dev):
+        denoiser = (basis * weights) @ basis.T
+    else:
+        import torch
+        tdtype = (torch.float64 if basis.dtype == np.float64
+                  else torch.float32)
+        basis_t = to_device(basis, dev, dtype=tdtype)
+        weights_t = to_device(weights, dev, dtype=tdtype)
+        denoiser_t = (basis_t * weights_t) @ basis_t.T
+        denoiser = from_device(denoiser_t)
+        del basis_t, weights_t, denoiser_t
+        if str(dev).startswith('cuda'):
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
 
     # Effective number of dimensions (sum of weights)
     effective_dims = np.sum(weights)
@@ -148,7 +166,8 @@ def denoise_wiener_global(basis, signal_proj, noise_proj, basis_eigenvalues, ntr
 
     # Build Wiener denoiser
     denoiser, wiener_weights, effective_dims = denoise_wiener(
-        basis, signal_proj, noise_proj, ntrials_eval
+        basis, signal_proj, noise_proj, ntrials_eval,
+        device=opt.get('device', 'cpu')
     )
 
     # Compute objective curve for visualization (prediction objective)
@@ -209,10 +228,30 @@ def denoise_fullrank_wiener(cSb, cNb, data, trial_avg, unit_means, ntrials_avg, 
     # D = Σ_S @ (Σ_S + Σ_N/t)^{-1}
     # Store denoiser such that denoiser.T @ x = D @ x
     # So denoiser = inv(A) @ Σ_S, and denoiser.T = Σ_S @ inv(A) = D
+    device = resolve_device(opt.get('device', 'cpu'))
     A = cSb + cNb / ntrials_eval
     jitter = 1e-10 * np.trace(A) / nunits
     A += jitter * np.eye(nunits)
-    denoiser = solve(A, cSb, assume_a='sym')
+    if is_cpu(device):
+        denoiser = solve(A, cSb, assume_a='sym')
+    else:
+        # GPU solve. Symmetric-positive-definite (after the jitter
+        # term we just added), so use cholesky_solve which is the
+        # GPU-native equivalent of scipy.linalg.solve(assume_a='sym').
+        import torch
+        tdtype = (torch.float64 if cSb.dtype == np.float64
+                  else torch.float32)
+        A_t   = to_device(A,   device, dtype=tdtype)
+        cSb_t = to_device(cSb, device, dtype=tdtype)
+        L = torch.linalg.cholesky(A_t)
+        denoiser_t = torch.cholesky_solve(cSb_t, L)
+        denoiser = from_device(denoiser_t)
+        del A_t, cSb_t, L, denoiser_t
+        if str(device).startswith('cuda'):
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
 
     # Apply denoiser
     denoiseddata = denoiser.T @ (trial_avg - unit_means[:, np.newaxis]) + unit_means[:, np.newaxis]

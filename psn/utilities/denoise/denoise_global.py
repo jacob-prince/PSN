@@ -4,6 +4,7 @@ import numpy as np
 from ..threshold.select_threshold_analytic import select_threshold_analytic
 from ..threshold.constrain_to_allowable import constrain_to_allowable
 from .compute_unit_weighted_projections import compute_unit_weighted_projections
+from psn._device import resolve_device, to_device, from_device, is_cpu
 
 
 def denoise_global(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, opt):
@@ -103,10 +104,26 @@ def denoise_global(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, o
             k, objective = select_threshold_analytic(signal_proj, noise_proj, basis_eigenvalues, ntrials, opt)
 
     best_threshold = k
+    device = resolve_device(opt.get('device', 'cpu'))
 
-    # Build symmetric denoiser
+    # Build symmetric denoiser. The (k, n) @ (n, k) -> (n, n) GEMM at
+    # nunits=24640 is ~100 sec CPU multi-thread, ~1-2 sec on GPU.
     if k > 0:
-        denoiser = basis[:, :k] @ basis[:, :k].T
+        if is_cpu(device):
+            denoiser = basis[:, :k] @ basis[:, :k].T
+        else:
+            import torch
+            tdtype = (torch.float64 if basis.dtype == np.float64
+                      else torch.float32)
+            basis_t = to_device(basis, device, dtype=tdtype)
+            denoiser_t = basis_t[:, :k] @ basis_t[:, :k].T
+            denoiser = from_device(denoiser_t).astype(np.float64, copy=False)
+            del denoiser_t, basis_t
+            if str(device).startswith('cuda'):
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
     else:
         denoiser = np.zeros((nunits, nunits))
 
@@ -118,7 +135,8 @@ def denoise_global(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, o
     # Even though we use a global threshold, we can still compute how much each
     # dimension contributes to each unit's signal and noise
     unit_cumsum_curves, unit_signal_vars, unit_noise_vars, _ = \
-        compute_unit_weighted_projections(basis, signal_proj, noise_proj, ntrials, False)
+        compute_unit_weighted_projections(basis, signal_proj, noise_proj, ntrials, False,
+                                            device=device)
 
     return denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_curves, \
            unit_signal_vars, unit_noise_vars

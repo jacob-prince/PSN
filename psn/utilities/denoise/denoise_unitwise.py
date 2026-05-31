@@ -4,6 +4,7 @@ import numpy as np
 from ..threshold.constrain_to_allowable import constrain_to_allowable
 from ..threshold.max_tradeoff import max_tradeoff_threshold
 from .compute_unit_weighted_projections import compute_unit_weighted_projections
+from psn._device import resolve_device, to_device, from_device, is_cpu
 
 
 def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, opt, threshold_only):
@@ -72,6 +73,7 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
     """
 
     nunits, ndims = basis.shape
+    device = resolve_device(opt.get('device', 'cpu'))
 
     denoiser = np.zeros((nunits, nunits))
 
@@ -80,7 +82,8 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
     # If threshold_only=False (full unit-specific), rank by each unit's signal variance
     do_unit_ranking = not threshold_only
     unit_cumsum_curves, unit_signal_vars, unit_noise_vars, unit_orderings = \
-        compute_unit_weighted_projections(basis, signal_proj, noise_proj, ntrials, do_unit_ranking)
+        compute_unit_weighted_projections(basis, signal_proj, noise_proj, ntrials,
+                                            do_unit_ranking, device=device)
 
     # Second pass: select thresholds considering unit_groups
     unique_groups = np.unique(opt['unit_groups'])
@@ -155,20 +158,43 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
     # Optimize by grouping units with same threshold and ordering
     unique_thresholds = np.unique(best_threshold[best_threshold > 0])
 
-    for k in unique_thresholds:
-        units_with_k = np.where(best_threshold == k)[0]
+    if not is_cpu(device) and threshold_only and len(unique_thresholds) > 0:
+        # GPU hybrid path: do all threshold-group matmuls on device
+        # in one shot, then bring the (n, n) denoiser back to host.
+        # At nunits=24640 this drops from ~100 sec CPU to ~2 sec GPU.
+        import torch
+        tdtype = (torch.float64 if basis.dtype == np.float64
+                  else torch.float32)
+        basis_t = to_device(basis, device, dtype=tdtype)
+        denoiser_t = torch.zeros((nunits, nunits), dtype=tdtype, device=device)
+        for k in unique_thresholds:
+            units_k = np.where(best_threshold == k)[0]
+            units_k_t = torch.as_tensor(units_k, device=device, dtype=torch.long)
+            Bu = basis_t[:, :k]
+            # denoiser[:, units] = Bu @ Bu[units, :].T
+            denoiser_t[:, units_k_t] = Bu @ Bu.index_select(0, units_k_t).T
+        denoiser = from_device(denoiser_t).astype(np.float64, copy=False)
+        del denoiser_t, basis_t
+        if str(device).startswith('cuda'):
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+    else:
+        for k in unique_thresholds:
+            units_with_k = np.where(best_threshold == k)[0]
 
-        if threshold_only:
-            # Hybrid mode: all units share same ordering, vectorize fully
-            Bu = basis[:, :k]
-            # Vectorized: denoiser[:, units] = Bu @ Bu[units, :].T
-            denoiser[:, units_with_k] = Bu @ Bu[units_with_k, :].T
-        else:
-            # Full unit-specific: group by ordering within same threshold
-            for u in units_with_k:
-                sort_idx_u = unit_orderings[u, :]
-                Bu = basis[:, sort_idx_u[:k]]
-                denoiser[:, u] = Bu @ Bu[u, :]
+            if threshold_only:
+                # Hybrid mode: all units share same ordering, vectorize fully
+                Bu = basis[:, :k]
+                # Vectorized: denoiser[:, units] = Bu @ Bu[units, :].T
+                denoiser[:, units_with_k] = Bu @ Bu[units_with_k, :].T
+            else:
+                # Full unit-specific: group by ordering within same threshold
+                for u in units_with_k:
+                    sort_idx_u = unit_orderings[u, :]
+                    Bu = basis[:, sort_idx_u[:k]]
+                    denoiser[:, u] = Bu @ Bu[u, :]
 
     # Population-level totals for visualization
     # Sum across units to get total variance (since unit weights sum to 1,

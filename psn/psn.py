@@ -536,7 +536,8 @@ def psn(*args):
         print('PSN: Computing signal and noise variance per dimension...')
 
     # Always use GSN-based projection for all basis types
-    signal_proj, noise_proj = project_covs(cSb, cNb, basis)
+    signal_proj, noise_proj = project_covs(cSb, cNb, basis,
+                                            device=opt.get('device', 'cpu'))
 
     # Save original basis and projections for visualization (before reordering)
     basis_viz = basis.copy()
