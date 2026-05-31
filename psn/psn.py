@@ -22,6 +22,87 @@ from .utilities.diagnostics.split_half_reliability import split_half_cross_media
 from .utilities.plotting.visualize_results import visualize_results
 
 
+_GSN_FILE_KEYS = ('cSb', 'cNb', 'mnN', 'mnS', 'ncsnr',
+                  'shrinklevelN', 'shrinklevelD', 'numiters',
+                  'eigvecs_signal', 'eigvals_signal',
+                  'eigvecs_difference', 'eigvals_difference')
+
+
+def _load_gsn_result(gsn_result):
+    """Accept either a dict-like gsn_result OR a path / open npz file.
+
+    Lets callers persist a GSN run to disk once and then point any
+    number of downstream psn() calls at the same file — without having
+    to load it themselves. Supports:
+
+      gsn_result = {'cSb': ..., 'cNb': ...}            # dict (legacy)
+      gsn_result = '/path/to/gsn_result.npz'           # path string
+      gsn_result = Path('/path/to/gsn_result.npz')     # pathlib.Path
+      gsn_result = np.load(...)                         # NpzFile
+
+    For .npz files we pull the standard GSN keys (cSb, cNb, plus the
+    optional eigvecs / eigvals from the GSN eigenbasis-returns feature)
+    into a plain dict so downstream code can treat the result uniformly.
+    """
+    import os
+    if isinstance(gsn_result, (str, bytes)) or hasattr(gsn_result, '__fspath__'):
+        path = os.fspath(gsn_result)
+        if not path.endswith('.npz'):
+            raise ValueError(
+                f"opt['gsn_result'] string path must end in .npz; got {path!r}")
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"opt['gsn_result'] points to a file that doesn't exist: {path}")
+        npz = np.load(path, allow_pickle=False)
+        d = {}
+        for k in _GSN_FILE_KEYS:
+            if k in npz.files:
+                d[k] = np.asarray(npz[k])
+        npz.close()
+        return d
+    # NpzFile (np.load result): pull what we need without closing.
+    if hasattr(gsn_result, 'files') and not isinstance(gsn_result, dict):
+        d = {}
+        for k in _GSN_FILE_KEYS:
+            if k in gsn_result.files:
+                d[k] = np.asarray(gsn_result[k])
+        return d
+    return gsn_result                                   # dict / dict-like
+
+
+def _maybe_use_cached_eigvecs(opt, gsn_result):
+    """If opt['basis'] is 'signal' or 'difference' AND the gsn_result
+    has the matching cached eigvecs + eigvals, swap basis to the matrix
+    and inject basis_eigenvalues. This is what makes
+    `psn.psn(data, {'gsn_result': '/path/result.npz', 'basis': 'signal'})`
+    skip PSN's eigh entirely when GSN was run with the eigenbasis
+    returns enabled.
+
+    Quiet no-op when the cached eigvecs aren't present (or when basis
+    isn't one of the two strings we can substitute for). Never
+    overrides an explicit caller-supplied custom basis."""
+    basis = opt.get('basis')
+    if not isinstance(basis, str):
+        return opt
+    if basis == 'signal':
+        eigvecs_key, eigvals_key = 'eigvecs_signal', 'eigvals_signal'
+    elif basis == 'difference':
+        eigvecs_key, eigvals_key = 'eigvecs_difference', 'eigvals_difference'
+    else:
+        return opt
+    if eigvecs_key not in gsn_result or eigvals_key not in gsn_result:
+        return opt
+    if opt.get('basis_eigenvalues') is not None:
+        return opt                                    # user already set it
+    new_opt = dict(opt)
+    new_opt['basis'] = np.asarray(gsn_result[eigvecs_key])
+    new_opt['basis_eigenvalues'] = np.asarray(gsn_result[eigvals_key])
+    if new_opt.get('wantverbose'):
+        print(f"PSN: using cached '{basis}' eigvecs from gsn_result "
+              f"(skipping PSN's own eigh).")
+    return new_opt
+
+
 def _safe_visualize_results(results, opt):
     """Wrap visualize_results so a failure (slow rendering interrupted,
     matplotlib backend issue, broken pickle, etc.) does NOT lose the
@@ -381,13 +462,20 @@ def psn(*args):
     # that describe the signal and noise in the data.
 
     if opt.get('gsn_result') is not None:
-        gsn_result = opt['gsn_result']
+        gsn_result = _load_gsn_result(opt['gsn_result'])
         if 'cSb' not in gsn_result or 'cNb' not in gsn_result:
             raise ValueError("opt['gsn_result'] must contain 'cSb' and 'cNb' keys")
         if gsn_result['cSb'].shape[0] != nunits:
             raise ValueError(
                 f"gsn_result covariance size ({gsn_result['cSb'].shape[0]}) "
                 f"does not match data ({nunits} units)")
+        # Auto-upgrade: when the user asked for basis='signal' or
+        # 'difference' AND the loaded gsn_result has matching eigvecs +
+        # eigvals cached, swap basis to the matrix + propagate the
+        # eigvalues. PSN's downstream then skips its own eigh (which is
+        # the dominant cost at large nunits) while producing bit-
+        # equivalent results to the string-basis path.
+        opt = _maybe_use_cached_eigvecs(opt, gsn_result)
         if opt['wantverbose']:
             print('PSN: Using provided GSN result (skipping GSN estimation)...')
     else:
