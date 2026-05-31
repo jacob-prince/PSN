@@ -20,6 +20,28 @@ from .utilities.denoise.denoise_wiener import (
 from .utilities.diagnostics.compute_signal_noise_diagnostics import compute_signal_noise_diagnostics
 from .utilities.diagnostics.split_half_reliability import split_half_cross_median
 from .utilities.plotting.visualize_results import visualize_results
+
+
+def _safe_visualize_results(results, opt):
+    """Wrap visualize_results so a failure (slow rendering interrupted,
+    matplotlib backend issue, broken pickle, etc.) does NOT lose the
+    user's results. The caller should already have everything it
+    needs in ``results``; figure generation is a side-effect.
+
+    Opt-in to letting figure errors crash via opt['raise_on_fig_error']
+    = True (default False)."""
+    try:
+        visualize_results(results, opt)
+    except BaseException as err:                # incl. KeyboardInterrupt
+        if opt.get('raise_on_fig_error'):
+            raise
+        import warnings
+        warnings.warn(
+            f"PSN: visualize_results failed with "
+            f"{type(err).__name__}: {err}. Results dict was already "
+            f"built and is being returned; the diagnostic figure was "
+            f"skipped. Set opt['raise_on_fig_error']=True to surface "
+            f"the underlying error instead.")
 from .utils import perform_gsn
 
 
@@ -399,7 +421,7 @@ def psn(*args):
         if opt['wantfig']:
             if opt['wantverbose']:
                 print('PSN: Generating diagnostic figures...')
-            visualize_results(results, opt)
+            _safe_visualize_results(results, opt)
 
         if opt['wantverbose']:
             print(f"PSN: Complete! Full-rank Wiener filter ({results['best_threshold']:.1f} effective dimensions).")
@@ -476,7 +498,7 @@ def psn(*args):
         if opt['wantfig']:
             if opt['wantverbose']:
                 print('PSN: Generating diagnostic figures...')
-            visualize_results(results, fig_opt)
+            _safe_visualize_results(results, fig_opt)
 
         return results
 
@@ -742,7 +764,7 @@ def psn(*args):
     if opt['wantfig']:
         if opt['wantverbose']:
             print('PSN: Generating diagnostic figures...')
-        visualize_results(results, opt)
+        _safe_visualize_results(results, opt)
 
     if opt['wantverbose']:
         if opt['denoiser_type'] == 'wiener':
