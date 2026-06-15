@@ -1,17 +1,21 @@
 function cmap = redblue()
-% REDBLUE Red-Blue diverging colormap
+% REDBLUE  Blue-white-red diverging colormap.
 %
-%   cmap = REDBLUE() returns a 256x3 colormap matrix that transitions
-%   from blue through white to red. Useful for visualizing symmetric
-%   data centered at zero (e.g., correlation matrices, residuals).
+%   cmap = redblue() returns a colormap that transitions from blue through
+%   white to red. Useful for symmetric data centered at zero (e.g. correlation
+%   matrices, residuals).
 %
-%   Output:
-%       cmap - 256x3 matrix of RGB values in range [0, 1]
+% -------------------------------------------------------------------------
+% Inputs:
+% -------------------------------------------------------------------------
 %
-%   Example:
-%       imagesc(data);
-%       colormap(redblue());
-%       colorbar;
+% (none)
+%
+% -------------------------------------------------------------------------
+% Returns:
+% -------------------------------------------------------------------------
+%
+% <cmap> - [256 x 3] RGB colormap, values in [0, 1].
 
     n = 256;
     cmap = zeros(n, 3);

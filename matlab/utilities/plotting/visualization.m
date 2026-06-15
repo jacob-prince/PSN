@@ -1,23 +1,31 @@
 function fig = visualization(data, results, varargin)
-% VISUALIZATION Generate diagnostic figures for PSN denoising results (NEW API)
+% VISUALIZATION  Generate the diagnostic figure for PSN denoising results.
 %
-% This visualization works with the new PSN API and results structure.
+%   fig = visualization(data, results) builds the multi-panel PSN diagnostic
+%   figure (input/denoised/residual maps, covariances, eigenspectra, recovery
+%   tradeoff, etc.) for the given training data and results struct.
 %
-% Parameters:
-% -----------
-% data : array [nunits x nconds x ntrials]
-%     Training data used for denoising
-% results : struct
-%     Results structure from psn function
-% varargin : optional name-value pairs
-%     'Visible' - 'on' (default) or 'off' to control figure visibility
-%     'cmap' - colormap for input data, denoised data, and residual plots
-%              (default: cmapsign4(256))
+%   fig = visualization(data, results, 'Visible', 'off', 'cmap', C) controls
+%   figure visibility and the colormap used for the data panels.
 %
+% -------------------------------------------------------------------------
+% Inputs:
+% -------------------------------------------------------------------------
+%
+% <data> - [nunits x nconds x ntrials] training data used for denoising.
+%
+% <results> - struct, the results structure returned by psn().
+%
+% <varargin> (optional) - name-value pairs:
+%   'Visible' - 'on' (default) or 'off' to control figure visibility.
+%   'cmap'    - [m x 3] colormap for the input/denoised/residual panels.
+%               Default: opt_used.cmap if present, else cmapsign4(256).
+%
+% -------------------------------------------------------------------------
 % Returns:
-% --------
-% fig : figure handle
-%     Handle to the created figure (for saving)
+% -------------------------------------------------------------------------
+%
+% <fig> - handle to the created figure (e.g. for saving).
 
     % Parse optional arguments
     p = inputParser;
@@ -111,6 +119,10 @@ function fig = visualization(data, results, varargin)
         basis_desc = 'unknown';
     end
 
+    % Flag for full-rank Wiener (changes how threshold lines are labeled),
+    % matching Python's is_fullrank_wiener = (basis_desc == 'wiener').
+    is_fullrank_wiener = strcmp(basis_desc, 'wiener');
+
     % Extract threshold method
     if isfield(opt, 'threshold_method')
         threshold_method = opt.threshold_method;
@@ -186,11 +198,12 @@ function fig = visualization(data, results, varargin)
     noise = trial_avg - denoised;
 
     % =====================================================================
-    % Create tiledlayout to match Python GridSpec(4, 8)
-    % Row 1: cSb(2), cNb(2), Top5 PCs(1), Eigenvalues(1), Sig/Noise var(2)
-    % Row 2-4: standard 4x2 pattern (each subplot spans 2 columns)
+    % Create tiledlayout to match the Python figure.
+    % Row 1 (6 panels x 2 cols): cSb, cNb, Top5 dims, Eigenvalues, Sig/Noise var, Objective
+    % Rows 2-4 (4 panels x 3 cols): Row 2 leads with the Recovery-tradeoff panel.
+    % 12 columns = lcm(6,4) so both panel counts tile exactly.
     % =====================================================================
-    t = tiledlayout(4, 8, 'TileSpacing', 'compact', 'Padding', 'compact');
+    t = tiledlayout(4, 12, 'TileSpacing', 'compact', 'Padding', 'compact');
 
     % Add supertitle (must be after tiledlayout creation)
     sgtitle(title_text, 'FontSize', 14, 'FontWeight', 'bold');
@@ -284,7 +297,7 @@ function fig = visualization(data, results, varargin)
     % =====================================================================
     % Plot 3: Top 5 PCs as vertical line plots (half width)
     % =====================================================================
-    ax3 = nexttile(t, [1 1]);  % Row 1, column 5 (single column)
+    ax3 = nexttile(t, [1 2]);  % Row 1, panel 3
     if isfield(results, 'fullbasis')
         num_pcs = min(5, size(results.fullbasis, 2));
 
@@ -344,7 +357,7 @@ function fig = visualization(data, results, varargin)
     % =====================================================================
     % Plot 4: Global dimension ranking (eigenvalues or signal variance) (half width)
     % =====================================================================
-    ax4 = nexttile(t, [1 1]);  % Row 1, column 6 (single column)
+    ax4 = nexttile(t, [1 2]);  % Row 1, panel 4
 
     % Determine if we should use log scale for x-axis (for large datasets)
     use_logscale = nunits > 50;
@@ -360,96 +373,70 @@ function fig = visualization(data, results, varargin)
     if use_eigenvalues
         % Show eigenvalues (SORTED - what was actually used for ranking)
         evals = results.basis_eigenvalues;  % Already sorted in descending order
-        % MATLAB is 1-indexed, so dimensions always go 1, 2, 3...
-        x_dims_4 = 1:length(evals);
-        plot(ax4, x_dims_4, evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5]);
+        nd4 = length(evals);
+        % Head-tail log x-axis (matches Python _set_headtail_log_xscale): warp the
+        % data onto a plain linear axis, since MATLAB has no 'function' x-scale.
+        [fwd4, axmode4] = dim_xaxis_transform(use_logscale, nd4, 10);
+        if use_logscale, xr4 = 1:nd4; else, xr4 = 0:(nd4-1); end  % 1-indexed on log, 0-indexed on linear
+        plot(ax4, fwd4(xr4), evals, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5], 'DisplayName', '\lambda_k(\Sigma_S)');
         hold(ax4, 'on');
 
-        % Add threshold indicators (only if threshold > 0)
-        % Threshold value is the number of dims to keep (1-indexed in MATLAB)
+        % Threshold -> legend entry (Python labels the axvline; no rotated text here).
         if isfield(results, 'best_threshold')
             if isscalar(results.best_threshold) && results.best_threshold > 0
-                thresh_val = results.best_threshold;
-                xline(ax4, thresh_val, 'r--', 'LineWidth', 2);
-                % Add rotated text annotation for threshold (top of text on right side of line)
-                ylims = ylim(ax4);
-                y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                if use_logscale
-                    text_x = thresh_val * 1.05;
-                else
-                    text_x = thresh_val + 0.5;
-                end
-                text(ax4, text_x, y_pos, sprintf('Threshold = %d', thresh_val), ...
-                    'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
-                    'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
+                xline(ax4, fwd4(results.best_threshold), 'r--', 'LineWidth', 2, ...
+                      'DisplayName', thresh_legend_label(results.best_threshold, is_fullrank_wiener, false));
             elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
                 mean_thresh = mean(results.best_threshold);
-                xline(ax4, mean_thresh, 'r--', 'LineWidth', 2);
-                % Add rotated text annotation for mean threshold (top of text on right side of line)
-                ylims = ylim(ax4);
-                y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                if use_logscale
-                    text_x = mean_thresh * 1.05;
-                else
-                    text_x = mean_thresh + 0.5;
-                end
-                text(ax4, text_x, y_pos, sprintf('Mean Threshold = %.1f', mean_thresh), ...
-                    'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
-                    'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
+                xline(ax4, fwd4(mean_thresh), 'r--', 'LineWidth', 2, ...
+                      'DisplayName', sprintf('Mean threshold = %.1f', mean_thresh));
             end
         end
         hold(ax4, 'off');
 
-        xlabel(ax4, 'Dimension');
+        xlabel(ax4, 'Dimension k (signal eigenbasis)');
         ylabel(ax4, 'Eigenvalue');
-        title(ax4, 'Basis Eigenvalues');
-        grid(ax4, 'on');
-        if use_logscale
-            set(ax4, 'XScale', 'log');
-            xlim(ax4, [0.8, length(evals) + 1]);
+        if is_fullrank_wiener
+            title(ax4, '\Sigma_S Eigenvalues (signal basis)');
         else
-            xlim(ax4, [0.5, length(evals) + 0.5]);
+            title(ax4, 'Basis Eigenvalues');
         end
+        legend(ax4, 'Location', 'best', 'FontSize', 7);
+        grid(ax4, 'on');
+        finalize_dim_xaxis(ax4, fwd4, axmode4, nd4, 10, [-0.5, nd4 - 0.5]);
 
     elseif use_prediction_ordering && isfield(results, 'signalvar') && isfield(results, 'noisevar')
         % Show prediction ordering criterion (signal - noise/ntrials) and signal variance
         signal_vars = results.signalvar;
         noise_vars = results.noisevar;
         prediction_obj = signal_vars - noise_vars / ntrials_avg;
-
-        x_dims_4 = 1:length(signal_vars);
-        plot(ax4, x_dims_4, signal_vars, 'LineWidth', 1.5, 'Color', 'blue', 'DisplayName', 'Signal Var');
+        nd4 = length(signal_vars);
+        [fwd4, axmode4] = dim_xaxis_transform(use_logscale, nd4, 10);
+        if use_logscale, xr4 = 1:nd4; else, xr4 = 0:(nd4-1); end
+        plot(ax4, fwd4(xr4), signal_vars, 'LineWidth', 1.5, 'Color', 'blue', 'DisplayName', 'Signal Var');
         hold(ax4, 'on');
-        plot(ax4, x_dims_4, prediction_obj, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5], 'DisplayName', 'SigVar - NoiseVar/ntrials');
+        plot(ax4, fwd4(xr4), prediction_obj, 'LineWidth', 1.5, 'Color', [0.5, 0, 0.5], 'DisplayName', 'SigVar - NoiseVar/ntrials');
 
-        % Add threshold indicators (only if threshold > 0)
+        % Threshold -> red rotated text (Python uses 'Threshold = int(best_t)' here).
         if isfield(results, 'best_threshold')
             if isscalar(results.best_threshold) && results.best_threshold > 0
-                thresh_val = results.best_threshold;
-                hxl = xline(ax4, thresh_val, 'r--', 'LineWidth', 2);
+                bt = results.best_threshold;
+                hxl = xline(ax4, fwd4(bt), 'r--', 'LineWidth', 2);
                 hxl.HandleVisibility = 'off';  % Exclude from legend
                 ylims = ylim(ax4);
                 y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                if use_logscale
-                    text_x = thresh_val * 1.05;
-                else
-                    text_x = thresh_val + 0.5;
-                end
-                text(ax4, text_x, y_pos, sprintf('Threshold = %d', thresh_val), ...
+                if use_logscale, tx = bt * 1.05; else, tx = bt + 0.5; end
+                text(ax4, fwd4(tx), y_pos, sprintf('Threshold = %d', floor(bt)), ...
                     'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
                     'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
             elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
                 mean_thresh = mean(results.best_threshold);
-                hxl = xline(ax4, mean_thresh, 'r--', 'LineWidth', 2);
+                hxl = xline(ax4, fwd4(mean_thresh), 'r--', 'LineWidth', 2);
                 hxl.HandleVisibility = 'off';  % Exclude from legend
                 ylims = ylim(ax4);
                 y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                if use_logscale
-                    text_x = mean_thresh * 1.05;
-                else
-                    text_x = mean_thresh + 0.5;
-                end
-                text(ax4, text_x, y_pos, sprintf('Mean Threshold = %.1f', mean_thresh), ...
+                if use_logscale, tx = mean_thresh * 1.05; else, tx = mean_thresh + 0.5; end
+                text(ax4, fwd4(tx), y_pos, sprintf('Mean Threshold = %.1f', mean_thresh), ...
                     'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
                     'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
             end
@@ -461,50 +448,35 @@ function fig = visualization(data, results, varargin)
         title(ax4, 'Ordering Criterion');
         legend(ax4, 'Location', 'best', 'FontSize', 7);
         grid(ax4, 'on');
-        if use_logscale
-            set(ax4, 'XScale', 'log');
-            xlim(ax4, [0.8, length(signal_vars) + 1]);
-        else
-            xlim(ax4, [0.5, length(signal_vars) + 0.5]);
-        end
+        finalize_dim_xaxis(ax4, fwd4, axmode4, nd4, 10, [-0.5, nd4 - 0.5]);
 
     elseif isfield(results, 'signalvar')
         % Show signal variance (SORTED - what was actually used for ranking)
         signal_vars = results.signalvar;  % Already sorted in descending order
-        % MATLAB is 1-indexed, so dimensions always go 1, 2, 3...
-        x_dims_4 = 1:length(signal_vars);
-        plot(ax4, x_dims_4, signal_vars, 'LineWidth', 1.5, 'Color', 'blue');
+        nd4 = length(signal_vars);
+        [fwd4, axmode4] = dim_xaxis_transform(use_logscale, nd4, 10);
+        if use_logscale, xr4 = 1:nd4; else, xr4 = 0:(nd4-1); end
+        plot(ax4, fwd4(xr4), signal_vars, 'LineWidth', 1.5, 'Color', 'blue');
         hold(ax4, 'on');
 
-        % Add threshold indicators (only if threshold > 0)
-        % Threshold value is the number of dims to keep (1-indexed in MATLAB)
+        % Threshold -> red rotated text (Python uses 'Threshold = int(best_t)' here).
         if isfield(results, 'best_threshold')
             if isscalar(results.best_threshold) && results.best_threshold > 0
-                thresh_val = results.best_threshold;
-                xline(ax4, thresh_val, 'r--', 'LineWidth', 2);
-                % Add rotated text annotation for threshold (top of text on right side of line)
+                bt = results.best_threshold;
+                xline(ax4, fwd4(bt), 'r--', 'LineWidth', 2);
                 ylims = ylim(ax4);
                 y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                if use_logscale
-                    text_x = thresh_val * 1.05;
-                else
-                    text_x = thresh_val + 0.5;
-                end
-                text(ax4, text_x, y_pos, sprintf('Threshold = %d', thresh_val), ...
+                if use_logscale, tx = bt * 1.05; else, tx = bt + 0.5; end
+                text(ax4, fwd4(tx), y_pos, sprintf('Threshold = %d', floor(bt)), ...
                     'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
                     'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
             elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
                 mean_thresh = mean(results.best_threshold);
-                xline(ax4, mean_thresh, 'r--', 'LineWidth', 2);
-                % Add rotated text annotation for mean threshold (top of text on right side of line)
+                xline(ax4, fwd4(mean_thresh), 'r--', 'LineWidth', 2);
                 ylims = ylim(ax4);
                 y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                if use_logscale
-                    text_x = mean_thresh * 1.05;
-                else
-                    text_x = mean_thresh + 0.5;
-                end
-                text(ax4, text_x, y_pos, sprintf('Mean Threshold = %.1f', mean_thresh), ...
+                if use_logscale, tx = mean_thresh * 1.05; else, tx = mean_thresh + 0.5; end
+                text(ax4, fwd4(tx), y_pos, sprintf('Mean Threshold = %.1f', mean_thresh), ...
                     'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
                     'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
             end
@@ -515,12 +487,7 @@ function fig = visualization(data, results, varargin)
         ylabel(ax4, 'Signal Var');
         title(ax4, 'Signal Variance');
         grid(ax4, 'on');
-        if use_logscale
-            set(ax4, 'XScale', 'log');
-            xlim(ax4, [0.8, length(signal_vars) + 1]);
-        else
-            xlim(ax4, [0.5, length(signal_vars) + 0.5]);
-        end
+        finalize_dim_xaxis(ax4, fwd4, axmode4, nd4, 10, [-0.5, nd4 - 0.5]);
     else
         text(ax4, 0.5, 0.5, {'Ranking Info', 'Not Available'}, ...
              'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
@@ -534,69 +501,52 @@ function fig = visualization(data, results, varargin)
     if isfield(results, 'signalvar') && isfield(results, 'noisevar')
         if ~iscell(results.signalvar)
             % Global or averaged
+            sv = results.signalvar;
+            nv = results.noisevar;
+            nd5 = length(sv);
+            % Same head-tail log x-axis as ax4 (warp data onto a linear axis).
+            [fwd5, axmode5] = dim_xaxis_transform(use_logscale, nd5, 10);
+            if use_logscale, xr5 = 1:nd5; else, xr5 = 0:(nd5-1); end
+
             % Left y-axis for variance
             yyaxis(ax5, 'left');
-            % MATLAB is 1-indexed, so dimensions always go 1, 2, 3...
-            x_dims = 1:length(results.signalvar);
-            plot(ax5, x_dims, results.signalvar, '-', 'LineWidth', 1.5, 'Color', 'blue', 'DisplayName', 'Signal var');
+            plot(ax5, fwd5(xr5), sv, '-', 'LineWidth', 1.5, 'Color', 'blue', 'DisplayName', 'Signal var');
             hold(ax5, 'on');
-            plot(ax5, x_dims, results.noisevar, '-', 'LineWidth', 1.5, 'Color', [1 0.5 0], 'DisplayName', 'Noise var');
-            plot(ax5, x_dims, results.noisevar / ntrials_avg, '-', 'LineWidth', 1.5, 'Color', [1 0.85 0.6], 'DisplayName', sprintf('Noise var / %.1f trials', ntrials_avg));
+            plot(ax5, fwd5(xr5), nv, '-', 'LineWidth', 1.5, 'Color', [1 0.5 0], 'DisplayName', 'Noise var');
+            plot(ax5, fwd5(xr5), nv / ntrials_avg, '-', 'LineWidth', 1.5, 'Color', [1 0.85 0.6], 'DisplayName', sprintf('Noise var / %.1f trials', ntrials_avg));
             ylabel(ax5, 'Variance');
 
             % Right y-axis for NCSNR
             yyaxis(ax5, 'right');
-            ncsnr_trace = sqrt(results.signalvar) ./ sqrt(results.noisevar + eps);
-            plot(ax5, x_dims, ncsnr_trace, '-', 'LineWidth', 1.5, 'Color', 'magenta', 'DisplayName', 'NCSNR');
+            % Rectify negative signal variance to 0 (cSb need not be strictly PSD);
+            % avoids a complex sqrt and matches the standard NCSNR convention.
+            ncsnr_trace = sqrt(max(sv, 0)) ./ sqrt(nv + eps);
+            plot(ax5, fwd5(xr5), ncsnr_trace, '-', 'LineWidth', 1.5, 'Color', 'magenta', 'DisplayName', 'NCSNR');
             ylabel(ax5, 'NCSNR');
 
-            % Add threshold (on left axis, only if > 0)
-            % Threshold value is the number of dims to keep, which corresponds directly
-            % to the x-position (no offset needed - threshold=1 means line at x=1)
+            % Threshold (on left axis) -> legend entry only (matches Python; no rotated text).
             yyaxis(ax5, 'left');
             if isfield(results, 'best_threshold')
                 if isscalar(results.best_threshold) && results.best_threshold > 0
-                    thresh_val = results.best_threshold;
-                    xline(ax5, thresh_val, 'r--', 'LineWidth', 2, 'DisplayName', 'Threshold');
-                    % Add rotated text annotation for threshold
-                    ylims = ylim(ax5);
-                    y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                    if use_logscale
-                        text_x = thresh_val * 1.05;
-                    else
-                        text_x = thresh_val + 0.5;
-                    end
-                    text(ax5, text_x, y_pos, sprintf('Threshold = %d', thresh_val), ...
-                        'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
-                        'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
+                    xline(ax5, fwd5(results.best_threshold), 'r--', 'LineWidth', 2, ...
+                          'DisplayName', thresh_legend_label(results.best_threshold, is_fullrank_wiener, true));
                 elseif ~isscalar(results.best_threshold) && mean(results.best_threshold) > 0
                     mean_thresh = mean(results.best_threshold);
-                    xline(ax5, mean_thresh, 'r--', 'LineWidth', 2, 'DisplayName', 'Mean Threshold');
-                    % Add rotated text annotation for mean threshold
-                    ylims = ylim(ax5);
-                    y_pos = ylims(1) + 0.7 * (ylims(2) - ylims(1));
-                    if use_logscale
-                        text_x = mean_thresh * 1.05;
-                    else
-                        text_x = mean_thresh + 0.5;
-                    end
-                    text(ax5, text_x, y_pos, sprintf('Mean Threshold = %.1f', mean_thresh), ...
-                        'FontSize', 9, 'Color', 'r', 'Rotation', 90, ...
-                        'HorizontalAlignment', 'left', 'VerticalAlignment', 'top');
+                    xline(ax5, fwd5(mean_thresh), 'r--', 'LineWidth', 2, ...
+                          'DisplayName', sprintf('Mean threshold = %.1f', mean_thresh));
                 end
             end
             hold(ax5, 'off');
 
-            xlabel(ax5, 'Dimension');
+            if is_fullrank_wiener
+                xlabel(ax5, 'Dimension k (signal eigenbasis)');
+            else
+                xlabel(ax5, 'Dimension');
+            end
             title(ax5, 'Signal and Noise Variance');
             legend(ax5, 'Location', 'best', 'FontSize', 7);
             grid(ax5, 'on');
-            if use_logscale
-                set(ax5, 'XScale', 'log');
-                xlim(ax5, [0.8, length(results.signalvar) * 1.1]);  % Push x-axis limit beyond final dimension
-            else
-                xlim(ax5, [-0.5, length(results.signalvar) * 1.02]);  % Push x-axis limit beyond final dimension
-            end
+            finalize_dim_xaxis(ax5, fwd5, axmode5, nd5, 10, [-0.5, nd5 * 1.02]);
         else
             text(ax5, 0.5, 0.5, {'Per-Unit Variance', '(Averaged across units)'}, ...
                  'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
@@ -612,7 +562,11 @@ function fig = visualization(data, results, varargin)
     % Plot 6: Objective function (row 2, col 1-2)
     % =====================================================================
     ax6 = nexttile(t, [1 2]);  % Row 2, columns 1-2
-    if isfield(results, 'objective')
+    % Match Python: only draw the objective curve when it actually exists and is
+    % non-empty. Full-rank Wiener (criterion='wiener') leaves objective empty, so
+    % we fall through to "Objective Not Available" instead of crashing on a
+    % length-0 vector.
+    if isfield(results, 'objective') && ~isempty(results.objective)
         % For log scale, we need to handle x=0 specially
         % Use x=0.5 for the zero-dimension case, then shift rest by 1
         % This allows log scale while preserving the "0 dims" data point
@@ -787,6 +741,13 @@ function fig = visualization(data, results, varargin)
     end
 
     % =====================================================================
+    % Recovery-tradeoff panel (Row 2, first slot): twin-axis analytic recovery
+    % (solid, left) + split-half reliability (dashed, right). Matches Python.
+    % =====================================================================
+    ax_rec = nexttile(t, [1 3]);
+    plot_recovery_tradeoff(ax_rec, results);
+
+    % =====================================================================
     % Plot 7-9: Raw, Denoised, Noise
     % =====================================================================
 
@@ -806,7 +767,7 @@ function fig = visualization(data, results, varargin)
     end
 
     % Plot 7: Raw trial-averaged data
-    ax7 = nexttile(t, [1 2]);  % Row 2, columns 3-4
+    ax7 = nexttile(t, [1 3]);  % Row 2, input data
     imagesc(ax7, trial_avg, clim_shared);
     colormap(ax7, data_cmap);
     colorbar(ax7);
@@ -819,7 +780,7 @@ function fig = visualization(data, results, varargin)
     ylabel(ax7, 'Units');
 
     % Plot 8: Denoised data
-    ax8 = nexttile(t, [1 2]);  % Row 2, columns 5-6
+    ax8 = nexttile(t, [1 3]);  % Row 2, denoised data
     imagesc(ax8, denoised, clim_shared);
     colormap(ax8, data_cmap);
     colorbar(ax8);
@@ -828,7 +789,7 @@ function fig = visualization(data, results, varargin)
     ylabel(ax8, 'Units');
 
     % Plot 9: Noise (residual)
-    ax9 = nexttile(t, [1 2]);  % Row 2, columns 7-8
+    ax9 = nexttile(t, [1 3]);  % Row 2, residual
     imagesc(ax9, noise, clim_shared);
     colormap(ax9, data_cmap);
     colorbar(ax9);
@@ -843,7 +804,7 @@ function fig = visualization(data, results, varargin)
     % =====================================================================
     % Plot 10: Denoiser matrix
     % =====================================================================
-    ax10 = nexttile(t, [1 2]);  % Row 3, columns 1-2
+    ax10 = nexttile(t, [1 3]);  % Row 3, denoiser matrix
     % Compute symmetric colorbar limits around 0 (use 99th percentile for better contrast)
     data_absmax = prctile(abs(results.denoiser(:)), 99);
     if data_absmax > 0
@@ -880,7 +841,7 @@ function fig = visualization(data, results, varargin)
     denoised_sub = denoised(subsample_idx, subsample_cond_idx);
 
     % Trial-averaged traces
-    ax11 = nexttile(t, [1 2]);  % Row 3, columns 3-4
+    ax11 = nexttile(t, [1 3]);  % Row 3, trial-averaged traces
     hold(ax11, 'on');
     x_units = 1:length(subsample_idx);  % 1-indexed for MATLAB
     for c = 1:n_conds_to_plot
@@ -894,7 +855,7 @@ function fig = visualization(data, results, varargin)
     xlim(ax11, [min(x_units), max(x_units)]);
 
     % Denoised traces
-    ax12 = nexttile(t, [1 2]);  % Row 3, columns 5-6
+    ax12 = nexttile(t, [1 3]);  % Row 3, denoised traces
     hold(ax12, 'on');
     for c = 1:n_conds_to_plot
         plot(ax12, x_units, denoised_sub(:, c), 'Color', trace_colors(c, :), 'LineWidth', 0.5);
@@ -924,7 +885,7 @@ function fig = visualization(data, results, varargin)
     % =====================================================================
     % Plot 13: Split-half reliability (use subsampling for scatter, full pop for means)
     % =====================================================================
-    ax13 = nexttile(t, [1 2]);  % Row 3, columns 7-8
+    ax13 = nexttile(t, [1 3]);  % Row 3, split-half reliability
 
     % Split trials by odd/even indices (interleaved) to handle NaN patterns
     % where later trials may have more NaNs due to variable repetition counts
@@ -946,22 +907,21 @@ function fig = visualization(data, results, varargin)
     denoiser = results.denoiser;
     unit_means = results.unit_means;
 
-    % Handle symmetric vs non-symmetric denoiser
-    if strcmp(threshold_method, 'global')
-        % Symmetric: standard multiplication
-        dn_A = denoiser * (tavg_A - unit_means) + unit_means;
-        dn_B = denoiser * (tavg_B - unit_means) + unit_means;
-    else
-        % Non-symmetric: transpose multiplication
-        dn_A = denoiser' * (tavg_A - unit_means) + unit_means;
-        dn_B = denoiser' * (tavg_B - unit_means) + unit_means;
-    end
+    % Apply the denoiser. ALWAYS use the transpose: it is correct for symmetric
+    % global denoisers (denoiser' == denoiser) AND for the non-symmetric hybrid
+    % and full-rank Wiener denoisers, which require the transpose. (The full-rank
+    % Wiener denoiser is non-symmetric even though threshold_method is 'global',
+    % so the old global-vs-other branch applied the wrong operator for Wiener.)
+    % Matches psn.m and the Python figure.
+    dn_A = denoiser' * (tavg_A - unit_means) + unit_means;
+    dn_B = denoiser' * (tavg_B - unit_means) + unit_means;
 
-    % Compute correlations for ALL units (for means)
-    % Use nanstd to handle NaN values properly
-    corr_tavg = zeros(nunits, 1);
-    corr_cross = zeros(nunits, 1);
-    corr_dn = zeros(nunits, 1);
+    % Per-unit split-half metric: Pearson r (default) or MSE (split_half_metric).
+    use_mse = isfield(opt, 'split_half_metric') && strcmp(opt.split_half_metric, 'mse');
+
+    corr_tavg = nan(nunits, 1);
+    corr_cross = nan(nunits, 1);
+    corr_dn = nan(nunits, 1);
 
     for u = 1:nunits
         % Get valid (non-NaN) indices for this unit
@@ -970,29 +930,38 @@ function fig = visualization(data, results, varargin)
         valid_cross_BA = ~isnan(dn_A(u,:)) & ~isnan(tavg_B(u,:));
         valid_dn = ~isnan(dn_A(u,:)) & ~isnan(dn_B(u,:));
 
-        % TAvg vs TAvg correlation
-        if sum(valid_tavg) > 1 && std(tavg_A(u, valid_tavg)) > 0 && std(tavg_B(u, valid_tavg)) > 0
-            corr_tavg(u) = corr(tavg_A(u, valid_tavg)', tavg_B(u, valid_tavg)');
+        if use_mse
+            % Mean squared error per unit (matches Python use_mse branch).
+            if sum(valid_tavg) > 0
+                corr_tavg(u) = mean((tavg_A(u, valid_tavg) - tavg_B(u, valid_tavg)).^2);
+            end
+            if sum(valid_cross_AB) > 0 && sum(valid_cross_BA) > 0
+                mse_AB = mean((tavg_A(u, valid_cross_AB) - dn_B(u, valid_cross_AB)).^2);
+                mse_BA = mean((dn_A(u, valid_cross_BA) - tavg_B(u, valid_cross_BA)).^2);
+                corr_cross(u) = (mse_AB + mse_BA) / 2;
+            end
+            if sum(valid_dn) > 0
+                corr_dn(u) = mean((dn_A(u, valid_dn) - dn_B(u, valid_dn)).^2);
+            end
         else
-            corr_tavg(u) = NaN;
-        end
+            % TAvg vs TAvg correlation
+            if sum(valid_tavg) > 1 && std(tavg_A(u, valid_tavg)) > 0 && std(tavg_B(u, valid_tavg)) > 0
+                corr_tavg(u) = corr(tavg_A(u, valid_tavg)', tavg_B(u, valid_tavg)');
+            end
 
-        % Cross-method (average both directions)
-        if sum(valid_cross_AB) > 1 && sum(valid_cross_BA) > 1 && ...
-           std(tavg_A(u, valid_cross_AB)) > 0 && std(dn_B(u, valid_cross_AB)) > 0 && ...
-           std(dn_A(u, valid_cross_BA)) > 0 && std(tavg_B(u, valid_cross_BA)) > 0
-            corr_AB = corr(tavg_A(u, valid_cross_AB)', dn_B(u, valid_cross_AB)');
-            corr_BA = corr(dn_A(u, valid_cross_BA)', tavg_B(u, valid_cross_BA)');
-            corr_cross(u) = (corr_AB + corr_BA) / 2;
-        else
-            corr_cross(u) = NaN;
-        end
+            % Cross-method (average both directions)
+            if sum(valid_cross_AB) > 1 && sum(valid_cross_BA) > 1 && ...
+               std(tavg_A(u, valid_cross_AB)) > 0 && std(dn_B(u, valid_cross_AB)) > 0 && ...
+               std(dn_A(u, valid_cross_BA)) > 0 && std(tavg_B(u, valid_cross_BA)) > 0
+                corr_AB = corr(tavg_A(u, valid_cross_AB)', dn_B(u, valid_cross_AB)');
+                corr_BA = corr(dn_A(u, valid_cross_BA)', tavg_B(u, valid_cross_BA)');
+                corr_cross(u) = (corr_AB + corr_BA) / 2;
+            end
 
-        % Denoised vs Denoised correlation
-        if sum(valid_dn) > 1 && std(dn_A(u, valid_dn)) > 0 && std(dn_B(u, valid_dn)) > 0
-            corr_dn(u) = corr(dn_A(u, valid_dn)', dn_B(u, valid_dn)');
-        else
-            corr_dn(u) = NaN;
+            % Denoised vs Denoised correlation
+            if sum(valid_dn) > 1 && std(dn_A(u, valid_dn)) > 0 && std(dn_B(u, valid_dn)) > 0
+                corr_dn(u) = corr(dn_A(u, valid_dn)', dn_B(u, valid_dn)');
+            end
         end
     end
 
@@ -1025,10 +994,12 @@ function fig = visualization(data, results, varargin)
     scatter(ax13, x_positions(2) + x_jitter_sub, corr_cross_sub, 15, [1 0.84 0], 'filled', 'MarkerFaceAlpha', 0.4);
     scatter(ax13, x_positions(3) + x_jitter_sub, corr_dn_sub, 15, [0.5 0.8 0.3], 'filled', 'MarkerFaceAlpha', 0.4);
 
-    % Means (FULL population)
-    mean_tavg = nanmean(corr_tavg);
-    mean_cross = nanmean(corr_cross);
-    mean_dn = nanmean(corr_dn);
+    % Medians (FULL population). Use the median, not the mean, so these central
+    % markers match the recovery-tradeoff panel's median per-unit split-half
+    % reliability (and the Python figure). Variable names kept for brevity.
+    mean_tavg = median(corr_tavg, 'omitnan');
+    mean_cross = median(corr_cross, 'omitnan');
+    mean_dn = median(corr_dn, 'omitnan');
 
     scatter(ax13, x_positions(1), mean_tavg, 100, 'blue', 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
     scatter(ax13, x_positions(2), mean_cross, 100, [1 0.84 0], 'filled', 'MarkerEdgeColor', 'white', 'LineWidth', 2);
@@ -1047,7 +1018,11 @@ function fig = visualization(data, results, varargin)
 
     set(ax13, 'XTick', x_positions, 'XTickLabel', labels, 'XTickLabelRotation', 0);
     ax13.XAxis.FontSize = 7;  % Only set x-tick label font size smaller
-    ylabel(ax13, 'Pearson r');
+    if use_mse
+        ylabel(ax13, 'MSE');
+    else
+        ylabel(ax13, 'Pearson r');
+    end
     if has_nans
         % Count actual valid trials per split
         valid_A = sum(~any(isnan(data_A), 1), 3);
@@ -1086,9 +1061,10 @@ function fig = visualization(data, results, varargin)
         sv_after = results.svnv_after(:, 1);
         nv_after = results.svnv_after(:, 2);
 
-        % Compute noise-corrected SNR (ncsnr)
-        ncsnr_before = sqrt(sv_before) ./ sqrt(nv_before + eps);
-        ncsnr_after = sqrt(sv_after) ./ sqrt(nv_after + eps);
+        % Compute noise-ceiling SNR (NCSNR). Rectify negative signal variance
+        % to 0 (standard NCSNR convention; avoids a complex sqrt).
+        ncsnr_before = sqrt(max(sv_before, 0)) ./ sqrt(nv_before + eps);
+        ncsnr_after = sqrt(max(sv_after, 0)) ./ sqrt(nv_after + eps);
 
         % Compute noise ceiling percentage (use ntrials_avg for NaN data)
         noiseceiling_before = 100 * (ncsnr_before.^2 ./ (ncsnr_before.^2 + 1/ntrials_avg));
@@ -1111,7 +1087,7 @@ function fig = visualization(data, results, varargin)
         x_jitter_diag = (rand(n_sub, 1) - 0.5) * 0.1;
 
         % Plot 14: Signal Variance
-        ax14 = nexttile(t, [1 2]);  % Row 4, columns 1-2
+        ax14 = nexttile(t, [1 3]);  % Row 4, signal variance
         hold(ax14, 'on');
         for ii = 1:n_sub
             plot(ax14, [x_before, x_after] + x_jitter_diag(ii), [sv_before_sub(ii), sv_after_sub(ii)], ...
@@ -1143,7 +1119,7 @@ function fig = visualization(data, results, varargin)
         grid(ax14, 'on');
 
         % Plot 15: Noise Variance
-        ax15 = nexttile(t, [1 2]);  % Row 4, columns 3-4
+        ax15 = nexttile(t, [1 3]);  % Row 4, noise variance
         hold(ax15, 'on');
         for ii = 1:n_sub
             plot(ax15, [x_before, x_after] + x_jitter_diag(ii), [nv_before_sub(ii), nv_after_sub(ii)], ...
@@ -1190,7 +1166,7 @@ function fig = visualization(data, results, varargin)
         yline(ax15, 0, 'k--', 'LineWidth', 0.5);
 
         % Plot 16: NCSNR
-        ax16 = nexttile(t, [1 2]);  % Row 4, columns 5-6
+        ax16 = nexttile(t, [1 3]);  % Row 4, NCSNR
         hold(ax16, 'on');
         for ii = 1:n_sub
             plot(ax16, [x_before, x_after] + x_jitter_diag(ii), [ncsnr_before_sub(ii), ncsnr_after_sub(ii)], ...
@@ -1230,7 +1206,7 @@ function fig = visualization(data, results, varargin)
         grid(ax16, 'on');
 
         % Plot 17: Noise Ceiling %
-        ax17 = nexttile(t, [1 2]);  % Row 4, columns 7-8
+        ax17 = nexttile(t, [1 3]);  % Row 4, noise ceiling percentage
         hold(ax17, 'on');
         for ii = 1:n_sub
             plot(ax17, [x_before, x_after] + x_jitter_diag(ii), [noiseceiling_before_sub(ii), noiseceiling_after_sub(ii)], ...
@@ -1268,4 +1244,119 @@ function fig = visualization(data, results, varargin)
         grid(ax17, 'on');
     end
 
+end
+
+
+function s = thresh_legend_label(best_t, is_fullrank_wiener, with_formula)
+% Legend label for the threshold line on ax4 (eigenvalues) and ax5, mirroring
+% Python: full-rank Wiener shows tr(D); otherwise the integer dimension count K.
+    if is_fullrank_wiener
+        if with_formula
+            s = sprintf('tr(D) = %.1f  where D = \\Sigma_S(\\Sigma_S + \\Sigma_N/t)^{-1}', best_t);
+        else
+            s = sprintf('tr(D) = %.1f', best_t);
+        end
+    else
+        s = sprintf('Threshold K = %d', floor(best_t));
+    end
+end
+
+
+function [fwd, axmode] = dim_xaxis_transform(use_logscale, ndims, tail)
+% MATLAB has no matplotlib-style custom ('function') x-scale, so to reproduce
+% Python's _set_headtail_log_xscale we WARP the data coordinates and plot on a
+% plain linear axis. Returns:
+%   fwd    - function handle: raw dimension index -> plotted x position
+%   axmode - 'linear'    : no log; identity warp on a native linear axis
+%            'nativelog' : few dims; identity warp on a native log axis
+%            'warp'      : many dims; head-tail mirror-log warp on a linear axis
+% Head-tail (tail=10): ordinary log for head dims 1..N-tail, then the final
+% `tail` dims fan back out as the mirror image (inverse log) of the head so the
+% leading AND trailing dims stay legible.
+    if nargin < 3, tail = 10; end
+    if ~use_logscale
+        fwd = @(x) double(x);
+        axmode = 'linear';
+    elseif ndims <= 2*tail + 1
+        fwd = @(x) double(x);
+        axmode = 'nativelog';
+    else
+        N = double(ndims); j = N - tail;
+        logj = log10(j); logt = log10(tail + 1.0);
+        fwd = @(x) headtail_warp(double(x), N, j, logj, logt);
+        axmode = 'warp';
+    end
+end
+
+
+function y = headtail_warp(x, N, j, logj, logt)
+% Forward warp matching Python _set_headtail_log_xscale.fwd: plain log on the
+% head (x<=j); mirror-log on the tail (x>j) so the last `tail` dims fan out.
+    head  = log10(max(x, 1e-9));
+    tailv = logj + logt - log10(max(N - x + 1.0, 1e-3));
+    y = head;
+    m = x > j;
+    y(m) = tailv(m);
+end
+
+
+function finalize_dim_xaxis(ax, fwd, axmode, ndims, tail, lin_xlim, zero_at)
+% Apply axis scale, x-limits, ticks and (for 'warp') the axis-break mark, after
+% the data have been plotted in warped coordinates.
+%   lin_xlim - [lo hi] used only for axmode 'linear'
+%   zero_at  - [] or a placeholder x (e.g. 0.5) that gets a '0' tick (ax6)
+    if nargin < 7, zero_at = []; end
+    switch axmode
+        case 'linear'
+            xlim(ax, lin_xlim);
+        case 'nativelog'
+            set(ax, 'XScale', 'log');
+            if isempty(zero_at), lo = 0.8; else, lo = zero_at * 0.8; end
+            xlim(ax, [lo, ndims + 0.5]);
+            ax.XAxis.TickLabelRotation = 45;
+        case 'warp'
+            N = double(ndims); j = N - tail; logj = log10(j);
+            if isempty(zero_at), left = 0.8; else, left = zero_at * 0.8; end
+            xlim(ax, [fwd(left), fwd(N + 0.5)]);
+            tvals = []; tlabs = {};
+            if ~isempty(zero_at)
+                tvals(end+1) = zero_at; tlabs{end+1} = '0';
+            end
+            cand = [1 2 5 10 20 50 100 200 500 1000 2000 5000 10000 20000 50000];
+            for tk = cand
+                if tk >= 1 && tk < j && (logj - log10(tk)) > 0.18
+                    tvals(end+1) = tk; tlabs{end+1} = num2str(tk); %#ok<AGROW>
+                end
+            end
+            jj = round(j); tvals(end+1) = jj; tlabs{end+1} = num2str(jj);
+            if N > jj, tvals(end+1) = round(N); tlabs{end+1} = num2str(round(N)); end
+            [uv, ia] = unique(tvals, 'stable');
+            set(ax, 'XTick', fwd(uv), 'XTickLabel', tlabs(ia));
+            ax.XAxis.TickLabelRotation = 45;
+            draw_dim_axis_break(ax, fwd(j));
+    end
+end
+
+
+function draw_dim_axis_break(ax, xw)
+% Draw a small '//' break mark on the bottom spine at warped-x ``xw`` to signal
+% the log -> mirror-log junction (mirrors Python _draw_axis_break).
+    xl = get(ax, 'XLim');
+    xa = (xw - xl(1)) / (xl(2) - xl(1));
+    if ~(xa > 0 && xa < 1), return; end
+    yl = get(ax, 'YLim');
+    % Pin the limits to manual BEFORE drawing: the break straddles the bottom
+    % spine, so its lower point sits just below yl(1). With auto limits MATLAB
+    % would expand the y-axis to swallow it, dropping the spine and leaving the
+    % marks floating above the axis. Pinning keeps them on the spine.
+    ylim(ax, yl); xlim(ax, xl);
+    d = 0.014;
+    xspan = xl(2) - xl(1); yspan = yl(2) - yl(1);
+    washold = ishold(ax); hold(ax, 'on');
+    for off = [-0.6*d, 0.6*d]
+        xx = xl(1) + (xa + [-d, d] + off) * xspan;
+        yy = yl(1) + [-d, d] * yspan;
+        plot(ax, xx, yy, 'k-', 'LineWidth', 1.0, 'Clipping', 'off', 'HandleVisibility', 'off');
+    end
+    if ~washold, hold(ax, 'off'); end
 end
