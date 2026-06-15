@@ -77,27 +77,22 @@ class TestBasisThresholdMethodCombinations:
         # Signal basis with all threshold methods
         ('signal', 'global'),
         ('signal', 'hybrid'),
-        ('signal', 'unit'),
 
         # Difference basis with all threshold methods
         ('difference', 'global'),
         ('difference', 'hybrid'),
-        ('difference', 'unit'),
 
         # PCA basis
         ('pca', 'global'),
         ('pca', 'hybrid'),
-        ('pca', 'unit'),
 
         # Noise basis
         ('noise', 'global'),
         ('noise', 'hybrid'),
-        ('noise', 'unit'),
 
         # Random basis
         ('random', 'global'),
         ('random', 'hybrid'),
-        ('random', 'unit'),
     ])
     def test_basis_threshold_method_valid(self, test_data, basis, threshold_method):
         """Test all valid basis-threshold_method combinations."""
@@ -122,12 +117,10 @@ class TestCriterionThresholdMethodCombinations:
         # Prediction with all methods
         ('prediction', 'global'),
         ('prediction', 'hybrid'),
-        ('prediction', 'unit'),
 
         # Variance with all methods
         ('variance', 'global'),
         ('variance', 'hybrid'),
-        ('variance', 'unit'),
 
         # Variance eigenvalues only compatible with global
         ('variance_eigenvalues', 'global'),
@@ -155,45 +148,35 @@ class TestThreeWayCombinations:
         # Signal basis - comprehensive
         ('signal', 'prediction', 'global'),
         ('signal', 'prediction', 'hybrid'),
-        ('signal', 'prediction', 'unit'),
         ('signal', 'variance', 'global'),
         ('signal', 'variance', 'hybrid'),
-        ('signal', 'variance', 'unit'),
         ('signal', 'variance_eigenvalues', 'global'),
 
         # Difference basis - comprehensive
         ('difference', 'prediction', 'global'),
         ('difference', 'prediction', 'hybrid'),
-        ('difference', 'prediction', 'unit'),
         ('difference', 'variance', 'global'),
         ('difference', 'variance', 'hybrid'),
-        ('difference', 'variance', 'unit'),
         ('difference', 'variance_eigenvalues', 'global'),
 
-        # PCA basis - no variance_eigenvalues with hybrid/unit
+        # PCA basis - no variance_eigenvalues with hybrid
         ('pca', 'prediction', 'global'),
         ('pca', 'prediction', 'hybrid'),
-        ('pca', 'prediction', 'unit'),
         ('pca', 'variance', 'global'),
         ('pca', 'variance', 'hybrid'),
-        ('pca', 'variance', 'unit'),
 
         # Noise basis - comprehensive
         ('noise', 'prediction', 'global'),
         ('noise', 'prediction', 'hybrid'),
-        ('noise', 'prediction', 'unit'),
         ('noise', 'variance', 'global'),
         ('noise', 'variance', 'hybrid'),
-        ('noise', 'variance', 'unit'),
         ('noise', 'variance_eigenvalues', 'global'),
 
         # Random basis - no variance_eigenvalues
         ('random', 'prediction', 'global'),
         ('random', 'prediction', 'hybrid'),
-        ('random', 'prediction', 'unit'),
         ('random', 'variance', 'global'),
         ('random', 'variance', 'hybrid'),
-        ('random', 'variance', 'unit'),
     ])
     def test_three_way_combinations(self, test_data, basis, criterion, threshold_method):
         """Test all valid three-way combinations."""
@@ -327,17 +310,6 @@ class TestInvalidCombinations:
                 'wantverbose': False
             })
 
-    def test_variance_eigenvalues_with_unit(self, test_data):
-        """Test that variance_eigenvalues is not compatible with unit method."""
-        with pytest.raises((ValueError, AssertionError, KeyError)):
-            psn(test_data, {
-                'basis': 'signal',
-                'criterion': 'variance_eigenvalues',
-                'threshold_method': 'unit',
-                'wantfig': False,
-                'wantverbose': False
-            })
-
 
 # ============================================================================
 # Test Consistency Across Combinations
@@ -403,18 +375,11 @@ class TestConsistencyAcrossCombinations:
             'wantverbose': False
         })
 
-        results_unit = psn(test_data, {
-            'threshold_method': 'unit',
-            'wantfig': False,
-            'wantverbose': False
-        })
-
         # Global: all units same threshold
         assert len(np.unique(results_global['best_threshold'])) == 1
 
-        # Hybrid and unit: can have different thresholds per unit
+        # Hybrid: can have different thresholds per unit
         assert len(results_hybrid['best_threshold']) == test_data.shape[0]
-        assert len(results_unit['best_threshold']) == test_data.shape[0]
 
 
 # ============================================================================
@@ -428,7 +393,7 @@ class TestEdgeCasesWithCombinations:
         """Test minimal data (2 trials) with all threshold methods."""
         data = np.random.randn(5, 10, 2)
 
-        for method in ['global', 'hybrid', 'unit']:
+        for method in ['global', 'hybrid']:
             results = psn(data, {
                 'threshold_method': method,
                 'wantfig': False,
@@ -489,7 +454,7 @@ class TestPerformanceWithCombinations:
     @pytest.mark.parametrize("basis,criterion,threshold_method", [
         ('signal', 'prediction', 'global'),
         ('difference', 'prediction', 'hybrid'),
-        ('signal', 'variance', 'unit'),
+        ('signal', 'variance', 'hybrid'),
     ])
     def test_combinations_with_large_data(self, basis, criterion, threshold_method):
         """Test that combinations work with larger datasets."""

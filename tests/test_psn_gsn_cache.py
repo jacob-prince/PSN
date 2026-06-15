@@ -204,20 +204,6 @@ class TestCompatibility:
         np.testing.assert_array_equal(
             cached['denoiseddata'], fresh['denoiseddata'])
 
-    def test_wiener_denoiser_type(self, sim_data, base_result):
-        """Cached gsn_result works with denoiser_type='wiener'."""
-        fresh = psn(sim_data, {
-            'denoiser_type': 'wiener', 'threshold_method': 'global',
-            'wantfig': False, 'wantverbose': False,
-        })
-        cached = psn(sim_data, {
-            'denoiser_type': 'wiener', 'threshold_method': 'global',
-            'wantfig': False, 'wantverbose': False,
-            'gsn_result': base_result['gsn_result'],
-        })
-        np.testing.assert_array_equal(
-            cached['denoiseddata'], fresh['denoiseddata'])
-
 
 # ---------------------------------------------------------------------------
 # Verbose output

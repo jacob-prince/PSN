@@ -3,7 +3,7 @@
 Background
 ----------
 At large nunits, PSN's basis-construction eigh of cSb dominates
-wall-clock (eigh is O(N^3)), and PSN's 'auto' mode runs it twice
+wall-clock (eigh is O(N^3)), and PSN's 'compare' mode runs it twice
 (signal + difference) before picking. The fast-GSN branch added an
 opt-in
 ``opt['returns']`` selector so GSN can ALSO compute and return:
@@ -287,7 +287,6 @@ class TestSignalBasisHandoff:
     @pytest.mark.parametrize('criterion,threshold_method', [
         ('prediction',   'global'),
         ('prediction',   'hybrid'),
-        ('prediction',   'unit'),
         ('variance',     'global'),
         ('max-tradeoff', 'hybrid'),
     ])

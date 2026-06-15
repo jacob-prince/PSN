@@ -9,7 +9,7 @@ equivalence.
 
 Coverage:
 - All three presets: 'conservative', 'standard', 'aggressive'
-- Unit-specific ('unit') threshold method
+- Threshold methods: 'global', 'hybrid'
 - Basis types: 'signal', 'difference', 'noise', 'pca', 'random'
 - Wiener denoiser, full-rank Wiener basis
 - Alpha interpolation
@@ -288,21 +288,11 @@ class TestWienerVariants:
         opt = {'basis': 'wiener', 'wantfig': False, 'wantverbose': False}
         _compare_roundtrip(data, opt, label=f'basis=wiener/{shape}')
 
-    @pytest.mark.parametrize('shape', SHAPES)
-    def test_denoiser_type_wiener(self, shape):
-        """denoiser_type='wiener': per-dim Wiener shrinkage on the signal basis.
-        w_k = s_k / (s_k + n_k/t). Requires threshold_method='global'."""
-        data = _gen_lowrank(*shape, rank=10, seed=0)
-        opt = {'basis': 'signal', 'denoiser_type': 'wiener',
-               'threshold_method': 'global',
-               'wantfig': False, 'wantverbose': False}
-        _compare_roundtrip(data, opt, label=f'denoiser_type=wiener/{shape}')
-
 
 class TestThresholdMethods:
-    """global / hybrid / unit all go through distinct code paths."""
+    """global / hybrid go through distinct code paths."""
 
-    @pytest.mark.parametrize('method', ['global', 'hybrid', 'unit'])
+    @pytest.mark.parametrize('method', ['global', 'hybrid'])
     @pytest.mark.parametrize('shape', [(40, 30, 4), (60, 45, 4)])
     def test_threshold_method(self, method, shape):
         data = _gen_lowrank(*shape, rank=10, seed=0)
@@ -333,7 +323,7 @@ class TestCriteria:
     def test_criterion(self, criterion):
         data = _gen_lowrank(80, 60, 4, rank=10, seed=0)
         # variance_eigenvalues requires eigenvalues & is not compatible with
-        # hybrid/unit thresholds — use global.
+        # hybrid thresholds — use global.
         method = 'global' if criterion == 'variance_eigenvalues' else 'hybrid'
         opt = {'basis': 'signal', 'criterion': criterion,
                'threshold_method': method,

@@ -218,21 +218,6 @@ class TestAlphaHybrid:
         assert len(r['unit_objectives']) == lowrank_data.shape[0]
 
 
-class TestAlphaUnit:
-    """Test alpha with threshold_method='unit'."""
-
-    OPT_BASE = {'threshold_method': 'unit', 'wantfig': False, 'wantverbose': False}
-
-    def test_alpha0_matches_prediction(self, small_data):
-        r_pred = psn(small_data, {**self.OPT_BASE, 'criterion': 'prediction'})
-        r_a0 = psn(small_data, {**self.OPT_BASE, 'alpha': 0})
-        np.testing.assert_array_equal(r_pred['best_threshold'], r_a0['best_threshold'])
-
-    def test_runs_without_error(self, small_data):
-        r = psn(small_data, {**self.OPT_BASE, 'alpha': 0.5})
-        assert r['denoiseddata'].shape == small_data.shape[:2]
-
-
 # ---------------------------------------------------------------------------
 # Basis types
 # ---------------------------------------------------------------------------

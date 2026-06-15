@@ -600,6 +600,17 @@ class TestErrorHandling:
                 'wantverbose': False
             })
 
+    def test_removed_unit_threshold_method(self):
+        """The 'unit' threshold method was removed; it should now raise."""
+        data = np.random.randn(5, 10, 3)
+
+        with pytest.raises(ValueError, match='threshold_method'):
+            psn(data, {
+                'threshold_method': 'unit',
+                'wantfig': False,
+                'wantverbose': False
+            })
+
     def test_variance_threshold_out_of_range(self):
         """Test that variance threshold outside [0,1] raises error."""
         data = np.random.randn(5, 10, 3)

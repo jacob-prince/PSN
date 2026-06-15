@@ -3,7 +3,7 @@
 Tests the current psn() functional API with all combinations of:
 - basis: 'signal', 'difference', 'pca', 'noise', 'random', custom matrix
 - criterion: 'prediction', 'variance', 'variance_eigenvalues'
-- threshold_method: 'global', 'hybrid', 'unit'
+- threshold_method: 'global', 'hybrid'
 - Other options: basis_ordering, variance_threshold, allowable_thresholds, unit_groups, gsn_args
 """
 
@@ -218,20 +218,6 @@ class TestThresholdMethods:
         # Hybrid: units can have different thresholds
         assert len(results['best_threshold']) == sample_data.shape[0]
 
-    def test_threshold_unit(self, sample_data):
-        """Test unit-specific threshold (unit-specific ordering and thresholds)."""
-        results = psn(sample_data, {
-            'threshold_method': 'unit',
-            'wantfig': False,
-            'wantverbose': False
-        })
-
-        assert 'denoiseddata' in results
-        assert results['opt_used']['threshold_method'] == 'unit'
-        assert 'best_threshold' in results
-        # Unit-specific: each unit has its own threshold
-        assert len(results['best_threshold']) == sample_data.shape[0]
-
 
 # ============================================================================
 # Test Basis Ordering
@@ -359,14 +345,14 @@ class TestUnitGroups:
         assert results['best_threshold'][0] == results['best_threshold'][1]
         assert results['best_threshold'][2] == results['best_threshold'][3] == results['best_threshold'][4]
 
-    def test_unit_groups_unit_method(self, sample_data):
-        """Test unit groups with unit-specific threshold method."""
+    def test_unit_groups_two_groups(self, sample_data):
+        """Test unit groups split into two groups (hybrid method)."""
         nunits = sample_data.shape[0]
         # Create two groups
         unit_groups = np.array([0] * 5 + [1] * 5)
 
         results = psn(sample_data, {
-            'threshold_method': 'unit',
+            'threshold_method': 'hybrid',
             'unit_groups': unit_groups,
             'wantfig': False,
             'wantverbose': False
@@ -465,15 +451,16 @@ class TestPresetModes:
         assert results['opt_used']['basis'] == 'signal'
         assert results['opt_used']['criterion'] == 'variance'
         assert results['opt_used']['threshold_method'] == 'global'
+        assert results['opt_used']['variance_threshold'] == 0.99
 
     def test_mode_standard(self, sample_data):
-        """Test standard mode (default)."""
+        """Test standard mode (same as default)."""
         results = psn(sample_data, 'standard', {'wantfig': False, 'wantverbose': False})
 
         assert 'denoiseddata' in results
         assert results['opt_used']['basis'] == 'signal'
-        assert results['opt_used']['criterion'] == 'prediction'
-        assert results['opt_used']['threshold_method'] == 'hybrid'
+        assert results['opt_used']['criterion'] == 'max-tradeoff'
+        assert results['opt_used']['threshold_method'] == 'global'
 
     def test_mode_aggressive(self, sample_data):
         """Test aggressive mode."""
@@ -482,19 +469,84 @@ class TestPresetModes:
         assert 'denoiseddata' in results
         assert results['opt_used']['basis'] == 'difference'
         assert results['opt_used']['criterion'] == 'prediction'
-        assert results['opt_used']['threshold_method'] == 'hybrid'
+        assert results['opt_used']['threshold_method'] == 'global'
 
     def test_default_mode(self, sample_data):
-        """Test that default (no mode specified) uses the 'auto' mode."""
+        """Test that default (no mode specified) is signal / max-tradeoff / global."""
         results = psn(sample_data, {'wantfig': False, 'wantverbose': False})
 
         assert 'denoiseddata' in results
-        # Default is now 'auto': signal-vs-difference selection at the max-tradeoff point.
+        # Default: signal basis at the max-tradeoff threshold, single global threshold.
+        assert results['opt_used']['basis'] == 'signal'
         assert results['opt_used']['criterion'] == 'max-tradeoff'
+        assert results['opt_used']['threshold_method'] == 'global'
+        # global mode yields a single shared threshold (scalar)
+        assert np.isscalar(results['best_threshold']) or np.ndim(results['best_threshold']) == 0
+
+    def test_default_matches_standard(self, sample_data):
+        """The no-arg default and 'standard' must be identical."""
+        base = {'wantfig': False, 'wantverbose': False}
+        r_default = psn(sample_data, base)
+        r_standard = psn(sample_data, 'standard', base)
+        np.testing.assert_array_equal(r_default['denoiseddata'], r_standard['denoiseddata'])
+
+    def test_auto_mode_rejected(self, sample_data):
+        """'auto' was removed; it should raise (same as default 'standard')."""
+        with pytest.raises(ValueError, match='[Uu]nknown mode'):
+            psn(sample_data, 'auto', {'wantfig': False, 'wantverbose': False})
+
+    def test_compare_mode(self, sample_data):
+        """Test that 'compare' selects between the signal and difference bases."""
+        results = psn(sample_data, 'compare', {'wantfig': False, 'wantverbose': False})
+
+        assert 'denoiseddata' in results
+        ts = results['threshold_selection']
+        assert ts['mode'] == 'compare'
+        assert ts['basis'] in ('signal', 'difference')
+        # per-candidate analytic recovery is reported as the decision metric
+        assert set(results['diagnostics']['candidates']) == {'signal', 'difference'}
+
+    def test_opt_overrides_mode_defaults(self, sample_data):
+        """Options dict takes priority over a named mode's defaults."""
+        results = psn(sample_data, 'aggressive',
+                      {'threshold_method': 'hybrid', 'wantfig': False, 'wantverbose': False})
+        # 'aggressive' basis/criterion kept, but the override wins on threshold_method
+        assert results['opt_used']['basis'] == 'difference'
+        assert results['opt_used']['criterion'] == 'prediction'
         assert results['opt_used']['threshold_method'] == 'hybrid'
-        # auto selects one of the two truncation bases (reported in results)
-        assert results['auto_basis_selected'] in ('signal', 'difference')
-        assert results['opt_used']['basis'] in ('signal', 'difference')
+
+    @pytest.mark.parametrize('override', [
+        {'threshold_method': 'hybrid'},
+        {'criterion': 'prediction'},
+        {'basis': 'signal'},
+        {'variance_threshold': 0.9},
+        {'alpha': 0.3},
+    ])
+    def test_wiener_mode_rejects_conflicting_opts(self, sample_data, override):
+        """mode='wiener' + a contradicting pipeline option raises."""
+        with pytest.raises(ValueError, match='Wiener'):
+            psn(sample_data, 'wiener',
+                {**override, 'wantfig': False, 'wantverbose': False})
+
+    def test_wiener_mode_allows_innocuous_opts(self, sample_data):
+        """Non-pipeline options (wantfig, etc.) are fine with mode='wiener'."""
+        results = psn(sample_data, 'wiener', {'wantfig': False, 'wantverbose': False})
+        assert results['opt_used']['criterion'] == 'wiener'
+
+    def test_wiener_direct_dict_rejects_conflicts(self, sample_data):
+        """criterion='wiener' or legacy basis='wiener' + conflict also raises."""
+        with pytest.raises(ValueError, match='Wiener'):
+            psn(sample_data, {'criterion': 'wiener', 'threshold_method': 'global',
+                              'wantfig': False, 'wantverbose': False})
+        with pytest.raises(ValueError, match='Wiener'):
+            psn(sample_data, {'basis': 'wiener', 'criterion': 'prediction',
+                              'wantfig': False, 'wantverbose': False})
+
+    def test_wiener_consistent_request_is_allowed(self, sample_data):
+        """criterion='wiener' alongside the legacy basis='wiener' is not a conflict."""
+        results = psn(sample_data, {'basis': 'wiener', 'criterion': 'wiener',
+                                    'wantfig': False, 'wantverbose': False})
+        assert 'denoiseddata' in results
 
 
 # ============================================================================

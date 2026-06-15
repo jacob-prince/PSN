@@ -94,19 +94,6 @@ class TestAllowableThresholdsEdgeCases:
         # All thresholds should be from allowed set
         assert all(t in allowed for t in results['best_threshold'])
 
-    def test_allowable_thresholds_with_unit(self, standard_data):
-        """Test allowable thresholds with unit-specific method."""
-        allowed = [1, 3, 5, 7]
-        results = psn(standard_data, {
-            'allowable_thresholds': allowed,
-            'threshold_method': 'unit',
-            'wantfig': False,
-            'wantverbose': False
-        })
-
-        # All thresholds should be from allowed set
-        assert all(t in allowed for t in results['best_threshold'])
-
     def test_allowable_thresholds_dense_range(self, standard_data):
         """Test with many allowable thresholds."""
         nunits = standard_data.shape[0]
@@ -175,7 +162,7 @@ class TestAllowableThresholdsEdgeCases:
 class TestNaNHandlingComprehensive:
     """Test NaN handling with various parameter combinations."""
 
-    @pytest.mark.parametrize("threshold_method", ['global', 'hybrid', 'unit'])
+    @pytest.mark.parametrize("threshold_method", ['global', 'hybrid'])
     def test_nan_with_all_threshold_methods(self, nan_data, threshold_method):
         """Test NaN data with all threshold methods."""
         results = psn(nan_data, {
@@ -310,8 +297,9 @@ class TestDegenerateData:
         results = psn(data, {'wantfig': False, 'wantverbose': False})
 
         assert 'denoiseddata' in results
-        # Should retain primarily the dominant dimension
-        assert results['best_threshold'][0] >= 1
+        # Should retain primarily the dominant dimension. Default is now a single
+        # global threshold (scalar); atleast_1d handles both scalar and per-unit.
+        assert np.atleast_1d(results['best_threshold'])[0] >= 1
 
     def test_orthogonal_signal_noise(self):
         """Test when signal and noise are orthogonal."""
@@ -664,10 +652,10 @@ class TestParameterInteractions:
 
         assert 'denoiseddata' in results
 
-    def test_unit_method_with_variance_criterion(self, standard_data):
-        """Test unit-specific method with variance criterion."""
+    def test_hybrid_method_with_variance_criterion(self, standard_data):
+        """Test hybrid (unit-specific threshold) method with variance criterion."""
         results = psn(standard_data, {
-            'threshold_method': 'unit',
+            'threshold_method': 'hybrid',
             'criterion': 'variance',
             'variance_threshold': 0.95,
             'wantfig': False,
@@ -778,8 +766,8 @@ class TestModeComparisons:
 
         results_manual = psn(standard_data, {
             'basis': 'signal',
-            'criterion': 'prediction',
-            'threshold_method': 'hybrid',
+            'criterion': 'max-tradeoff',
+            'threshold_method': 'global',
             'wantfig': False,
             'wantverbose': False
         })
@@ -796,7 +784,7 @@ class TestModeComparisons:
         results_manual = psn(standard_data, {
             'basis': 'difference',
             'criterion': 'prediction',
-            'threshold_method': 'hybrid',
+            'threshold_method': 'global',
             'wantfig': False,
             'wantverbose': False
         })

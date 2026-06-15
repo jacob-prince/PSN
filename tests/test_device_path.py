@@ -3,8 +3,8 @@
 At large nunits (≥10000) PSN's CPU runtime is dominated by GEMM-heavy
 utilities (project_covs, compute_unit_weighted_projections, the
 denoiser-build matmul in denoise_unitwise / denoise_global /
-denoise_wiener). Routing those through torch on a device (CUDA or MPS)
-delivers a 10-50× speedup.
+denoise_fullrank_wiener). Routing those through torch on a device
+(CUDA or MPS) delivers a 10-50× speedup.
 
 For the feature to be safe, the device path MUST produce results that
 are numerically equivalent to the CPU/numpy path on every code branch
@@ -15,9 +15,8 @@ the user might hit. This file covers:
                             optional per-unit ranking
   3. denoise_unitwise    — per-threshold-group matmul (hybrid mode)
   4. denoise_global      — single basis matmul
-  5. denoise_wiener      — Wiener weights + (B * w) @ B.T
-  6. denoise_fullrank_wiener — cholesky_solve vs scipy.linalg.solve
-  7. End-to-end psn.psn  — every (basis, criterion, threshold_method)
+  5. denoise_fullrank_wiener — cholesky_solve vs scipy.linalg.solve
+  6. End-to-end psn.psn  — every (basis, criterion, threshold_method)
                             combination matches between device='cpu'
                             and device='cuda'/'mps' when available
 
@@ -251,7 +250,6 @@ _BRANCHES = [
     # (basis, criterion, threshold_method)
     ('signal',     'prediction',   'global'),
     ('signal',     'prediction',   'hybrid'),
-    ('signal',     'prediction',   'unit'),
     ('signal',     'variance',     'global'),
     ('signal',     'max-tradeoff', 'hybrid'),
     ('difference', 'prediction',   'global'),
@@ -271,11 +269,15 @@ class TestPsnEndToEndCPUVsDevice:
         data, res = medium_data
         common = dict(
             gsn_result={'cSb': res['cSb'], 'cNb': res['cNb']},
-            basis=basis,
-            criterion=criterion,
-            threshold_method=threshold_method,
             wantverbose=False, wantfig=False,
         )
+        if basis == 'wiener':
+            # Full-rank Wiener is basis-free / untruncated; it rejects a
+            # contradicting criterion/threshold_method, so request it alone.
+            common['basis'] = 'wiener'
+        else:
+            common.update(basis=basis, criterion=criterion,
+                          threshold_method=threshold_method)
         out_cpu = psn.psn(data, dict(common, device='cpu'))
         out_dev = psn.psn(data, dict(common, device=_TEST_DEVICE))
         tols = _tols_for_device(_TEST_DEVICE)
