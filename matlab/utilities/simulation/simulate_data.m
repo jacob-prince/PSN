@@ -15,8 +15,23 @@ function varargout = simulate_data(varargin)
 % - Custom signal or noise covariance matrices
 % - Heterogeneous subpopulations with conflicting optimal bases
 %
-% See documentation for generate_data and generate_heterogeneous_populations below
-% for detailed parameter descriptions.
+% -------------------------------------------------------------------------
+% Inputs:
+% -------------------------------------------------------------------------
+%
+% <func_name> - char, which generator to dispatch to: 'generate_data' or
+%   'generate_heterogeneous_populations'.
+%
+% <varargin> - remaining name-value pairs forwarded to the chosen generator.
+%   See generate_data and generate_heterogeneous_populations below for their
+%   parameters.
+%
+% -------------------------------------------------------------------------
+% Returns:
+% -------------------------------------------------------------------------
+%
+% <varargout> - outputs of the dispatched generator, typically
+%   [train_data, test_data, ground_truth].
 
     % Route to the requested function
     if nargin == 0
@@ -79,7 +94,7 @@ function [train_data, test_data, ground_truth] = generate_data(varargin)
 %   current random state. Default: 42.
 %
 % <want_fig> - Whether to display a diagnostic figure showing the generated data
-%   properties. Default: true.
+%   properties. Default: false.
 %
 % <signal_cov> (optional) - User-provided signal covariance matrix of shape (nvox, nvox).
 %   If provided, overrides 'signal_decay' parameter. Overridden by 'true_signal' if
@@ -99,6 +114,27 @@ function [train_data, test_data, ground_truth] = generate_data(varargin)
 %
 % <verbose> - Whether to print diagnostic information during generation. Default: true.
 %
+% Keyword-only (fast / large-N path):
+%
+% <fast> - logical. Use the scalable low-rank simulation: no full (nvox, nvox)
+%   covariances or bases; samples from low-rank power-law factors instead.
+%   Incompatible with want_fig and signal_cov/noise_cov. Default: false.
+%
+% <rank_signal> - integer. Rank of the low-rank signal factor in fast mode.
+%   Default: 50.
+%
+% <rank_noise> - integer. Rank of the low-rank noise factor in fast mode.
+%   Default: 200.
+%
+% <isotropic_noise> - scalar. Fast mode only: std of an added isotropic (white)
+%   noise floor (adds isotropic_noise^2 * I to the noise covariance). Default: 0.0.
+%
+% <return_cov> - logical or []. Fast mode: materialize ground_truth.signal_cov /
+%   noise_cov when true and nvox <= max_nvox_for_cov. Default: [] (auto).
+%
+% <max_nvox_for_cov> - integer. Upper nvox bound for materializing covariances
+%   in fast mode. Default: 2000.
+%
 % -------------------------------------------------------------------------
 % Returns:
 % -------------------------------------------------------------------------
@@ -109,10 +145,13 @@ function [train_data, test_data, ground_truth] = generate_data(varargin)
 %
 % <ground_truth> - struct containing ground truth parameters with fields:
 %   .signal         - [ncond x nvox] ground truth signal
-%   .signal_cov     - [nvox x nvox] signal covariance matrix
-%   .noise_cov      - [nvox x nvox] noise covariance matrix
-%   .U_signal       - [nvox x nvox] signal eigenvectors
-%   .U_noise        - [nvox x nvox] noise eigenvectors
+%   .signal_cov     - [nvox x nvox] signal covariance matrix ([] in fast mode
+%                     unless return_cov and nvox <= max_nvox_for_cov)
+%   .noise_cov      - [nvox x nvox] noise covariance matrix (same caveat)
+%   .U_signal       - [nvox x nvox] signal eigenvectors ([nvox x rank_signal]
+%                     in fast mode)
+%   .U_noise        - [nvox x nvox] noise eigenvectors ([nvox x rank_noise]
+%                     in fast mode)
 %   .signal_eigs    - [nvox x 1] signal eigenvalues
 %   .noise_eigs     - [nvox x 1] noise eigenvalues
 %   .user_provided  - struct with flags for what was user-provided
@@ -130,12 +169,19 @@ function [train_data, test_data, ground_truth] = generate_data(varargin)
     addParameter(p, 'align_alpha', 0.5);
     addParameter(p, 'align_k', 10);
     addParameter(p, 'random_seed', 42);
-    addParameter(p, 'want_fig', true);
+    addParameter(p, 'want_fig', false);  % match Python default (no figure unless asked)
     addParameter(p, 'signal_cov', []);
     addParameter(p, 'true_signal', []);
     addParameter(p, 'noise_cov', []);
     addParameter(p, 'cluster_units', false);
     addParameter(p, 'verbose', true);
+    % Fast / large-N low-rank path (keyword-only in Python)
+    addParameter(p, 'fast', false);
+    addParameter(p, 'rank_signal', 50);
+    addParameter(p, 'rank_noise', 200);
+    addParameter(p, 'isotropic_noise', 0.0);
+    addParameter(p, 'return_cov', []);
+    addParameter(p, 'max_nvox_for_cov', 2000);
 
     parse(p, varargin{:});
     nvox = p.Results.nvox;
@@ -153,9 +199,35 @@ function [train_data, test_data, ground_truth] = generate_data(varargin)
     noise_cov = p.Results.noise_cov;
     cluster_units = p.Results.cluster_units;
     verbose = p.Results.verbose;
+    fast = p.Results.fast;
+    rank_signal = p.Results.rank_signal;
+    rank_noise = p.Results.rank_noise;
+    isotropic_noise = p.Results.isotropic_noise;
+    return_cov = p.Results.return_cov;
+    max_nvox_for_cov = p.Results.max_nvox_for_cov;
 
     if ~isempty(random_seed)
         rng(random_seed);
+    end
+
+    % Normalize true_signal up front so every downstream path (fast and
+    % non-fast) sees a 2D (ncond, nvox) array. This is where a filepath to an
+    % image gets loaded and image-shaped arrays get flattened. When the input
+    % is a char/string or has more than 2 dims, coerce it; an already-2D
+    % numeric array is left untouched so the existing non-fast path is byte
+    % for byte unchanged.
+    if ~isempty(true_signal) && (ischar(true_signal) || isstring(true_signal) || ~ismatrix(true_signal))
+        true_signal = coerce_true_signal(true_signal);
+    end
+
+    % Fast path: scalable low-rank spectral-decay simulation
+    if fast
+        [train_data, test_data, ground_truth] = generate_data_fast(...
+            nvox, ncond, ntrial, signal_decay, noise_decay, noise_multiplier, ...
+            align_alpha, align_k, want_fig, signal_cov, true_signal, noise_cov, ...
+            cluster_units, rank_signal, rank_noise, isotropic_noise, ...
+            return_cov, max_nvox_for_cov);
+        return;
     end
 
     % Infer nvox and ncond from true_signal if provided
@@ -369,6 +441,193 @@ function [train_data, test_data, ground_truth] = generate_data(varargin)
             'user_provided', ground_truth.user_provided, ...
             'clustered', cluster_units));
     end
+end
+
+function [train_data, test_data, ground_truth] = generate_data_fast(...
+        nvox, ncond, ntrial, signal_decay, noise_decay, noise_multiplier, ...
+        align_alpha, align_k, want_fig, signal_cov, true_signal, noise_cov, ...
+        cluster_units, rank_signal, rank_noise, isotropic_noise, ...
+        return_cov, max_nvox_for_cov)
+% GENERATE_DATA_FAST  Scalable low-rank spectral-decay simulation.
+%
+% Mirrors the fast=true path of the Python generate_data: avoids full
+% (nvox, nvox) covariances/bases by sampling from low-rank power-law factors.
+% Called from generate_data when 'fast' is true. The caller has already
+% coerced true_signal to a 2D (ncond, nvox) numeric matrix when applicable.
+%
+% -------------------------------------------------------------------------
+% Inputs:
+% -------------------------------------------------------------------------
+%
+% <nvox>, <ncond>, <ntrial> - dimensions; inferred from true_signal when given.
+%
+% <signal_decay>, <noise_decay>, <noise_multiplier>, <align_alpha>, <align_k>
+%   - power-law / alignment parameters, as in generate_data.
+%
+% <want_fig>, <signal_cov>, <noise_cov>, <cluster_units> - unsupported in fast
+%   mode; non-default values raise an error.
+%
+% <true_signal> - [] or a 2D [ncond x nvox] numeric matrix supplying the signal.
+%
+% <rank_signal>, <rank_noise> - ranks of the low-rank signal/noise factors.
+%
+% <isotropic_noise> - scalar std of an added white-noise floor.
+%
+% <return_cov> - [] (auto) or logical; materialize full covariances when set.
+%
+% <max_nvox_for_cov> - upper nvox bound for materializing covariances.
+%
+% -------------------------------------------------------------------------
+% Returns:
+% -------------------------------------------------------------------------
+%
+% <train_data> - [nvox x ncond x ntrial] training data (independent noise).
+%
+% <test_data> - [nvox x ncond x ntrial] test data (matched signal).
+%
+% <ground_truth> - struct; U_signal/U_noise are [nvox x rank_*] and
+%   signal_cov/noise_cov are [] unless materialized.
+
+    if want_fig
+        error('want_fig=true is not supported in fast mode (requires full covariances)');
+    end
+    if ~isempty(signal_cov) || ~isempty(noise_cov)
+        error('signal_cov/noise_cov are not supported in fast mode (would be huge)');
+    end
+    if cluster_units
+        error('cluster_units is not supported in fast mode (requires full covariances)');
+    end
+
+    % Infer nvox/ncond from true_signal if provided
+    if ~isempty(true_signal)
+        if ~ismatrix(true_signal)
+            error('true_signal must be 2D (ncond, nvox), got an array with %d dims', ...
+                  ndims(true_signal));
+        end
+        [ts_ncond, ts_nvox] = size(true_signal);
+        if ~isempty(nvox) && nvox ~= ts_nvox
+            error('Provided nvox=%d doesn''t match true_signal shape(2)=%d', nvox, ts_nvox);
+        end
+        if ~isempty(ncond) && ncond ~= ts_ncond
+            error('Provided ncond=%d doesn''t match true_signal shape(1)=%d', ncond, ts_ncond);
+        end
+        nvox = ts_nvox;
+        ncond = ts_ncond;
+    end
+
+    % Apply defaults if still empty (match generate_data: 50 / 200)
+    if isempty(nvox)
+        nvox = 50;
+    end
+    if isempty(ncond)
+        ncond = 200;
+    end
+    if isempty(ntrial)
+        error('nvox, ncond, and ntrial must be provided');
+    end
+    if ntrial < 1
+        error('ntrial must be >= 1');
+    end
+
+    rS = floor(min(rank_signal, nvox));
+    rN = floor(min(rank_noise, nvox));
+
+    % Signal basis and spectrum
+    if isempty(true_signal)
+        U_signal = random_orthonormal_columns(nvox, rS);
+        signal_eigs = 1.0 ./ ((1:rS)' .^ signal_decay);
+        zS = randn(rS, ncond);
+        true_signal_full = (U_signal .* sqrt(signal_eigs)') * zS;  % (nvox, ncond)
+        true_signal_full = true_signal_full';  % (ncond, nvox)
+    else
+        if ~isequal(size(true_signal), [ncond, nvox])
+            error('Provided true_signal has shape [%s], expected [%d, %d]', ...
+                  num2str(size(true_signal)), ncond, nvox);
+        end
+        true_signal_full = double(true_signal);  % (ncond, nvox)
+
+        % Approximate covariance eigen-structure via economy SVD of the
+        % (ncond, nvox) signal matrix. (Python uses randomized_svd when
+        % available; the economy-SVD fallback is exact and used here.)
+        [~, Sc, Vt] = svd(true_signal_full, 'econ');
+        Sc = diag(Sc);
+        ncomp = min(rS, numel(Sc));
+        U_signal = Vt(:, 1:ncomp);
+        signal_eigs = (Sc(1:ncomp) .^ 2) / max(1, (ncond - 1));
+    end
+
+    % Noise basis and spectrum (+ optional alignment)
+    U_noise_init = random_orthonormal_columns(nvox, rN);
+    if ~isempty(align_k) && align_k > 0
+        U_noise = align_noise_basis_lowrank(U_signal, U_noise_init, align_alpha, floor(align_k));
+    else
+        U_noise = U_noise_init;
+    end
+    noise_eigs = noise_multiplier ./ ((1:rN)' .^ noise_decay);
+
+    % Generate train/test data: same signal, independent noise
+    train_data = zeros(ntrial, nvox, ncond);
+    test_data = zeros(ntrial, nvox, ncond);
+
+    sqrt_noise_eigs = sqrt(noise_eigs)';  % (1, rN)
+    for t = 1:ntrial
+        zN_train = randn(rN, ncond);
+        zN_test = randn(rN, ncond);
+
+        train_noise = (U_noise .* sqrt_noise_eigs) * zN_train;  % (nvox, ncond)
+        test_noise = (U_noise .* sqrt_noise_eigs) * zN_test;
+
+        if ~isempty(isotropic_noise) && isotropic_noise > 0
+            train_noise = train_noise + isotropic_noise * randn(nvox, ncond);
+            test_noise = test_noise + isotropic_noise * randn(nvox, ncond);
+        end
+
+        train_data(t, :, :) = (true_signal_full' + train_noise);
+        test_data(t, :, :) = (true_signal_full' + test_noise);
+    end
+
+    train_data = permute(train_data, [2, 3, 1]);
+    test_data = permute(test_data, [2, 3, 1]);
+
+    % Optionally materialize full covariances for small problems
+    if isempty(return_cov)
+        return_cov_eff = nvox <= max_nvox_for_cov;
+    else
+        return_cov_eff = logical(return_cov);
+    end
+
+    if return_cov_eff && nvox > max_nvox_for_cov
+        error(['return_cov=true would build (%dx%d) matrices; set return_cov=false ' ...
+               'or increase max_nvox_for_cov (currently %d).'], nvox, nvox, max_nvox_for_cov);
+    end
+
+    signal_cov_full = [];
+    noise_cov_full = [];
+    if return_cov_eff
+        signal_cov_full = U_signal * diag(signal_eigs) * U_signal';
+        noise_cov_full = U_noise * diag(noise_eigs) * U_noise';
+        if ~isempty(isotropic_noise) && isotropic_noise > 0
+            noise_cov_full = noise_cov_full + (isotropic_noise^2) * eye(nvox);
+        end
+    end
+
+    ground_truth = struct();
+    ground_truth.signal = true_signal_full;
+    ground_truth.signal_cov = signal_cov_full;
+    ground_truth.noise_cov = noise_cov_full;
+    ground_truth.U_signal = U_signal;
+    ground_truth.U_noise = U_noise;
+    ground_truth.signal_eigs = signal_eigs;
+    ground_truth.noise_eigs = noise_eigs;
+    ground_truth.cov_factors = struct(...
+        'signal', struct('U', U_signal, 'eigs', signal_eigs), ...
+        'noise', struct('U', U_noise, 'eigs', noise_eigs, ...
+                        'isotropic_noise', double(isotropic_noise)));
+    ground_truth.user_provided = struct(...
+        'signal_cov', false, ...
+        'true_signal', ~isempty(true_signal), ...
+        'noise_cov', false);
+    ground_truth.fast = true;
 end
 
 function [train_data, test_data, ground_truth] = generate_heterogeneous_populations(varargin)
