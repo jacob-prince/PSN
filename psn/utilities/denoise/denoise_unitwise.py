@@ -7,13 +7,13 @@ from .compute_unit_weighted_projections import compute_unit_weighted_projections
 from psn._device import resolve_device, to_device, from_device, is_cpu
 
 
-def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, opt, threshold_only):
+def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, opt):
     """DENOISE_UNITWISE  Unit-specific denoising (non-symmetric denoiser)
 
     [denoiser, best_threshold, objective, ...] = denoise_unitwise(basis, signal_proj,
-    noise_proj, basis_eigenvalues, ntrials, opt, threshold_only) builds a generally
-    non-symmetric denoising matrix with unit-specific thresholds and optionally
-    unit-specific dimension orderings.
+    noise_proj, basis_eigenvalues, ntrials, opt) builds a generally non-symmetric
+    denoising matrix with unit-specific thresholds applied on a shared global
+    dimension ordering (threshold_method='hybrid').
 
     -------------------------------------------------------------------------
     Inputs:
@@ -30,10 +30,6 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
     <ntrials> - scalar, number of trials (or average if NaNs present)
 
     <opt> - dict with PSN options (criterion, allowable_thresholds, unit_groups, etc.)
-
-    <threshold_only> - boolean. If True, use global dimension ordering with
-      unit-specific thresholds (hybrid mode). If False, use unit-specific
-      dimension ordering and thresholds (full unit-specific mode)
 
     -------------------------------------------------------------------------
     Returns:
@@ -57,17 +53,14 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
 
     <unit_noise_vars> - list of length nunits of unit-specific weighted noise variances
 
-    <unit_orderings> - [nunits x ndims] dimension ordering for each unit
-
     -------------------------------------------------------------------------
     Algorithm:
     -------------------------------------------------------------------------
 
     Each unit receives:
       - Weighted signal/noise projections: w = basis[u,:]^2, sig_u = w * signal_proj
-      - Optional unit-specific ranking (if threshold_only=False)
       - Unit-specific threshold selection with optional unit_groups averaging
-      - Denoiser column: Bu @ Bu[u,:].T where Bu = basis[:, dims_for_unit_u]
+      - Denoiser column: Bu @ Bu[u,:].T where Bu = basis[:, :k_u]
 
     The denoiser is generally non-symmetric. Apply as: denoiser.T @ data
     """
@@ -77,13 +70,11 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
 
     denoiser = np.zeros((nunits, nunits))
 
-    # First pass: compute weighted projections and objectives for each unit
-    # If threshold_only=True (hybrid mode), use global ordering
-    # If threshold_only=False (full unit-specific), rank by each unit's signal variance
-    do_unit_ranking = not threshold_only
-    unit_cumsum_curves, unit_signal_vars, unit_noise_vars, unit_orderings = \
+    # First pass: compute weighted projections and objectives for each unit.
+    # Hybrid mode uses the shared global ordering (do_unit_ranking=False).
+    unit_cumsum_curves, unit_signal_vars, unit_noise_vars, _ = \
         compute_unit_weighted_projections(basis, signal_proj, noise_proj, ntrials,
-                                            do_unit_ranking, device=device)
+                                            False, device=device)
 
     # Second pass: select thresholds considering unit_groups
     unique_groups = np.unique(opt['unit_groups'])
@@ -154,15 +145,15 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
         # Assign this threshold to all units in the group
         best_threshold[group_mask] = k_group
 
-    # Third pass: build denoiser columns
-    # Optimize by grouping units with same threshold and ordering
+    # Third pass: build denoiser columns. All units share the global ordering,
+    # so group units by their threshold and build each group with one matmul.
     unique_thresholds = np.unique(best_threshold[best_threshold > 0])
 
-    if not is_cpu(device) and threshold_only and len(unique_thresholds) > 0:
-        # GPU hybrid path: do all threshold-group matmuls on device
-        # in one shot, then bring the (n, n) denoiser back to host.
-        # The matmul is the dominant cost at large nunits — GPU
-        # cuts it by 1-2 orders of magnitude over multi-threaded CPU.
+    if not is_cpu(device) and len(unique_thresholds) > 0:
+        # GPU path: do all threshold-group matmuls on device in one shot,
+        # then bring the (n, n) denoiser back to host. The matmul is the
+        # dominant cost at large nunits — GPU cuts it by 1-2 orders of
+        # magnitude over multi-threaded CPU.
         import torch
         tdtype = (torch.float64 if basis.dtype == np.float64
                   else torch.float32)
@@ -184,18 +175,10 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
     else:
         for k in unique_thresholds:
             units_with_k = np.where(best_threshold == k)[0]
-
-            if threshold_only:
-                # Hybrid mode: all units share same ordering, vectorize fully
-                Bu = basis[:, :k]
-                # Vectorized: denoiser[:, units] = Bu @ Bu[units, :].T
-                denoiser[:, units_with_k] = Bu @ Bu[units_with_k, :].T
-            else:
-                # Full unit-specific: group by ordering within same threshold
-                for u in units_with_k:
-                    sort_idx_u = unit_orderings[u, :]
-                    Bu = basis[:, sort_idx_u[:k]]
-                    denoiser[:, u] = Bu @ Bu[u, :]
+            # All units share the same ordering, so vectorize fully:
+            # denoiser[:, units] = Bu @ Bu[units, :].T
+            Bu = basis[:, :k]
+            denoiser[:, units_with_k] = Bu @ Bu[units_with_k, :].T
 
     # Population-level totals for visualization
     # Sum across units to get total variance (since unit weights sum to 1,
@@ -214,4 +197,4 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
         objective = np.zeros(1)
 
     return denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_curves, \
-           unit_signal_vars, unit_noise_vars, unit_orderings
+           unit_signal_vars, unit_noise_vars

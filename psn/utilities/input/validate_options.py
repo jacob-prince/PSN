@@ -26,7 +26,7 @@ def validate_options(opt, nunits):
     Validation checks:
     - basis: must be 'signal', 'difference', 'noise', 'pca', 'random', or numeric matrix
     - criterion: must be 'prediction', 'max-tradeoff', 'variance', or 'variance_eigenvalues'
-    - threshold_method: must be 'global', 'hybrid', or 'unit'
+    - threshold_method: must be 'global' or 'hybrid'
     - basis_ordering: must be 'eigenvalues', 'signalvariance', or 'prediction'
     - variance_threshold: must be in [0,1]
     - allowable_thresholds: must be numeric vector with non-negative values
@@ -34,18 +34,19 @@ def validate_options(opt, nunits):
     - Compatibility: 'variance_eigenvalues' requires named basis (not custom/random)
       and only works with 'global' threshold_method
     """
-    valid_basis_strings = ['signal', 'difference', 'noise', 'pca', 'random', 'wiener', 'auto']
+    valid_basis_strings = ['signal', 'difference', 'noise', 'pca', 'random',
+                           'wiener', 'compare']
     if isinstance(opt['basis'], str):
         if opt['basis'] not in valid_basis_strings:
             raise ValueError(f"basis must be one of: {', '.join(valid_basis_strings)}, or a matrix")
     elif not isinstance(opt['basis'], np.ndarray):
         raise ValueError('basis must be a string or numeric matrix')
 
-    valid_criteria = ['prediction', 'max-tradeoff', 'variance', 'variance_eigenvalues']
+    valid_criteria = ['prediction', 'max-tradeoff', 'variance', 'variance_eigenvalues', 'wiener']
     if opt['criterion'] not in valid_criteria:
         raise ValueError(f"criterion must be one of: {', '.join(valid_criteria)}")
 
-    valid_methods = ['global', 'hybrid', 'unit']
+    valid_methods = ['global', 'hybrid']
     if opt['threshold_method'] not in valid_methods:
         raise ValueError(f"threshold_method must be one of: {', '.join(valid_methods)}")
 
@@ -78,5 +79,5 @@ def validate_options(opt, nunits):
     if opt['criterion'] == 'variance_eigenvalues':
         if isinstance(opt['basis'], np.ndarray) or opt['basis'] == 'random':
             raise ValueError("criterion 'variance_eigenvalues' not compatible with custom basis or 'random' basis")
-        if opt['threshold_method'] in ['hybrid', 'unit']:
+        if opt['threshold_method'] == 'hybrid':
             raise ValueError("criterion 'variance_eigenvalues' only compatible with threshold_method 'global'")

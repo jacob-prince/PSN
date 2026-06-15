@@ -24,16 +24,14 @@ def set_default_options(opt, nunits):
     -------------------------------------------------------------------------
 
     <opt> - complete dict with all required fields. Defaults are:
-      basis              = 'auto'   (auto signal-vs-difference selection)
+      basis              = 'signal'
       criterion          = 'max-tradeoff'
-      threshold_method   = 'hybrid'
+      threshold_method   = 'global'
       basis_ordering     = 'eigenvalues'
       variance_threshold = 0.99
       allowable_thresholds = None
-      unit_groups        = np.arange(nunits) for hybrid/unit modes, zeros for global
+      unit_groups        = np.arange(nunits) for hybrid mode, zeros for global
       alpha              = None (disabled; interpolates between prediction and variance)
-      denoiser_type      = 'truncation' ('truncation' or 'wiener')
-      ntrials_eval       = None (defaults to ntrials_avg)
       gsn_result         = None (pass previous results['gsn_result'] to skip GSN)
       gsn_args           = {}
       wantfig            = True
@@ -46,13 +44,13 @@ def set_default_options(opt, nunits):
     opt = opt.copy()
 
     if 'basis' not in opt:
-        opt['basis'] = 'auto'
+        opt['basis'] = 'signal'
 
     if 'criterion' not in opt:
         opt['criterion'] = 'max-tradeoff'
 
     if 'threshold_method' not in opt:
-        opt['threshold_method'] = 'hybrid'
+        opt['threshold_method'] = 'global'
 
     if 'basis_ordering' not in opt:
         opt['basis_ordering'] = 'eigenvalues'
@@ -93,12 +91,6 @@ def set_default_options(opt, nunits):
     if 'alpha' not in opt:
         opt['alpha'] = None
 
-    if 'denoiser_type' not in opt:
-        opt['denoiser_type'] = 'truncation'  # 'truncation' (default) or 'wiener'
-
-    if 'ntrials_eval' not in opt:
-        opt['ntrials_eval'] = None  # defaults to ntrials_avg; can differ for held-out data
-
     # Auto-detect: if allowable_thresholds is a single value, force threshold_method to 'global'
     if opt['allowable_thresholds'] is not None:
         allowable_arr = np.asarray(opt['allowable_thresholds'])
@@ -110,29 +102,9 @@ def set_default_options(opt, nunits):
                 # Update unit_groups to match global mode
                 opt['unit_groups'] = np.zeros(nunits, dtype=int)
 
-    # Auto-detect: if basis='wiener', warn about ignored options
-    if isinstance(opt['basis'], str) and opt['basis'] == 'wiener':
-        ignored = []
-        if opt['criterion'] != 'prediction':
-            ignored.append(f"criterion='{opt['criterion']}'")
-        if opt['threshold_method'] != 'hybrid':
-            ignored.append(f"threshold_method='{opt['threshold_method']}'")
-        if opt['basis_ordering'] != 'eigenvalues':
-            ignored.append(f"basis_ordering='{opt['basis_ordering']}'")
-        if opt['denoiser_type'] != 'truncation':
-            ignored.append(f"denoiser_type='{opt['denoiser_type']}'")
-        if opt['allowable_thresholds'] is not None:
-            ignored.append('allowable_thresholds')
-        if ignored and opt['wantverbose']:
-            print(f"PSN: basis='wiener' bypasses basis/criterion/threshold pipeline; ignoring {', '.join(ignored)}")
-
-    # Auto-detect: if denoiser_type is 'wiener', force threshold_method to 'global'
-    if opt['denoiser_type'] == 'wiener' and opt['threshold_method'] != 'global':
-        if opt['wantverbose']:
-            print("PSN: denoiser_type='wiener' requires threshold_method='global', setting automatically")
-        opt['threshold_method'] = 'global'
-        # Update unit_groups to match global mode
-        opt['unit_groups'] = np.zeros(nunits, dtype=int)
+    # Note: conflicts between a Wiener request and the basis/criterion/threshold
+    # pipeline are rejected up front in parse_inputs (see _reject_wiener_conflicts),
+    # where the user-supplied keys are still distinguishable from filled defaults.
 
     _validate_options(opt, nunits)
     return opt

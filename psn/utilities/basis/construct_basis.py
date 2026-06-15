@@ -7,7 +7,7 @@ from .normalize_orthonormalize_basis import normalize_orthonormalize_basis as _n
 
 
 def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_avg, has_nans,
-                    custom_basis_eigenvalues=None):
+                    custom_basis_eigenvalues=None, device='cpu'):
     """CONSTRUCT_BASIS  Create the orthonormal basis for denoising
 
     [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, ...)
@@ -59,7 +59,7 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
     if isinstance(basis_spec, str):
         if basis_spec == 'signal':
             # Eigenvectors of signal covariance (GSN returns symmetric)
-            basis_eigenvalues, basis = _eigh_descending_sym(cSb)
+            basis_eigenvalues, basis = _eigh_descending_sym(cSb, device=device)
 
         elif basis_spec == 'difference':
             # Eigenvectors of signal - scaled noise
@@ -68,11 +68,11 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
             A = cSb - cNb / ntrials_avg
             # Symmetrize derived matrix to handle numerical errors
             A = (A + A.T) / 2
-            basis_eigenvalues, basis = _eigh_descending_sym(A)  # already symmetrized above
+            basis_eigenvalues, basis = _eigh_descending_sym(A, device=device)  # already symmetrized above
 
         elif basis_spec == 'noise':
             # Eigenvectors of noise covariance (GSN returns symmetric)
-            basis_eigenvalues, basis = _eigh_descending_sym(cNb)
+            basis_eigenvalues, basis = _eigh_descending_sym(cNb, device=device)
 
         elif basis_spec == 'pca':
             # Standard PCA on trial-averaged data
@@ -82,7 +82,7 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
             # Use pre-computed trial_avg to avoid redundant computation
             trial_avg_demeaned = trial_avg - unit_means[:, np.newaxis]
             cov_matrix = np.cov(trial_avg_demeaned, ddof=1)  # numpy cov returns symmetric matrix
-            basis_eigenvalues, basis = _eigh_descending_sym(cov_matrix)  # no symmetrization needed
+            basis_eigenvalues, basis = _eigh_descending_sym(cov_matrix, device=device)  # no symmetrization needed
             # Note: PCA eigenvalues ARE used for ordering (default behavior), but should
             # NOT be used with criterion='variance_eigenvalues' as they don't represent
             # GSN-estimated signal variance.
