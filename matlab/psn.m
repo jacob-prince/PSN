@@ -1,23 +1,43 @@
 function [results] = psn(varargin)
 % PSN  Denoise neural data using PSN (Partitioning Signal and Noise).
 %
-%   results = psn(data) is the default version of PSN and is shorthand for psn(data,'standard')
+%   results = psn(data) is the default version of PSN and is identical to psn(data,'standard').
+%             It uses the signal basis at the "max-tradeoff" threshold: a near-unbiased,
+%             deterministic choice that still captures the bulk of the achievable recovery,
+%             with a single population (global) threshold. It is shorthand for
+%             psn(data,struct('basis','signal','criterion','max-tradeoff','threshold_method','global'))
 %
 %   results = psn(data,'conservative', opt) prioritizes retaining signal, and is shorthand for
-%             psn(data,struct('basis','signal','criterion','variance','threshold_method','global'))
+%             psn(data,struct('basis','signal','criterion','variance','threshold_method','global','variance_threshold',0.99))
 %
-%   results = psn(data,'standard', opt) prioritizes out-of-sample generalization at the possible expense
-%             of removing some signal in dimensions dominated by noise. It is shorthand for
-%             psn(data,struct('basis','signal','criterion','prediction','threshold_method','hybrid'))
+%   results = psn(data,'standard', opt) is identical to the default psn(data): the signal basis at the
+%             max-tradeoff threshold with a single population (global) threshold. It is shorthand for
+%             psn(data,struct('basis','signal','criterion','max-tradeoff','threshold_method','global'))
 %
-%   results = psn(data,'aggressive', opt) uses an aggressive denoising approach that flexibly adapts
-%             to every unit. This approach may yield improved out-of-sample generalization compared to
+%   results = psn(data,'aggressive', opt) uses a more aggressive denoising approach (difference basis at
+%             the prediction peak). This may yield improved out-of-sample generalization compared to
 %             'standard' but may yield unstable results in cases of limited data. It is shorthand for
-%             psn(data,struct('basis','difference','criterion','prediction','threshold_method','unit'))
+%             psn(data,struct('basis','difference','criterion','prediction','threshold_method','global'))
+%
+%   results = psn(data,'wiener', opt) applies the full-rank matrix Wiener filter (Bayes-optimal linear
+%             estimator). It is shorthand for psn(data,struct('criterion','wiener'))
+%
+%   results = psn(data,'compare', opt) builds both the signal and difference bases at their
+%             max-tradeoff thresholds and keeps whichever has the higher analytic recovery
+%             (ties keep the more near-unbiased signal basis). It is shorthand for
+%             psn(data,struct('basis','compare','criterion','max-tradeoff','threshold_method','hybrid'))
 %
 %   results = psn(data, opt) is a version of PSN where the user customizes the settings.
 %
 %   In all cases, <opt> can be omitted and default parameters are used.
+%
+%   When a named mode is combined with an <opt> struct, the struct OVERRIDES the
+%   mode's defaults (the user's options take priority). For example,
+%   psn(data,'aggressive',struct('threshold_method','hybrid')) keeps the 'aggressive'
+%   basis and criterion but switches to hybrid thresholds. The 'wiener' mode is the
+%   exception: it is basis-free and untruncated, so combining it with a conflicting
+%   <basis>, <criterion>, <threshold_method>, <basis_ordering>, <allowable_thresholds>,
+%   <variance_threshold>, <alpha>, or <unit_groups> raises an error instead.
 %
 % -------------------------------------------------------------------------
 % Inputs:
@@ -53,18 +73,42 @@ function [results] = psn(varargin)
 %     'noise'      -> [NOT RECOMMENDED] use noise basis (eigenvectors of noise covariance, cNb)
 %     'pca'        -> [NOT RECOMMENDED] use eigenvectors of covariance of trial-averaged data
 %     'random'     -> [NOT RECOMMENDED] generate a random orthonormal basis
+%     'wiener'     -> [DEPRECATED] alias for criterion='wiener' (the full-rank Wiener
+%                     filter). Wiener is not a basis; see <criterion>.
+%     'compare'    -> build both the 'signal' and 'difference' bases, each at its
+%                     own max-tradeoff threshold, and keep whichever has the higher
+%                     analytic recovery against the GSN covariances. A negligible
+%                     margin keeps 'signal' (the more near-unbiased basis). The
+%                     chosen basis and the per-candidate metrics -- analytic recovery
+%                     (which drives the choice) and the empirical split-half
+%                     reliability (reported for validation only) -- are returned in
+%                     results.threshold_selection and results.diagnostics.
 %     Default: 'signal'.
 %
 %   <criterion> (optional) - string. How to determine the threshold:
 %     'prediction'            -> maximize out-of-sample generalization by analytically
 %                                maximizing cumulative signal - noise/ntrials_avg
+%     'max-tradeoff'          -> the most-unbiased operating point that still captures the
+%                                bulk of the achievable recovery: farthest from the chord on the
+%                                descending (prediction-peak -> trial-average) limb of the
+%                                recovery curve. Retains more signal variance (less bias)
+%                                than 'prediction' while keeping recovery high. Fully
+%                                analytic. Most meaningful with basis='signal'.
 %     'variance'              -> retain dimensions until a target fraction of signal variance is reached
 %     'variance_eigenvalues'  -> retain dimensions until a target fraction of the total sum of
 %                                positive eigenvalues associated with the basis is reached
-%     Default: 'prediction'.
+%     'wiener'                -> full-rank matrix Wiener filter: D = cSb * (cSb + cNb/t)^{-1},
+%                                the Bayes-optimal linear estimator. Unlike the other criteria
+%                                this applies NO truncation -- all dimensions are kept and
+%                                continuously weighted -- and it is basis-free. Because it
+%                                bypasses the basis/criterion/threshold pipeline, supplying a
+%                                conflicting <basis>, <threshold_method>, <basis_ordering>,
+%                                <allowable_thresholds>, <variance_threshold>, <alpha>, or
+%                                <unit_groups> raises an error rather than being ignored.
+%     Default: 'max-tradeoff'.
 %     (Note that <criterion> set to 'variance_eigenvalues' is not compatible with
 %      the B and 'random' cases of <basis>, and is also not compatible with
-%      <threshold_method> as 'hybrid' or 'unit'.)
+%      <threshold_method> as 'hybrid'.)
 %     (Also, note that when <basis> is 'signal' and <threshold_method> is 'global', then
 %      identical results are produced by 'variance' vs. 'variance_eigenvalues'.)
 %
@@ -72,8 +116,7 @@ function [results] = psn(varargin)
 %     number of dimensions to retain):
 %     'global' -> single threshold for all units (symmetric denoiser)
 %     'hybrid' -> global ordering of basis vectors, unit-specific thresholds
-%     'unit'   -> unit-specific ordering of basis vectors, unit-specific thresholds
-%     Default: 'hybrid'.
+%     Default: 'global'.
 %
 %   <basis_ordering> (optional) - string. How to set the initial global order of basis vectors:
 %     'eigenvalues'    -> use descending order of eigenvalues (if available)
@@ -82,8 +125,19 @@ function [results] = psn(varargin)
 %     (Note that when <basis> is B or 'random', eigenvalues are not available, so we
 %      necessarily fall back to 'signalvariance'.)
 %
+%   <alpha> (optional) - scalar in [0,1] or []. Interpolation parameter
+%     between the prediction peak and a variance retention target:
+%       alpha=0   -> prediction peak (same as criterion='prediction')
+%       alpha=1   -> variance retention (same as criterion='variance')
+%       alpha=0.3 -> retain an additional 30% of the signal variance gap
+%                    between the prediction peak and the variance target
+%     When set, overrides the criterion setting. Uses variance_threshold
+%     to define the variance target. Does not apply to criterion='wiener'.
+%     Default: [] (disabled; existing criterion logic used).
+%
 %   <variance_threshold> (optional) - scalar in [0,1]. Fraction used
-%     when <criterion> is 'variance' or 'variance_eigenvalues'.
+%     when <criterion> is 'variance' or 'variance_eigenvalues', or as
+%     the variance target when <alpha> is set.
 %     Default: 0.99.
 %
 %   <allowable_thresholds> (optional) is a vector of thresholds that are acceptable.
@@ -96,7 +150,7 @@ function [results] = psn(varargin)
 %
 %   <unit_groups> (optional) - [nunits x 1] non-negative integer vector specifying
 %       which units must share the same threshold (applies when <threshold_method>
-%       is 'hybrid' or 'unit'). Units with the same integer label are treated
+%       is 'hybrid'). Units with the same integer label are treated
 %       as a group and receive the same threshold (determined by averaging
 %       the criterion across units of that group). If [] or omitted, the
 %       default behavior is equivalent to (1:nunits)', which indicates that
@@ -104,12 +158,26 @@ function [results] = psn(varargin)
 %       For <threshold_method> = 'global', <unit_groups> is ignored (defaults to
 %       all zeros internally).
 %
+%   <gsn_result> (optional) - struct with fields cSb and cNb from a previous PSN
+%       call (i.e. results.gsn_result), OR a path to a '.mat' file holding them.
+%       When provided, PSN skips the expensive GSN estimation and uses these
+%       covariances directly -- useful for sweeping hyperparameters (alpha,
+%       basis, criterion, ...) on the same data. If the struct also carries
+%       cached eigvecs/eigvals for the requested signal/difference basis, PSN
+%       additionally skips its own eigendecomposition.
+%       Default: [] (run GSN normally).
+%
 %   <gsn_args> (optional) - struct of options passed directly to the GSN routine
 %       (performgsn.m). Typical fields might include:
 %           .wantshrinkage  - whether to use covariance shrinkage (default: 1)
 %           .wantverbose    - whether to print diagnostic output (default: 0)
 %           .random_seed    - RNG seed used inside GSN (only for Python)
 %       If [] or omitted, defaults are used.
+%
+%   <split_half_metric> (optional) - 'correlation' or 'mse'. Metric used for the
+%       split-half reliability panel of the diagnostic figure ('correlation' =
+%       Pearson r per unit, 'mse' = mean squared error per unit).
+%       Default: 'correlation'.
 %
 %   <wantfig> - 0 or 1. Whether to generate diagnostic figures.
 %     Default: 1.
@@ -123,6 +191,12 @@ function [results] = psn(varargin)
 %
 %   <wantverbose> - 0 or 1. Whether to show messages during execution.
 %     Default: 1.
+%
+%   Language-specific differences (Python-only, intentionally not in MATLAB):
+%     - <device>: the Python package offers GPU acceleration ('cuda'/'mps') via
+%       torch. MATLAB PSN is CPU-only; there is no <device> option.
+%     - scikit-learn estimator: Python ships a PSN BaseEstimator/TransformerMixin
+%       class (fit/transform). MATLAB exposes only the functional psn() entry.
 %
 % -------------------------------------------------------------------------
 % Returns:
@@ -143,7 +217,7 @@ function [results] = psn(varargin)
 %                         projection and then re-adds the means afterwards.
 %
 %   results.denoiser    - [nunits x nunits]. The denoising matrix. For global mode,
-%                         this is symmetric. For hybrid/unit modes, this is generally
+%                         this is symmetric. For hybrid mode, this is generally
 %                         non-symmetric. The denoising is: denoiser' * (data - means) + means.
 %
 %   results.svnv_before - [nunits x 2]. The total signal variance (column 1) and
@@ -160,18 +234,13 @@ function [results] = psn(varargin)
 %         will share the same value).
 %
 %   results.fullbasis   - [nunits x dims]. The full set of basis vectors after global
-%                         ordering. For unit-specific methods, individual units may
-%                         use different orderings (see unitreorderings).
+%                         ordering. All units share this ordering.
 %
 %   results.basis_eigenvalues - [dims x 1]. Eigenvalues from basis construction (e.g.,
 %                         from signal covariance, difference matrix, etc.), sorted to
 %                         match the column order of fullbasis. Empty ([]) for custom
 %                         or random bases. For visualization of original order, see
 %                         basis_eigenvalues_viz.
-%
-%   results.unitreorderings - [nunits x dimindices]. Each row indicates the
-%     chosen unit-specific ordering for the dimensions. If <threshold_method> is
-%     'global' or 'hybrid', each row is simply 1:D in that order.
 %
 %   results.gsn_result  - struct. Full results from the GSN algorithm containing:
 %                             .cSb  - signal covariance
@@ -197,7 +266,7 @@ function [results] = psn(varargin)
 %   results.dimreduce - [K x nconds]. This is the low-dimensional representation
 %     of the denoised data in the selected subspace.
 %
-% Special outputs for unit-specific methods ('hybrid' or 'unit'):
+% Special outputs for unit-specific thresholds (threshold_method 'hybrid'):
 %
 %   results.unit_signal_vars - cell array of signal variances per unit
 %   results.unit_noise_vars  - cell array of noise variances per unit
@@ -211,6 +280,20 @@ function [results] = psn(varargin)
 %   results.noise_proj_viz  - [dims x 1]. Noise variance projections in original order.
 %   results.basis_eigenvalues_viz - [dims x 1]. Eigenvalues in original order,
 %                             matching column order of basis_viz.
+%
+% Metadata:
+%
+%   results.opt_used   - struct of the resolved options actually used.
+%   results.runtime    - scalar. Wall-clock seconds for the psn() call.
+%   results.threshold_selection - struct, set for 'compare' and 'wiener'. Records
+%                        the chosen mode/basis/criterion/best_threshold (+ recovery
+%                        and sv_frac for 'compare').
+%   results.diagnostics - struct, set for 'compare'. Per-candidate selection
+%                        metrics (best_threshold/recovery/sv_frac for signal and
+%                        difference) plus the cached candidate eigenbases.
+%   results.alpha_info  - struct, set when <alpha> is active: the prediction-peak
+%                        (k_pred) and variance-target (k_var) dimension counts the
+%                        alpha threshold interpolates between, and alpha.
 %
 % -------------------------------------------------------------------------
 % Algorithm Details:
@@ -267,9 +350,15 @@ end
 % STEP 1: Parse and validate inputs
 % =========================================================================
 
+psn_t_start = tic;   % wall-clock timer -> results.runtime (mirrors Python)
+
 [data, opt] = parse_inputs(varargin{:});
 [nunits, nconds, ntrials, ntrials_avg, has_nans] = validate_data(data);
 opt = set_default_options(opt, nunits);
+
+% Remember the originally-requested basis (e.g. 'compare') before it is resolved,
+% so the recovery-tradeoff figure can show the right curve(s).
+orig_basis = opt.basis;
 
 if opt.wantverbose
     if has_nans
@@ -301,17 +390,77 @@ unit_means = mean(trial_avg, 2);     % [nunits x 1]
 % GSN (Generative Modeling of Signal and Noise) estimates the covariance matrices
 % that describe the signal and noise in the data.
 
-if opt.wantverbose
-    fprintf('PSN: Running GSN to estimate signal and noise covariances...\n');
+if isfield(opt, 'gsn_result') && ~isempty(opt.gsn_result)
+    % Reuse a provided GSN result (struct or path to a .mat file), skipping the
+    % expensive GSN estimation -- useful for sweeping hyperparameters (alpha,
+    % basis, criterion, ...) on the same data. Mirrors the Python opt['gsn_result'].
+    gsn_result = load_gsn_result(opt.gsn_result);
+    if ~isfield(gsn_result, 'cSb') || ~isfield(gsn_result, 'cNb')
+        error('opt.gsn_result must contain cSb and cNb fields');
+    end
+    if size(gsn_result.cSb, 1) ~= nunits
+        error('gsn_result covariance size (%d) does not match data (%d units)', ...
+              size(gsn_result.cSb, 1), nunits);
+    end
+    % If the loaded result carries cached eigvecs for the requested signal/
+    % difference basis, swap basis -> matrix + eigenvalues so construct_basis
+    % skips its own O(N^3) eigh (bit-equivalent to the string-basis path).
+    opt = use_cached_eigvecs(opt, gsn_result);
+    if opt.wantverbose
+        fprintf('PSN: Using provided GSN result (skipping GSN estimation)...\n');
+    end
+else
+    if opt.wantverbose
+        fprintf('PSN: Running GSN to estimate signal and noise covariances...\n');
+    end
+    gsn_opt = opt.gsn_args;
+    if ~isfield(gsn_opt, 'wantverbose'), gsn_opt.wantverbose = 0; end
+    if ~isfield(gsn_opt, 'wantshrinkage'), gsn_opt.wantshrinkage = 1; end
+    gsn_result = performgsn(data, gsn_opt);
 end
-
-gsn_opt = opt.gsn_args;
-if ~isfield(gsn_opt, 'wantverbose'), gsn_opt.wantverbose = 0; end
-if ~isfield(gsn_opt, 'wantshrinkage'), gsn_opt.wantshrinkage = 1; end
-
-gsn_result = performgsn(data, gsn_opt);
 cSb = gsn_result.cSb; % signal covariance (symmetric)
 cNb = gsn_result.cNb; % noise covariance (symmetric)
+
+% =========================================================================
+% HIGH-LEVEL SELECTION: full-rank Wiener (criterion/basis 'wiener'), or
+% 'compare' basis resolution. Wiener bypasses basis construction and
+% truncation; 'compare' resolves to 'signal'/'difference' before the pipeline.
+% =========================================================================
+is_wiener = strcmp(opt.criterion, 'wiener') || ...
+            ((ischar(opt.basis) || isstring(opt.basis)) && strcmp(char(opt.basis), 'wiener'));
+if is_wiener
+    if opt.wantverbose
+        fprintf('PSN: Applying full-rank matrix Wiener filter...\n');
+    end
+    results = denoise_fullrank_wiener(cSb, cNb, data, trial_avg, unit_means, ...
+                                      ntrials_avg, nunits, gsn_result, opt);
+    results.threshold_selection = struct('mode', 'wiener', 'basis', [], ...
+        'criterion', 'wiener', 'best_threshold', results.best_threshold);
+    % Recovery-tradeoff data for the figure (Wiener point + trial-avg + chosen).
+    results = attach_recovery_tradeoff(results, cSb, cNb, ntrials_avg, data, ...
+                                       unit_means, has_nans, 'wiener', nunits);
+    if opt.wantfig
+        if opt.wantverbose
+            fprintf('PSN: Generating diagnostic figures...\n');
+        end
+        visualize_results(results, opt);
+    end
+    results.runtime = toc(psn_t_start);
+    if opt.wantverbose
+        fprintf('PSN: Complete! Full-rank Wiener filter (%.1f effective dimensions). Runtime: %.3fs\n', ...
+                results.best_threshold, results.runtime);
+    end
+    return;
+end
+
+cmp_info = [];   % populated only when basis='compare' resolves; lets STEP 4/5 and
+                 % the recovery figure reuse the eigvecs/projections already built.
+if (ischar(opt.basis) || isstring(opt.basis)) && strcmp(char(opt.basis), 'compare')
+    [opt.basis, cmp_info] = select_compare_basis(cSb, cNb, ntrials_avg, opt);
+    if opt.wantverbose
+        fprintf('PSN: basis=''compare'' resolved to ''%s''\n', opt.basis);
+    end
+end
 
 % =========================================================================
 % STEP 4: Construct the denoising basis
@@ -329,7 +478,18 @@ if opt.wantverbose
     end
 end
 
-[basis, basis_eigenvalues] = construct_basis(cSb, cNb, opt.basis, data, trial_avg, unit_means, ntrials_avg, has_nans);
+if ~isempty(cmp_info)
+    % basis='compare' already eigendecomposed the chosen basis in
+    % select_compare_basis (with the same eigh_descending_sym convention as
+    % construct_basis), so reuse it instead of repeating the O(N^3) eigh.
+    basis = cmp_info.chosen_V;
+    basis_eigenvalues = cmp_info.chosen_evals;
+else
+    % Pass cached eigenvalues (set by use_cached_eigvecs) so a matrix basis can
+    % skip the eigh while keeping eigenvalue-based ordering.
+    if isfield(opt, 'basis_eigenvalues'), cbe = opt.basis_eigenvalues; else, cbe = []; end
+    [basis, basis_eigenvalues] = construct_basis(cSb, cNb, opt.basis, data, trial_avg, unit_means, ntrials_avg, has_nans, cbe);
+end
 
 % Validate allowable_thresholds against actual basis dimensions
 ndims = size(basis, 2);
@@ -351,7 +511,14 @@ if opt.wantverbose
 end
 
 % Always use GSN-based projection for all basis types
-[signal_proj, noise_proj] = project_covs(cSb, cNb, basis);
+if ~isempty(cmp_info)
+    % Reuse the projections select_compare_basis already computed for the chosen
+    % basis (identical formula + clamp to project_covs).
+    signal_proj = cmp_info.chosen_signal_proj;
+    noise_proj  = cmp_info.chosen_noise_proj;
+else
+    [signal_proj, noise_proj] = project_covs(cSb, cNb, basis);
+end
 
 % Save original basis and projections for visualization (before reordering)
 basis_viz = basis;
@@ -410,7 +577,6 @@ end
 % Determine how many dimensions to retain. This depends on threshold_method:
 %   - 'global': single threshold for all units (symmetric denoiser)
 %   - 'hybrid': unit-specific thresholds with global basis ordering
-%   - 'unit': unit-specific thresholds AND unit-specific orderings
 
 if opt.wantverbose
     fprintf('PSN: Selecting thresholds (method: %s, criterion: %s)...\n', ...
@@ -423,17 +589,12 @@ if strcmp(opt.threshold_method, 'global')
      unit_signal_vars, unit_noise_vars] = ...
         denoise_global(basis, signal_proj, noise_proj, basis_eigenvalues, ...
                        ntrials_avg, opt);
-
-    unit_orderings = repmat(1:size(basis,2), [nunits, 1]);
-
 else
-    % UNIT-SPECIFIC MODES (hybrid or unit)
-    unitwise_threshold_only = strcmp(opt.threshold_method, 'hybrid');
-
+    % HYBRID MODE: unit-specific thresholds with a shared global basis ordering
     [denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_curves, ...
-     unit_signal_vars, unit_noise_vars, unit_orderings] = ...
+     unit_signal_vars, unit_noise_vars] = ...
         denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ...
-                         ntrials_avg, opt, unitwise_threshold_only);
+                         ntrials_avg, opt);
 end
 
 % =========================================================================
@@ -485,7 +646,6 @@ results.svnv_before = svnv_before;
 results.svnv_after = svnv_after;
 results.best_threshold = best_threshold;
 results.fullbasis = basis;
-results.unitreorderings = unit_orderings;
 
 % GSN outputs
 results.gsn_result = gsn_result;
@@ -532,6 +692,55 @@ end
 % Store options for visualization
 results.opt_used = opt;
 
+% Selection metadata (parity with Python). Set for 'compare' here; the wiener
+% path sets its own threshold_selection above. Plain signal/difference runs
+% leave both unset (matches Python).
+if ~isempty(cmp_info)
+    results.threshold_selection = struct( ...
+        'mode', char(orig_basis), 'basis', cmp_info.chosen_basis, ...
+        'criterion', opt.criterion, 'best_threshold', results.best_threshold, ...
+        'recovery', cmp_info.chosen_recovery, 'sv_frac', cmp_info.chosen_sv_frac);
+    results.diagnostics = struct( ...
+        'mode', 'compare', 'picked_by', 'analytic_recovery', 'tie_eps', cmp_info.tie_eps, ...
+        'candidates', cmp_info.candidates, ...
+        'eigvecs_by_basis', struct('signal', cmp_info.V_signal, 'difference', cmp_info.V_difference));
+end
+
+% Alpha interpolation metadata (parity with Python): the prediction-peak and
+% variance-target dimension counts the alpha threshold interpolates between.
+if isfield(opt, 'alpha') && ~isempty(opt.alpha) && isnumeric(signalvar)
+    diff_obj = signalvar(:) - noisevar(:) / ntrials_avg;
+    pred_obj = [0; cumsum(diff_obj)];
+    [~, kp] = max(pred_obj);  k_pred = kp - 1;               % 0-indexed argmax
+    sig_cs = [0; cumsum(signalvar(:))];
+    total_signal = sig_cs(end);
+    vt = min(max(opt.variance_threshold, 0), 1);
+    S_var = vt * total_signal;
+    nd = size(basis, 2);
+    if total_signal <= 0
+        k_var = 0;
+    else
+        kv = find(sig_cs >= S_var, 1);
+        if isempty(kv), k_var = nd; else, k_var = kv - 1; end
+        k_var = min(k_var, nd);
+    end
+    results.alpha_info = struct('k_pred', k_pred, 'k_var', k_var, 'alpha', opt.alpha);
+end
+
+% =========================================================================
+% STEP 11b: Recovery-tradeoff diagnostic data (analytic + split-half curves).
+% Always computed so it is available regardless of wantfig; the figure reads it.
+% =========================================================================
+% For 'compare', hand both candidate eigvec matrices to the figure so it reuses
+% them instead of re-eighing the basis the pipeline did not keep.
+if ~isempty(cmp_info)
+    rt_extra_bases = struct('signal', cmp_info.V_signal, 'difference', cmp_info.V_difference);
+else
+    rt_extra_bases = [];
+end
+results = attach_recovery_tradeoff(results, cSb, cNb, ntrials_avg, data, ...
+                                   unit_means, has_nans, orig_basis, nunits, rt_extra_bases);
+
 % =========================================================================
 % STEP 12: Visualization
 % =========================================================================
@@ -543,13 +752,10 @@ if opt.wantfig
     visualize_results(results, opt);
 end
 
+results.runtime = toc(psn_t_start);
 if opt.wantverbose
-    if strcmp(opt.threshold_method, 'global')
-        fprintf('PSN: Complete! Retained %d dimensions.\n', best_threshold);
-    else
-        fprintf('PSN: Complete! Retained %.1f dimensions on average (range: %d-%d).\n', ...
-                mean(best_threshold), min(best_threshold), max(best_threshold));
-    end
+    fprintf('PSN: Complete! Retained %s dimensions. Runtime: %.3fs\n', ...
+            format_threshold(best_threshold), results.runtime);
 end
 
 end  % End of main psn function

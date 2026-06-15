@@ -1,12 +1,12 @@
 function [denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_curves, ...
-          unit_signal_vars, unit_noise_vars, unit_orderings] = ...
-    denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, opt, threshold_only)
+          unit_signal_vars, unit_noise_vars] = ...
+    denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, opt)
 % DENOISE_UNITWISE  Unit-specific denoising (non-symmetric denoiser)
 %
 %   [denoiser, best_threshold, objective, ...] = denoise_unitwise(basis, signal_proj,
-%   noise_proj, basis_eigenvalues, ntrials, opt, threshold_only) builds a generally
-%   non-symmetric denoising matrix with unit-specific thresholds and optionally
-%   unit-specific dimension orderings.
+%   noise_proj, basis_eigenvalues, ntrials, opt) builds a generally non-symmetric
+%   denoising matrix with unit-specific thresholds applied on a shared global
+%   dimension ordering (threshold_method='hybrid').
 %
 % -------------------------------------------------------------------------
 % Inputs:
@@ -23,10 +23,6 @@ function [denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_
 % <ntrials> - scalar, number of trials (or average if NaNs present)
 %
 % <opt> - struct with PSN options (criterion, allowable_thresholds, unit_groups, etc.)
-%
-% <threshold_only> - logical. If true, use global dimension ordering with
-%   unit-specific thresholds (hybrid mode). If false, use unit-specific
-%   dimension ordering and thresholds (full unit-specific mode)
 %
 % -------------------------------------------------------------------------
 % Returns:
@@ -50,17 +46,14 @@ function [denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_
 %
 % <unit_noise_vars> - {nunits x 1} cell array of unit-specific weighted noise variances
 %
-% <unit_orderings> - [nunits x ndims] dimension ordering for each unit
-%
 % -------------------------------------------------------------------------
 % Algorithm:
 % -------------------------------------------------------------------------
 %
 % Each unit receives:
 %   - Weighted signal/noise projections: w = basis(u,:)^2, sig_u = w .* signal_proj
-%   - Optional unit-specific ranking (if threshold_only=false)
 %   - Unit-specific threshold selection with optional unit_groups averaging
-%   - Denoiser column: Bu * Bu(u,:)' where Bu = basis(:, dims_for_unit_u)
+%   - Denoiser column: Bu * Bu(u,:)' where Bu = basis(:, 1:k_u)
 %
 % The denoiser is generally non-symmetric. Apply as: denoiser' * data
 
@@ -68,12 +61,10 @@ function [denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_
 
     denoiser = zeros(nunits, nunits);
 
-    % First pass: compute weighted projections and objectives for each unit
-    % If threshold_only=true (hybrid mode), use global ordering
-    % If threshold_only=false (full unit-specific), rank by each unit's signal variance
-    do_unit_ranking = ~threshold_only;
-    [unit_cumsum_curves, unit_signal_vars, unit_noise_vars, unit_orderings] = ...
-        compute_unit_weighted_projections(basis, signal_proj, noise_proj, ntrials, do_unit_ranking);
+    % First pass: compute weighted projections and objectives for each unit.
+    % Hybrid mode uses the shared global ordering (do_unit_ranking=false).
+    [unit_cumsum_curves, unit_signal_vars, unit_noise_vars, ~] = ...
+        compute_unit_weighted_projections(basis, signal_proj, noise_proj, ntrials, false);
 
     % Second pass: select thresholds considering unit_groups
     unique_groups = unique(opt.unit_groups);
@@ -83,12 +74,43 @@ function [denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_
         group_mask = (opt.unit_groups == g);
         group_indices = find(group_mask);
 
-        if strcmp(opt.criterion, 'prediction')
+        if isfield(opt, 'alpha') && ~isempty(opt.alpha)
+            % Alpha interpolation: blend the prediction peak and the variance
+            % target on this group's averaged curves.
+            alpha_val = opt.alpha;
+            vt = max(0, min(1, opt.variance_threshold));
+            avg_signal = mean(cat(2, unit_signal_vars{group_indices}), 2);
+            avg_curve = mean(cat(2, unit_cumsum_curves{group_indices}), 2);
+            [~, k_pred] = max(avg_curve);
+            k_pred = k_pred - 1;                      % number of dims at prediction peak
+            sig_cs = [0; cumsum(avg_signal(:))];
+            S_pred = sig_cs(k_pred + 1);
+            total = sig_cs(end);
+            S_var = vt * total;
+            target = S_pred + alpha_val * max(0, S_var - S_pred);
+            if total <= 0
+                k_group = 0;
+            else
+                idx = find(sig_cs >= target, 1, 'first');
+                if isempty(idx)
+                    k_group = ndims;
+                else
+                    k_group = idx - 1;
+                end
+                k_group = max(k_group, k_pred);
+                k_group = min(k_group, ndims);
+            end
+        elseif strcmp(opt.criterion, 'prediction')
             % Average objective curves across units in this group
             % All curves should have the same length (ndims+1)
             avg_curve = mean(cat(2, unit_cumsum_curves{group_indices}), 2);
             [~, k_group] = max(avg_curve);
             k_group = k_group - 1;  % Convert index to number of dims
+        elseif strcmp(opt.criterion, 'max-tradeoff')
+            % Max-tradeoff on this group's averaged recovery curve.
+            avg_signal = mean(cat(2, unit_signal_vars{group_indices}), 2);
+            avg_noise = mean(cat(2, unit_noise_vars{group_indices}), 2);
+            k_group = max_tradeoff_threshold(avg_signal, avg_noise, ntrials);
         elseif strcmp(opt.criterion, 'variance')
             % Average signal variances across units in this group
             avg_signal = mean(cat(2, unit_signal_vars{group_indices}), 2);
@@ -124,26 +146,15 @@ function [denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_
         best_threshold(group_mask) = k_group;
     end
 
-    % Third pass: build denoiser columns
-    % Optimize by grouping units with same threshold and ordering
+    % Third pass: build denoiser columns. All units share the global ordering,
+    % so group units by threshold and build each group with one matmul.
     unique_thresholds = unique(best_threshold(best_threshold > 0));
 
     for k = unique_thresholds'
         units_with_k = find(best_threshold == k);
-
-        if threshold_only
-            % Hybrid mode: all units share same ordering, vectorize fully
-            Bu = basis(:, 1:k);
-            % Vectorized: denoiser(:, units) = Bu * Bu(units, :)'
-            denoiser(:, units_with_k) = Bu * Bu(units_with_k, :)';
-        else
-            % Full unit-specific: group by ordering within same threshold
-            for u = units_with_k'
-                sort_idx_u = unit_orderings(u, :);
-                Bu = basis(:, sort_idx_u(1:k));
-                denoiser(:, u) = Bu * Bu(u, :)';
-            end
-        end
+        % Vectorized: denoiser(:, units) = Bu * Bu(units, :)'
+        Bu = basis(:, 1:k);
+        denoiser(:, units_with_k) = Bu * Bu(units_with_k, :)';
     end
 
     % Population-level totals for visualization

@@ -31,12 +31,16 @@ function [evals_sorted, evecs_sorted] = eigh_descending_sym(matrix, do_symmetriz
 %   element in each column is positive
 
     if nargin < 2
-        do_symmetrize = false;
+        do_symmetrize = false; %#ok<NASGU>  % retained for API compatibility
     end
 
-    if do_symmetrize
-        matrix = (matrix + matrix') / 2;
-    end
+    % Always symmetrize. This function is for symmetric matrices, and MATLAB's
+    % general eig() returns COMPLEX eigenvectors when given a matrix with even
+    % machine-epsilon asymmetry (which GSN covariances can have). Python's
+    % np.linalg.eigh is always a symmetric solver, so symmetrizing here keeps the
+    % results real and matches Python. For an exactly-symmetric matrix this is a
+    % no-op, so it does not change any existing result.
+    matrix = (matrix + matrix') / 2;
 
     % Compute eigendecomposition
     [evecs, evals] = eig(matrix, 'vector');

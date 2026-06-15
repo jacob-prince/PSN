@@ -10,7 +10,7 @@ function [svnv_before, svnv_after] = compute_signal_noise_diagnostics(...
 % Inputs:
 % -------------------------------------------------------------------------
 %
-% <threshold_method> - string, 'global', 'hybrid', or 'unit'
+% <threshold_method> - string, 'global' or 'hybrid'
 %
 % <unit_signal_vars> - {nunits x 1} cell array, each cell contains [ndims x 1]
 %   weighted signal variances for that unit
