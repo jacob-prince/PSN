@@ -37,9 +37,8 @@ def perform_gsn(data, opt=None):
     if opt is None:
         opt = {}
 
-    # Route through the installed gsn package (single source of truth).
-    # The legacy `psn._fast_gsn` snapshot is kept on disk for the unit
-    # tests in tests/test_fast_gsn.py — it's no longer used here.
+    # Route through the installed gsn package — the single source of truth
+    # for GSN. PSN does not vendor its own copy of the estimator.
     return gsn_perform_gsn(data, opt)
 
 def compute_noise_ceiling(data_in):
