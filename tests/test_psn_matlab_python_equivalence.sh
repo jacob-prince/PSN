@@ -9,7 +9,7 @@
 #   ./test_psn_matlab_python_equivalence.sh [test_number]
 #
 # Arguments:
-#   test_number - Optional. Run only a specific test (1-10), or "all" (default)
+#   test_number - Optional. Run only a specific test (1-13), or "all" (default)
 #
 # Examples:
 #   ./test_psn_matlab_python_equivalence.sh        # Run all tests
@@ -29,8 +29,8 @@ set -e  # Exit on any error
 # Parse command-line arguments
 TEST_TO_RUN="${1:-all}"
 
-if [[ "$TEST_TO_RUN" != "all" ]] && ! [[ "$TEST_TO_RUN" =~ ^[1-9]$|^10$ ]]; then
-    echo "Error: Invalid test number '$TEST_TO_RUN'. Must be 1-10 or 'all'"
+if [[ "$TEST_TO_RUN" != "all" ]] && ! [[ "$TEST_TO_RUN" =~ ^[1-9]$|^1[0-3]$ ]]; then
+    echo "Error: Invalid test number '$TEST_TO_RUN'. Must be 1-13 or 'all'"
     echo "Usage: $0 [test_number|all]"
     exit 1
 fi
@@ -43,7 +43,8 @@ MATLAB_PATH="/Applications/MATLAB_R2022b.app/bin/matlab"
 PYTHON_CMD="python3"
 
 # Test configuration
-TOLERANCE="1e-10"  # High precision tolerance for equivalence testing with deterministic random seeds
+TOLERANCE="1e-8"   # Tight equivalence tolerance. Most configs are bit-exact (0.0); the
+                   # full-rank Wiener filter differs ~1e-9 (numpy solve vs MATLAB backslash LAPACK).
 MIN_CORRELATION="0.999999"  # Very high correlation threshold for deterministic equivalence
 # ========================================================
 
@@ -211,6 +212,10 @@ opt = {
     'wantfig': False,
     'wantverbose': False
 }
+# Wiener is basis-free / untruncated: pass ONLY the criterion (basis and
+# threshold_method would otherwise conflict and be rejected).
+if 'CRITERION_PLACEHOLDER' == 'wiener':
+    opt = {'criterion': 'wiener', 'wantfig': False, 'wantverbose': False}
 
 # Run PSN with timing
 start_time = time.time()
@@ -298,10 +303,15 @@ try
 
     % Set options
     opt = struct();
-    opt.basis = basis_param;
-    opt.criterion = 'CRITERION_PLACEHOLDER';
-    opt.threshold_method = 'THRESHOLD_METHOD_PLACEHOLDER';
-    opt.variance_threshold = VARIANCE_THRESHOLD_PLACEHOLDER;
+    if strcmp('CRITERION_PLACEHOLDER', 'wiener')
+        % Wiener is basis-free / untruncated: pass ONLY the criterion.
+        opt.criterion = 'wiener';
+    else
+        opt.basis = basis_param;
+        opt.criterion = 'CRITERION_PLACEHOLDER';
+        opt.threshold_method = 'THRESHOLD_METHOD_PLACEHOLDER';
+        opt.variance_threshold = VARIANCE_THRESHOLD_PLACEHOLDER;
+    end
     opt.wantfig = 0;
     opt.wantverbose = 0;
 
@@ -561,10 +571,11 @@ if should_run_test 2; then
     echo ""
 fi
 
-# Test 3: Signal basis with unit threshold using prediction criterion
+# Test 3: Signal basis with hybrid threshold using max-tradeoff criterion
+# (replaces the obsolete 'unit' threshold method, which was removed)
 if should_run_test 3; then
-    echo "=== Test 3: Signal basis, unit threshold, prediction ==="
-    if run_psn_equivalence_test "test3_signal_unit_pred" 15 40 3 "signal" "prediction" "unit"; then
+    echo "=== Test 3: Signal basis, hybrid threshold, max-tradeoff ==="
+    if run_psn_equivalence_test "test3_signal_hybrid_maxtradeoff" 15 40 3 "signal" "max-tradeoff" "hybrid"; then
         test_results+=("PASSED")
     else
         test_results+=("FAILED")
@@ -682,6 +693,39 @@ if should_run_test 10; then
     echo ""
 fi
 
+# Test 11: Signal basis with global threshold using max-tradeoff criterion (the default)
+if should_run_test 11; then
+    echo "=== Test 11: Signal basis, global threshold, max-tradeoff ==="
+    if run_psn_equivalence_test "test11_signal_global_maxtradeoff" 20 50 3 "signal" "max-tradeoff" "global"; then
+        test_results+=("PASSED")
+    else
+        test_results+=("FAILED")
+    fi
+    echo ""
+fi
+
+# Test 12: Compare basis (signal-vs-difference selection by analytic recovery)
+if should_run_test 12; then
+    echo "=== Test 12: Compare basis, hybrid threshold, max-tradeoff ==="
+    if run_psn_equivalence_test "test12_compare" 20 50 3 "compare" "max-tradeoff" "hybrid"; then
+        test_results+=("PASSED")
+    else
+        test_results+=("FAILED")
+    fi
+    echo ""
+fi
+
+# Test 13: Full-rank matrix Wiener filter (criterion='wiener'; basis/threshold are ignored)
+if should_run_test 13; then
+    echo "=== Test 13: Full-rank Wiener filter ==="
+    if run_psn_equivalence_test "test13_wiener" 20 50 3 "signal" "wiener" "global"; then
+        test_results+=("PASSED")
+    else
+        test_results+=("FAILED")
+    fi
+    echo ""
+fi
+
 echo ""
 echo "=========================================="
 echo "FINAL SUMMARY"
@@ -690,7 +734,7 @@ echo "=========================================="
 test_names=(
     "Signal/global/prediction"
     "Signal/hybrid/prediction"
-    "Signal/unit/prediction"
+    "Signal/hybrid/max-tradeoff"
     "Signal/global/variance"
     "Difference/global"
     "Difference/hybrid"
@@ -698,6 +742,9 @@ test_names=(
     "Random basis"
     "Small dataset"
     "Variance eigenvalues"
+    "Signal/global/max-tradeoff"
+    "Compare basis"
+    "Full-rank Wiener"
 )
 
 # Print individual test results
