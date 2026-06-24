@@ -27,7 +27,7 @@ dependencies = [
     "scipy>=1.7.0", 
     "matplotlib>=3.3.0",
     "scikit-learn",
-    "GSN @ git+https://github.com/cvnlab/GSN.git@speedup-perform-gsn"
+    "GSN @ git+https://github.com/cvnlab/GSN.git@main"
 ]
 
 [project.urls]
