@@ -8,8 +8,8 @@ wall-clock (eigh is O(N^3)), and PSN's 'compare' mode runs it twice
 opt-in
 ``opt['returns']`` selector so GSN can ALSO compute and return:
 
-    eigvecs_signal,     eigvals_signal       — eigh(cSb)
-    eigvecs_difference, eigvals_difference   — eigh(cSb - cNb / ntrial)
+    eigvecs_signal,     eigvals_signal       - eigh(cSb)
+    eigvecs_difference, eigvals_difference   - eigh(cSb - cNb / ntrial)
 
 The intent is that callers can hand these back into PSN via
 
@@ -18,7 +18,7 @@ The intent is that callers can hand these back into PSN via
 
 and PSN's denoising path skips its own eigh entirely. For that to be
 USEFUL, the resulting denoiser MUST match what PSN would have produced
-on its own ('basis': 'signal') — otherwise downstream results would
+on its own ('basis': 'signal') - otherwise downstream results would
 drift in subtle, hard-to-debug ways.
 
 What this file verifies
@@ -34,14 +34,14 @@ What this file verifies
    to floating-point noise).
 
 3. **End-to-end difference-basis handoff.** Same as (2) but for the
-   indefinite cSb - cNb/ntrial matrix (whose eigh is harder — the
+   indefinite cSb - cNb/ntrial matrix (whose eigh is harder - the
    sign normalization and ordering matter more here because PSN
    distinguishes positive vs negative eigenvalues during threshold
    selection).
 
 4. **Independence from PSN options.** The match holds across
    non-default criterion / threshold_method / basis_ordering settings
-   — the eigvecs feed only the basis-construction step.
+   - the eigvecs feed only the basis-construction step.
 
 5. **Torch path matches numpy path.** When torch is available, GSN's
    torch eigh path produces the same eigvecs as the numpy path (up
@@ -49,7 +49,7 @@ What this file verifies
 
 6. **Degenerate / rank-deficient cSb.** When cSb has a zero-
    eigenvalue subspace (synthetic data with nunits > rank(signal)),
-   eigvecs in that subspace are not uniquely determined — different
+   eigvecs in that subspace are not uniquely determined - different
    LAPACK drivers pick different orthonormal bases. We assert
    functional invariants (denoiser symmetric, total recovered
    variance equal) rather than bit-exact equality there.
@@ -97,7 +97,7 @@ def _make_data(nvox, ncond, ntrial, seed=0):
 
 @pytest.fixture(scope='module')
 def small_full_rank():
-    """nvox=60, ncond=120 (>> nvox) — cSb close to full rank, no
+    """nvox=60, ncond=120 (>> nvox) - cSb close to full rank, no
     degenerate eigenspaces. Bit-exact match expected."""
     data = _make_data(60, 120, 5, seed=0)
     res_gsn = perform_gsn(data, {
@@ -111,7 +111,7 @@ def small_full_rank():
 
 @pytest.fixture(scope='module')
 def small_full_rank_alt_seed():
-    """Same shape as small_full_rank but a different RNG draw — used
+    """Same shape as small_full_rank but a different RNG draw - used
     to confirm the test isn't accidentally seed-dependent."""
     data = _make_data(60, 120, 5, seed=42)
     res_gsn = perform_gsn(data, {
@@ -125,7 +125,7 @@ def small_full_rank_alt_seed():
 
 @pytest.fixture(scope='module')
 def small_rank_deficient():
-    """nvox=80, ncond=40 — rank(cSb) <= 40-1 = 39, so cSb has at
+    """nvox=80, ncond=40 - rank(cSb) <= 40-1 = 39, so cSb has at
     least 41 zero (or near-zero) eigenvalues. The corresponding
     eigenvectors are NOT uniquely determined."""
     data = _make_data(80, 40, 5, seed=1)
@@ -412,7 +412,7 @@ class TestTorchPathEquivalence:
 
 
 # ---------------------------------------------------------------------------
-# 6. Degenerate / rank-deficient case — functional invariants only
+# 6. Degenerate / rank-deficient case - functional invariants only
 # ---------------------------------------------------------------------------
 
 class TestRankDeficient:
@@ -432,7 +432,7 @@ class TestRankDeficient:
     def test_cSb_actually_rank_deficient(self, small_rank_deficient):
         _, res = small_rank_deficient
         ev = res['eigvals_signal']
-        # nvox=80, ncond=40 — expect a clear zero-eigenvalue subspace.
+        # nvox=80, ncond=40 - expect a clear zero-eigenvalue subspace.
         # The exact count depends on shrinkage and biconvex nearest-PSD
         # projection (which pulls near-zero eigenvalues to ~1e-10),
         # but there should be at least 10 dimensions of degeneracy.
@@ -452,7 +452,7 @@ class TestRankDeficient:
 
 
 # ---------------------------------------------------------------------------
-# 7. Documentation example — what the README would show
+# 7. Documentation example - what the README would show
 # ---------------------------------------------------------------------------
 
 class TestDocstringExample:

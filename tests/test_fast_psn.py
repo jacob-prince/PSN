@@ -15,7 +15,7 @@ Coverage:
 - Alpha interpolation
 - Allowable thresholds (constraint and forced-scalar forms)
 - Variance-eigenvalues criterion
-- NaN / uneven-trials path (delegates to reference — must be identical)
+- NaN / uneven-trials path (delegates to reference - must be identical)
 - Hyperparameter sweep with ``gsn_result`` reuse (fast-path invariant)
 
 Usage:
@@ -67,7 +67,7 @@ def _gen_with_nans(nvox, ncond, ntrial, frac_missing=0.2, seed=0):
 
 
 # ---------------------------------------------------------------------------
-# Reference wrapper — forwards opt to gsn.perform_gsn unchanged
+# Reference wrapper - forwards opt to gsn.perform_gsn unchanged
 # ---------------------------------------------------------------------------
 
 def _ref_only_perform_gsn(data, opt=None):
@@ -126,7 +126,7 @@ def _diff(a, b):
         return float('inf')
     both_nan = np.isnan(a) & np.isnan(b)
     if np.any(np.isnan(a) ^ np.isnan(b)):
-        return float('inf')  # NaN pattern mismatch — treat as worst case
+        return float('inf')  # NaN pattern mismatch - treat as worst case
     diff = np.abs(a - b)
     diff[both_nan] = 0.0
     return float(np.max(diff))
@@ -153,14 +153,14 @@ def _assert_results_equivalent(ref, fast, *, label=''):
     Strategy:
     - Tight fields (primary outputs + projectors): element-wise match to
       float64 precision. If these diverge, the denoising behavior differs
-      between backends — that's a real bug.
+      between backends - that's a real bug.
     - Rotation-sensitive fields (decomposition / per-basis-dim values):
       compared via *sum invariants* that are basis-rotation-invariant. These
       sums match to float64 precision across backends whenever the tight
       fields do, which is what we test.
     - best_threshold: exact integer match required.
     """
-    # Threshold: scalar or array — exact integer match.
+    # Threshold: scalar or array - exact integer match.
     bt_r = ref['best_threshold']
     bt_f = fast['best_threshold']
     if np.isscalar(bt_r) or np.ndim(bt_r) == 0:
@@ -188,7 +188,7 @@ def _assert_results_equivalent(ref, fast, *, label=''):
     #
     # - svnv_before / svnv_after: (nunits, 2) where column 0 is signal,
     #   column 1 is noise. The per-column total equals trace(cSb) / trace(cNb)/
-    #   ntrials respectively (for "before") — invariant. For "after", the
+    #   ntrials respectively (for "before") - invariant. For "after", the
     #   totals match iff best_threshold matches (which we enforced above).
     #
     # - objective: a CUMULATIVE SUM of per-dim signal - noise/ntrials. Its
@@ -210,7 +210,7 @@ def _assert_results_equivalent(ref, fast, *, label=''):
             # Max = final cumsum value = total net benefit. Invariant.
             diff = float(abs(a.max() - b.max()))
             assert diff <= INV_ATOL, (
-                f'{label}.{k} max differs by {diff:.3e} (> {INV_ATOL:.1e}) — '
+                f'{label}.{k} max differs by {diff:.3e} (> {INV_ATOL:.1e}) - '
                 f'objective max (total net benefit) should be invariant'
             )
             continue
@@ -218,7 +218,7 @@ def _assert_results_equivalent(ref, fast, *, label=''):
         # Sum-based invariants (trace equalities).
         total_diff = float(abs(a.sum() - b.sum()))
         assert total_diff <= INV_ATOL, (
-            f'{label}.{k}: total sum differs by {total_diff:.3e} (> {INV_ATOL:.1e}) — '
+            f'{label}.{k}: total sum differs by {total_diff:.3e} (> {INV_ATOL:.1e}) - '
             f'sums should be basis-rotation-invariant (trace equalities)'
         )
         # svnv_*: per-column totals are physically distinct (signal vs noise).
@@ -308,7 +308,7 @@ class TestBasisTypes:
     @pytest.mark.parametrize('basis_type', ['signal', 'difference', 'noise', 'pca', 'random'])
     def test_basis_type(self, basis_type):
         data = _gen_lowrank(80, 60, 4, rank=10, seed=0)
-        # 'random' basis has no eigenvalues — must use signal-variance ordering.
+        # 'random' basis has no eigenvalues - must use signal-variance ordering.
         # 'noise' / 'pca' / 'random' aren't compatible with variance_eigenvalues
         # at the default settings; stick with 'prediction'.
         opt = {'basis': basis_type, 'criterion': 'prediction',
@@ -323,7 +323,7 @@ class TestCriteria:
     def test_criterion(self, criterion):
         data = _gen_lowrank(80, 60, 4, rank=10, seed=0)
         # variance_eigenvalues requires eigenvalues & is not compatible with
-        # hybrid thresholds — use global.
+        # hybrid thresholds - use global.
         method = 'global' if criterion == 'variance_eigenvalues' else 'hybrid'
         opt = {'basis': 'signal', 'criterion': criterion,
                'threshold_method': method,
@@ -429,7 +429,7 @@ class TestGsnResultReuse:
 
 
 # ===========================================================================
-# Structural invariants — independent of backend
+# Structural invariants - independent of backend
 # ===========================================================================
 
 class TestStructuralInvariants:
@@ -460,7 +460,7 @@ class TestStructuralInvariants:
 #
 # These are analytical identities that must hold regardless of backend, basis
 # rotation, or numerical precision. If either backend violates them, that is
-# a real bug — not a "loose tolerance" situation. Unlike the element-wise
+# a real bug - not a "loose tolerance" situation. Unlike the element-wise
 # equivalence tests, these don't compare ref vs fast; they independently
 # check each backend's output against the math.
 
@@ -488,7 +488,7 @@ def _gen_well_conditioned(nvox, ncond, ntrial, seed=0):
 class TestMathematicalInvariants:
     """Invariants that must hold regardless of backend / numerics.
 
-    We test the fast backend output directly — no reference comparison —
+    We test the fast backend output directly - no reference comparison -
     so if these fail, there's a real algorithmic bug.
     """
 
@@ -534,7 +534,7 @@ class TestMathematicalInvariants:
         - sum of noise_proj == trace(cNb).
 
         These follow directly from the cyclic property of trace combined
-        with orthonormality (B.T @ B = I). Backend-agnostic — must be exact.
+        with orthonormality (B.T @ B = I). Backend-agnostic - must be exact.
         """
         data = _gen_lowrank(*shape, rank=10, seed=0)
         res = psn_fn(data, 'standard', {'wantfig': False, 'wantverbose': False})
@@ -653,8 +653,8 @@ class TestBackendInvariantsMatch:
         _sum_match('noisevar')       # total noise variance == trace(cNb)
         _sum_match('svnv_before')    # total variance before thresholding
         _sum_match('svnv_after')     # total variance after thresholding
-        # Max of objective = final cumsum = total net benefit — invariant.
-        # (Sum of cumsum is NOT invariant — depends on dim ordering.)
+        # Max of objective = final cumsum = total net benefit - invariant.
+        # (Sum of cumsum is NOT invariant - depends on dim ordering.)
         assert abs(ref['objective'].max() - fast['objective'].max()) <= 1e-8
 
 
@@ -664,7 +664,7 @@ class TestBackendInvariantsMatch:
 #
 # If our implementation is algorithmically correct, then in the absence of
 # near-degenerate eigenvalues the fast and reference pipelines should agree
-# on every field to float64 precision — including svnv_*, signalvar, noisevar,
+# on every field to float64 precision - including svnv_*, signalvar, noisevar,
 # objective. This test proves the "loose" tolerances above are an artifact
 # of the low-rank-signal regime, not of our code.
 
@@ -679,7 +679,7 @@ class TestWellConditionedTightMatch:
 
         Tolerances: 1e-10 for 2D fields (direct linear algebra), 1e-8 for
         cumulative-sum fields like ``objective`` (roundoff scales with the
-        cumsum length — ~ndims * machine_eps).
+        cumsum length - ~ndims * machine_eps).
         """
         data = _gen_well_conditioned(*shape, seed=0)
 
@@ -691,12 +691,12 @@ class TestWellConditionedTightMatch:
             _psn_mod.perform_gsn = saved
         fast = psn_fn(data, 'standard', {'wantfig': False, 'wantverbose': False})
 
-        # Direct linalg fields — very tight.
+        # Direct linalg fields - very tight.
         for field in ['denoiseddata', 'residuals', 'denoiser', 'svnv_before',
                       'svnv_after', 'signalvar', 'noisevar']:
             _assert_close(ref.get(field), fast.get(field),
                           f'well_conditioned/{field}', atol=1e-10, rtol=1e-10)
-        # Cumsum field — realistic accumulation tolerance.
+        # Cumsum field - realistic accumulation tolerance.
         _assert_close(ref.get('objective'), fast.get('objective'),
                       'well_conditioned/objective', atol=1e-8, rtol=1e-8)
         # Eigenvalues at the numerical-zero floor can be tiny positive or

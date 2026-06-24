@@ -1,7 +1,7 @@
 """Backend-equivalence tests for ``gsn.fast_perform_gsn.fast_perform_gsn``.
 
 Verifies that the torch (batched-Cholesky) path returns the same ``cSb`` /
-``cNb`` as the numpy+scipy path across a range of data scenarios — the numpy
+``cNb`` as the numpy+scipy path across a range of data scenarios - the numpy
 path is the simple, trusted reference, and the torch path is validated against
 it. Covers all three dispatch branches:
 
@@ -31,7 +31,7 @@ from gsn.fast_perform_gsn import _HAS_TORCH, fast_perform_gsn   # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# Data generators — a spread of realistic shapes and conditioning
+# Data generators - a spread of realistic shapes and conditioning
 # ---------------------------------------------------------------------------
 
 def _gen_lowrank_plus_noise(nvox, ncond, ntrial, rank, noise_std=1.0, seed=0):
@@ -53,7 +53,7 @@ def _gen_fullrank(nvox, ncond, ntrial, seed=0):
 
 
 def _gen_high_snr(nvox, ncond, ntrial, seed=0):
-    """Strong signal relative to noise — tests conditioning extremes."""
+    """Strong signal relative to noise - tests conditioning extremes."""
     rng = np.random.default_rng(seed)
     U = rng.standard_normal((nvox, 5)) / np.sqrt(5)
     Z = rng.standard_normal((5, ncond)) * 10
@@ -63,7 +63,7 @@ def _gen_high_snr(nvox, ncond, ntrial, seed=0):
 
 
 def _gen_low_snr(nvox, ncond, ntrial, seed=0):
-    """Very weak signal — tests behavior when signal ≲ noise."""
+    """Very weak signal - tests behavior when signal ≲ noise."""
     rng = np.random.default_rng(seed)
     U = rng.standard_normal((nvox, 5)) / np.sqrt(5)
     Z = rng.standard_normal((5, ncond)) * 0.2
@@ -76,7 +76,7 @@ def _gen_with_nans(nvox, ncond, ntrial, frac_missing=0.2, seed=0):
     """Inject NaN trials → exercises the uneven-trials delegation path."""
     data = _gen_lowrank_plus_noise(nvox, ncond, ntrial, rank=10, seed=seed)
     rng = np.random.default_rng(seed + 1)
-    # Drop random (condition, trial) pairs — but ensure every condition keeps
+    # Drop random (condition, trial) pairs - but ensure every condition keeps
     # at least one valid trial (GSN contract).
     for c in range(ncond):
         mask = rng.random(ntrial) < frac_missing
@@ -87,7 +87,7 @@ def _gen_with_nans(nvox, ncond, ntrial, frac_missing=0.2, seed=0):
 
 
 # ---------------------------------------------------------------------------
-# The comparison helper — what "numerically equivalent" means here
+# The comparison helper - what "numerically equivalent" means here
 # ---------------------------------------------------------------------------
 
 def _ref(data, opt=None):
@@ -117,7 +117,7 @@ def _assert_equivalent(ref, fast, *, atol=1e-10, rtol=1e-10, label=''):
 
 
 # ---------------------------------------------------------------------------
-# Shapes to sweep — small enough that the reference finishes in a test pass
+# Shapes to sweep - small enough that the reference finishes in a test pass
 # ---------------------------------------------------------------------------
 
 SHAPES_SMALL = [
@@ -135,7 +135,7 @@ SEEDS = [0, 1, 7]
 
 
 # ===========================================================================
-# Branch 1: clean data — the torch path (used whenever torch is installed)
+# Branch 1: clean data - the torch path (used whenever torch is installed)
 # ===========================================================================
 
 @pytest.mark.skipif(not _HAS_TORCH, reason='torch not installed; torch branch unreachable')
@@ -169,7 +169,7 @@ class TestTorchBranchEquivalence:
                            label=f'torch/low_snr shape={shape}')
 
     def test_wantshrinkage_false(self):
-        """wantshrinkage=False forces shrinkage grid=[1.0] — check that too."""
+        """wantshrinkage=False forces shrinkage grid=[1.0] - check that too."""
         data = _gen_lowrank_plus_noise(60, 50, 4, rank=10, seed=0)
         opt = {'wantshrinkage': False, 'wantverbose': False}
         _assert_equivalent(_ref(data, opt), fast_perform_gsn(data, opt),
@@ -177,7 +177,7 @@ class TestTorchBranchEquivalence:
 
 
 # ===========================================================================
-# Branch 2: clean data — the numpy+scipy path (force-enabled via monkey-patch)
+# Branch 2: clean data - the numpy+scipy path (force-enabled via monkey-patch)
 # ===========================================================================
 
 class TestNumpyBranchEquivalence:
@@ -222,7 +222,7 @@ class TestNumpyBranchEquivalence:
 
 
 # ===========================================================================
-# Branch 3: NaN / uneven trials — delegates to reference; must be IDENTICAL
+# Branch 3: NaN / uneven trials - delegates to reference; must be IDENTICAL
 # ===========================================================================
 
 class TestUnevenTrialsDelegation:
@@ -244,7 +244,7 @@ class TestUnevenTrialsDelegation:
 
 
 # ===========================================================================
-# Structural properties — output shape, symmetry, PSD
+# Structural properties - output shape, symmetry, PSD
 # ===========================================================================
 
 class TestStructuralProperties:
@@ -267,7 +267,7 @@ class TestStructuralProperties:
 
     @pytest.mark.parametrize('shape', SHAPES_SMALL)
     def test_psd(self, shape):
-        """Biconvex optimization guarantees PSD output — eigenvalues ≥ -epsilon."""
+        """Biconvex optimization guarantees PSD output - eigenvalues ≥ -epsilon."""
         data = _gen_lowrank_plus_noise(*shape, rank=10, seed=0)
         res = fast_perform_gsn(data)
         for k in ('cSb', 'cNb'):
@@ -286,7 +286,7 @@ class TestStructuralProperties:
 
 
 # ===========================================================================
-# Determinism — same input → same output
+# Determinism - same input → same output
 # ===========================================================================
 
 class TestDeterminism:
@@ -310,7 +310,7 @@ class TestDeterminism:
 
 
 # ===========================================================================
-# Option plumbing — make sure opt dict is respected
+# Option plumbing - make sure opt dict is respected
 # ===========================================================================
 
 class TestOptionPlumbing:
@@ -319,7 +319,7 @@ class TestOptionPlumbing:
         data = _gen_lowrank_plus_noise(40, 30, 3, rank=5, seed=0)
         res = fast_perform_gsn(data, {'wantverbose': True})
         assert res['cSb'].shape == (40, 40)
-        # We don't pin whether/what it prints — only that it doesn't crash.
+        # We don't pin whether/what it prints - only that it doesn't crash.
         capsys.readouterr()
 
     def test_empty_opt(self):

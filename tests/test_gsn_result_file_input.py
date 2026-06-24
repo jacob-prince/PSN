@@ -16,7 +16,7 @@ verifies:
      (eigvecs_signal/eigvals_signal/eigvecs_difference/
      eigvals_difference), and the caller asked for basis='signal' or
      'difference', PSN auto-swaps basis to the cached matrix and
-     propagates the eigenvalues — bit-equivalent to PSN's own eigh
+     propagates the eigenvalues - bit-equivalent to PSN's own eigh
      branch but skipping the eigh entirely. The 'using cached
      eigvecs' verbose line confirms the auto-upgrade fired.
   4. Auto-upgrade is a no-op for:
@@ -72,7 +72,7 @@ def gsn_with_eigvecs(tmp_path_factory):
 
 @pytest.fixture(scope='module')
 def gsn_without_eigvecs(tmp_path_factory):
-    """GSN run with ONLY cSb / cNb saved — the cached-eigvecs upgrade
+    """GSN run with ONLY cSb / cNb saved - the cached-eigvecs upgrade
     must be a no-op when the file doesn't have the right keys."""
     data = _make_data(seed=0)
     res = perform_gsn(data, {'wantverbose': 0, 'returns': ('cSb', 'cNb')})
@@ -126,7 +126,7 @@ class TestStringPath:
                                     atol=1e-10, rtol=1e-10)
 
     def test_string_equals_dict_when_no_eigvecs_in_file(self, gsn_without_eigvecs):
-        """File has only cSb/cNb — PSN must just do its own eigh and
+        """File has only cSb/cNb - PSN must just do its own eigh and
         produce the same answer as the dict path."""
         data, res, p = gsn_without_eigvecs
         out_dict = psn.psn(data, {
@@ -213,7 +213,7 @@ class TestPathLikeInputs:
                                     atol=1e-10, rtol=1e-10)
 
     def test_npz_file_object_accepted(self, gsn_with_eigvecs):
-        """np.load(...) returns an NpzFile — passing it directly
+        """np.load(...) returns an NpzFile - passing it directly
         should work too."""
         data, res, p = gsn_with_eigvecs
         npz = np.load(p, allow_pickle=False)

@@ -10,13 +10,13 @@ For the feature to be safe, the device path MUST produce results that
 are numerically equivalent to the CPU/numpy path on every code branch
 the user might hit. This file covers:
 
-  1. project_covs        — diag(B.T C B) via einsum
-  2. compute_unit_weighted_projections — vectorized weighted vars +
+  1. project_covs        - diag(B.T C B) via einsum
+  2. compute_unit_weighted_projections - vectorized weighted vars +
                             optional per-unit ranking
-  3. denoise_unitwise    — per-threshold-group matmul (hybrid mode)
-  4. denoise_global      — single basis matmul
-  5. denoise_fullrank_wiener — cholesky_solve vs scipy.linalg.solve
-  6. End-to-end psn.psn  — every (basis, criterion, threshold_method)
+  3. denoise_unitwise    - per-threshold-group matmul (hybrid mode)
+  4. denoise_global      - single basis matmul
+  5. denoise_fullrank_wiener - cholesky_solve vs scipy.linalg.solve
+  6. End-to-end psn.psn  - every (basis, criterion, threshold_method)
                             combination matches between device='cpu'
                             and device='cuda'/'mps' when available
 
@@ -310,7 +310,7 @@ class TestPsnEndToEndCPUVsDevice:
 class TestDeviceErrorPaths:
     def test_invalid_device_string_passes_through_to_torch(self, small_data):
         """An unknown device string should propagate as a meaningful
-        error from torch — we don't pre-validate every string."""
+        error from torch - we don't pre-validate every string."""
         if not _HAS_TORCH:
             pytest.skip('torch missing')
         data, res = small_data
