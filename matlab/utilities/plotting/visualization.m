@@ -520,7 +520,15 @@ function fig = visualization(data, results, varargin)
             yyaxis(ax5, 'right');
             % Rectify negative signal variance to 0 (cSb need not be strictly PSD);
             % avoids a complex sqrt and matches the standard NCSNR convention.
-            ncsnr_trace = sqrt(max(sv, 0)) ./ sqrt(nv + eps);
+            % NCSNR is undefined where the projected noise variance underflows to
+            % ~0: a signal-basis direction can land in a null direction of cNb, so
+            % noisevar = u'*cNb*u ~ 0 while signalvar is appreciable. Dividing by the
+            % bare +eps floor (sqrt(eps) ~ 1.5e-8) then explodes the trace to ~1e7.
+            % Floor relative to the data and mask those dims so the line shows a gap
+            % instead of a spurious spike.
+            noise_floor = max(eps, 1e-8 * max(nv(:)));
+            ncsnr_trace = sqrt(max(sv, 0)) ./ sqrt(max(nv, noise_floor));
+            ncsnr_trace(nv < noise_floor) = NaN;
             plot(ax5, fwd5(xr5), ncsnr_trace, '-', 'LineWidth', 1.5, 'Color', 'magenta', 'DisplayName', 'NCSNR');
             ylabel(ax5, 'NCSNR');
 
@@ -639,7 +647,7 @@ function fig = visualization(data, results, varargin)
                     scatter(ax6, x_thresh, y_thresh, 20, c_thresh, 'filled', 'MarkerFaceAlpha', 0.6);
                 end
             end
-            ylabel(ax6, {'Unit-Specific Objective', '(SignalVar - NoiseVar/ntrials)'});
+            ylabel(ax6, {'unit analytic recovery', '(cumsum signal - noise/t)'});
             set(ax6, 'YColor', [0.4 0.4 0.4]);
 
             % Right axis: population sum (green) - FULL population
@@ -650,14 +658,44 @@ function fig = visualization(data, results, varargin)
                 x_obj = 0:length(results.objective)-1;
             end
             h_sum = plot(ax6, x_obj, results.objective, 'LineWidth', 2, 'Color', [0.3 0.7 0.3]);
-            ylabel(ax6, 'Population Objective');
+            ylabel(ax6, 'analytic recovery (population)');
             set(ax6, 'YColor', [0.3 0.7 0.3]);
+
+            % Peak of population analytic recovery (triangle) + do-nothing box at
+            % full retention. Per-unit chosen thresholds are the scatter dots above.
+            objc = [0.3 0.7 0.3];
+            obj = results.objective(:);
+            n_dim = length(obj) - 1;
+            [~, max_idx] = max(obj);
+            kp = max_idx - 1;
+            x_peak = kp; if use_logscale && kp == 0, x_peak = zero_placeholder; end
+            hold(ax6, 'on');
+            % Alpha-specific: shade the interpolation range (prediction peak -> chosen).
+            if isfield(results, 'alpha_info') && ~isempty(results.alpha_info)
+                x_lo = results.alpha_info.k_pred; if use_logscale && x_lo == 0, x_lo = zero_placeholder; end
+                x_hi = results.alpha_info.k_var;  if use_logscale && x_hi == 0, x_hi = zero_placeholder; end
+                if x_lo ~= x_hi
+                    yl = [min(obj) max(obj)];
+                    pad = 0.05 * (yl(2) - yl(1) + eps);
+                    patch(ax6, [x_lo x_hi x_hi x_lo], ...
+                          [yl(1)-pad yl(1)-pad yl(2)+pad yl(2)+pad], [0 0 1], ...
+                          'FaceAlpha', 0.08, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+                end
+            end
+            h_peak = plot(ax6, x_peak, obj(max_idx), '^', 'MarkerSize', 10, ...
+                          'MarkerFaceColor', objc, 'MarkerEdgeColor', 'k', 'LineWidth', 0.8);
+            h_box = plot(ax6, n_dim, obj(end), 's', 'MarkerSize', 11, ...
+                         'MarkerFaceColor', objc, 'MarkerEdgeColor', 'k', 'LineWidth', 0.8);
             hold(ax6, 'off');
 
             % Add legend
-            legend(ax6, [h_units(1), h_sum], {'Units', 'Population (=Global)'}, 'Location', 'best');
+            legend(ax6, [h_units(1), h_sum, h_peak, h_box], ...
+                   {'units', 'analytic recovery (population)', ...
+                    sprintf('prediction peak (K=%d)', kp), ...
+                    sprintf('trial-avg / do-nothing (K=%d)', n_dim)}, ...
+                   'Location', 'best', 'FontSize', 7);
 
-            title(ax6, ['Objective Function (unit-specific)' subsample_suffix_units]);
+            title(ax6, ['Analytic recovery vs. dimensions (unit-specific)' subsample_suffix_units]);
         else
             % Global mode: single curve
             if use_logscale
@@ -667,47 +705,68 @@ function fig = visualization(data, results, varargin)
             end
             plot(ax6, x_obj, results.objective, 'LineWidth', 1.5, 'Color', [0.3 0.7 0.3]);
 
-            % Mark chosen threshold (not maximum - threshold may be constrained)
-            if isfield(results, 'best_threshold') && isscalar(results.best_threshold)
-                k = results.best_threshold;
-                if k >= 0 && k < length(results.objective)
-                    hold(ax6, 'on');
-                    if use_logscale
-                        if k == 0
-                            x_marker = zero_placeholder;
-                        else
-                            x_marker = k;
-                        end
-                    else
-                        x_marker = k;
-                    end
-                    plot(ax6, x_marker, results.objective(k+1), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
-                    hold(ax6, 'off');
+            % Markers (parity with Python): triangle = peak (prediction peak),
+            % star = chosen threshold, box = trial-average / do-nothing (keep
+            % every dimension). Curve-colored, distinguished by shape.
+            objc = [0.3 0.7 0.3];
+            obj = results.objective(:);
+            n_dim = length(obj) - 1;
+            hold(ax6, 'on');
+
+            % Alpha-specific: shade the interpolation range (prediction peak -> chosen).
+            if isfield(results, 'alpha_info') && ~isempty(results.alpha_info)
+                x_lo = results.alpha_info.k_pred; if use_logscale && x_lo == 0, x_lo = zero_placeholder; end
+                x_hi = results.alpha_info.k_var;  if use_logscale && x_hi == 0, x_hi = zero_placeholder; end
+                if x_lo ~= x_hi
+                    yl = [min(obj) max(obj)];
+                    pad = 0.05 * (yl(2) - yl(1) + eps);
+                    patch(ax6, [x_lo x_hi x_hi x_lo], ...
+                          [yl(1)-pad yl(1)-pad yl(2)+pad yl(2)+pad], [0 0 1], ...
+                          'FaceAlpha', 0.08, 'EdgeColor', 'none', 'HandleVisibility', 'off');
                 end
-            else
-                % Fallback to maximum if no threshold stored
-                [~, max_idx] = max(results.objective);
-                hold(ax6, 'on');
-                if use_logscale
-                    if max_idx == 1
-                        x_marker = zero_placeholder;
-                    else
-                        x_marker = max_idx - 1;
-                    end
-                else
-                    x_marker = max_idx - 1;
-                end
-                plot(ax6, x_marker, results.objective(max_idx), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
-                hold(ax6, 'off');
             end
 
-            title(ax6, 'Objective Function');
+            % Peak of the analytic recovery curve (prediction peak): triangle.
+            [~, max_idx] = max(obj);
+            kp = max_idx - 1;
+            x_peak = kp; if use_logscale && kp == 0, x_peak = zero_placeholder; end
+            h_peak = plot(ax6, x_peak, obj(max_idx), '^', 'MarkerSize', 10, ...
+                          'MarkerFaceColor', objc, 'MarkerEdgeColor', 'k', 'LineWidth', 0.8);
+            leg_h = h_peak;
+            leg_l = {sprintf('prediction peak (K=%d)', kp)};
+
+            % Chosen threshold (may be constrained, so not necessarily the peak): star.
+            if isfield(results, 'best_threshold') && isscalar(results.best_threshold)
+                k = results.best_threshold;
+                if k >= 0 && k < length(obj)
+                    x_ch = k; if use_logscale && k == 0, x_ch = zero_placeholder; end
+                    h_chosen = plot(ax6, x_ch, obj(k+1), 'p', 'MarkerSize', 16, ...
+                                    'MarkerFaceColor', objc, 'MarkerEdgeColor', 'k', 'LineWidth', 0.9);
+                    leg_h(end+1) = h_chosen;
+                    leg_l{end+1} = sprintf('PSN chosen (K=%d)', k);
+                end
+            end
+
+            % Trial-average / do-nothing (keep every dimension): box at full retention.
+            h_box = plot(ax6, n_dim, obj(end), 's', 'MarkerSize', 11, ...
+                         'MarkerFaceColor', objc, 'MarkerEdgeColor', 'k', 'LineWidth', 0.8);
+            leg_h(end+1) = h_box;
+            leg_l{end+1} = sprintf('trial-avg / do-nothing (K=%d)', n_dim);
+
+            hold(ax6, 'off');
+            legend(ax6, leg_h, leg_l, 'Location', 'best', 'FontSize', 7);
+
+            if isfield(results, 'alpha_info') && ~isempty(results.alpha_info)
+                title(ax6, sprintf('Analytic recovery vs. dimensions (alpha=%g)', results.alpha_info.alpha));
+            else
+                title(ax6, 'Analytic recovery vs. dimensions');
+            end
 
             % Set ylabel based on criterion (only for global mode)
             if strcmp(criterion, 'variance')
-                ylabel(ax6, 'Cumulative SignalVar');
+                ylabel(ax6, 'cumulative signal variance');
             else
-                ylabel(ax6, 'Cumulative SignalVar - NoiseVar/ntrials');
+                ylabel(ax6, 'analytic recovery  (cumsum signal - noise/t)');
             end
         end
 
@@ -1063,8 +1122,14 @@ function fig = visualization(data, results, varargin)
 
         % Compute noise-ceiling SNR (NCSNR). Rectify negative signal variance
         % to 0 (standard NCSNR convention; avoids a complex sqrt).
-        ncsnr_before = sqrt(max(sv_before, 0)) ./ sqrt(nv_before + eps);
-        ncsnr_after = sqrt(max(sv_after, 0)) ./ sqrt(nv_after + eps);
+        % Floor the denominator relative to the data (mirrors the per-dimension
+        % NCSNR guard) so a unit whose noise variance underflows to ~0 cannot blow
+        % the ratio up to ~1e7. Kept finite (no NaN) because the means/limits below
+        % consume these.
+        nfloor_before = max(eps, 1e-8 * max(nv_before(:)));
+        nfloor_after = max(eps, 1e-8 * max(nv_after(:)));
+        ncsnr_before = sqrt(max(sv_before, 0)) ./ sqrt(max(nv_before, nfloor_before));
+        ncsnr_after = sqrt(max(sv_after, 0)) ./ sqrt(max(nv_after, nfloor_after));
 
         % Compute noise ceiling percentage (use ntrials_avg for NaN data)
         noiseceiling_before = 100 * (ncsnr_before.^2 ./ (ncsnr_before.^2 + 1/ntrials_avg));

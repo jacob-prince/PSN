@@ -194,7 +194,7 @@ def plot_data_diagnostic(data, ground_truth, params):
     ax6.set_xlabel('Condition')
     ax6.set_ylabel('Unit')
 
-    # Plot 7: Signal eigenvectors. Use a data-driven symmetric clim — a fixed
+    # Plot 7: Signal eigenvectors. Use a data-driven symmetric clim - a fixed
     # +/-0.3 washes out at large nvox, where eigenvector entries scale ~1/sqrt(nvox).
     sig_evec_max = np.percentile(np.abs(U_signal), 99) or 1.0
     ax7 = fig.add_subplot(gs[2, 0])

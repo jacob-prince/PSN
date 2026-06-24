@@ -40,13 +40,32 @@ function plot_recovery_tradeoff(ax, results)
     slope = W * K / ((1 - a) * log(10) * lk);
     fx = @(x) invlog_fwd(x, a, W, K, lk, slope, aW);
 
-    bases = {'signal_basis', [0.122 0.467 0.706], 'signal'; ...
-             'difference_basis', [0.173 0.627 0.173], 'difference'};
+    % {key, analytic color (solid), split-half color (dashed), name}. Color encodes
+    % analytic vs split-half; the chosen/trial-avg markers reuse the primary basis's
+    % colors so each box/star matches its trace.
+    bases = {'signal_basis',     [0.122 0.467 0.706], [1.000 0.498 0.055], 'signal'; ...
+             'difference_basis', [0.173 0.627 0.173], [0.580 0.404 0.741], 'difference'};
 
     yL = [];                       % left-axis (analytic recovery) values
     yR = [];                       % right-axis (split-half r) values
     legH = gobjects(0);
     legL = {};
+    analytic_endpoint = [];        % analytic recovery at full retention (do-nothing)
+    analytic_endpoint_x = [];
+    prim_ar = []; prim_asf = [];   % primary basis analytic curve (for the chord/shade)
+
+    % primary basis (first present) colors -> used for the chosen/trial-avg markers;
+    % multi = both bases present (compare), which switches labels to include the name.
+    present = [];
+    for i = 1:size(bases, 1)
+        if isfield(rec, bases{i,1}) && ~isempty(rec.(bases{i,1})), present(end+1) = i; end %#ok<AGROW>
+    end
+    multi = numel(present) > 1;
+    if isempty(present)
+        mc_analytic = [0.122 0.467 0.706]; mc_splithalf = [1.000 0.498 0.055];
+    else
+        mc_analytic = bases{present(1), 2}; mc_splithalf = bases{present(1), 3};
+    end
 
     % ---- LEFT axis: analytic recovery curves (solid) ----
     yyaxis(ax, 'left');
@@ -58,8 +77,37 @@ function plot_recovery_tradeoff(ax, results)
             b = rec.(key);
             h = plot(ax, fx(b.analytic_sv_frac), b.analytic_recovery, '-', ...
                      'Color', bases{i, 2}, 'LineWidth', 2);
-            legH(end+1) = h; legL{end+1} = sprintf('%s (recovery)', bases{i, 3}); %#ok<AGROW>
+            if multi, lbl = sprintf('%s: analytic recovery', bases{i, 4}); else, lbl = 'analytic recovery'; end
+            legH(end+1) = h; legL{end+1} = lbl; %#ok<AGROW>
             yL = [yL; b.analytic_recovery(:)]; %#ok<AGROW>
+            if isempty(analytic_endpoint)
+                ar = b.analytic_recovery(:); asf = b.analytic_sv_frac(:);
+                analytic_endpoint = ar(end); analytic_endpoint_x = asf(end);
+                prim_ar = ar; prim_asf = asf;
+            end
+        end
+    end
+
+    % Max-tradeoff geometry: chord from the prediction peak to the do-nothing
+    % (trial-average) point, and the shaded gap between it and the analytic
+    % recovery curve on the descending limb (where max-tradeoff picks the farthest point).
+    if numel(prim_ar) >= 3
+        [~, kpk] = max(prim_ar);            % 1-based index of the peak
+        % Peak of the analytic recovery curve (prediction peak): triangle.
+        hpk = plot(ax, fx(prim_asf(kpk)), prim_ar(kpk), '^', 'MarkerSize', 11, ...
+                   'MarkerFaceColor', mc_analytic, 'MarkerEdgeColor', 'k', 'LineWidth', 0.8);
+        legH(end+1) = hpk; legL{end+1} = 'prediction peak (analytic)'; %#ok<AGROW>
+        yL = [yL; prim_ar(kpk)]; %#ok<AGROW>
+        if kpk < numel(prim_ar) && prim_asf(end) ~= prim_asf(kpk)
+            xs = prim_asf(kpk:end);
+            yc = prim_ar(kpk:end);
+            ychord = prim_ar(kpk) + (prim_ar(end) - prim_ar(kpk)) .* ...
+                     (xs - prim_asf(kpk)) ./ (prim_asf(end) - prim_asf(kpk));
+            hgap = patch(ax, [fx(xs); flipud(fx(xs))], [ychord; flipud(yc)], [0.5 0.5 0.5], ...
+                         'FaceAlpha', 0.15, 'EdgeColor', 'none');
+            uistack(hgap, 'bottom');
+            plot(ax, fx(xs), ychord, ':', 'Color', [0.45 0.45 0.45], 'LineWidth', 1.0);
+            legH(end+1) = hgap; legL{end+1} = 'max-tradeoff gap'; %#ok<AGROW>
         end
     end
 
@@ -96,8 +144,9 @@ function plot_recovery_tradeoff(ax, results)
         if isfield(rec, key) && ~isempty(rec.(key)) && isfield(rec.(key), 'split_half_r')
             b = rec.(key);
             h = plot(ax, fx(b.sv_frac), b.split_half_r, '--', ...
-                     'Color', bases{i, 2}, 'LineWidth', 1.6);
-            legH(end+1) = h; legL{end+1} = sprintf('%s (split-half)', bases{i, 3}); %#ok<AGROW>
+                     'Color', bases{i, 3}, 'LineWidth', 1.6);
+            if multi, lbl = sprintf('%s: split-half r', bases{i, 4}); else, lbl = 'split-half r'; end
+            legH(end+1) = h; legL{end+1} = lbl; %#ok<AGROW>
             yR = [yR; b.split_half_r(:)]; %#ok<AGROW>
         end
     end
@@ -105,33 +154,41 @@ function plot_recovery_tradeoff(ax, results)
     if isfield(rec, 'trial_average') && ~isempty(rec.trial_average)
         ta = rec.trial_average;
         h = plot(ax, fx(ta.sv_frac), ta.split_half_r, 's', 'MarkerSize', 9, ...
-                 'MarkerFaceColor', [0.4 0.4 0.4], 'MarkerEdgeColor', 'k');
-        legH(end+1) = h; legL{end+1} = 'trial-avg'; %#ok<AGROW>
+                 'MarkerFaceColor', mc_splithalf, 'MarkerEdgeColor', 'k');
+        legH(end+1) = h; legL{end+1} = 'trial-avg (split-half)'; %#ok<AGROW>
         yR = [yR; ta.split_half_r]; %#ok<AGROW>
     end
     if isfield(rec, 'wiener') && ~isempty(rec.wiener)
         w = rec.wiener;
         h = plot(ax, fx(w.sv_frac), w.split_half_r, 'd', 'MarkerSize', 9, ...
-                 'MarkerFaceColor', [0.839 0.153 0.157], 'MarkerEdgeColor', 'k');
+                 'MarkerFaceColor', [0.196 0.804 0.196], 'MarkerEdgeColor', 'k');
         legH(end+1) = h; legL{end+1} = 'Wiener'; %#ok<AGROW>
         yR = [yR; w.split_half_r]; %#ok<AGROW>
     end
     if isfield(rec, 'chosen') && ~isempty(rec.chosen) && ~isnan(rec.chosen.split_half_r)
-        plot(ax, fx(rec.chosen.sv_frac), rec.chosen.split_half_r, 'p', 'MarkerSize', 18, ...
-             'MarkerFaceColor', [1 0.84 0], 'MarkerEdgeColor', 'k', 'LineWidth', 0.9);
+        h = plot(ax, fx(rec.chosen.sv_frac), rec.chosen.split_half_r, 'p', 'MarkerSize', 18, ...
+             'MarkerFaceColor', mc_splithalf, 'MarkerEdgeColor', 'k', 'LineWidth', 0.9);
+        legH(end+1) = h; legL{end+1} = 'PSN chosen (split-half)'; %#ok<AGROW>
         yR = [yR; rec.chosen.split_half_r]; %#ok<AGROW>
     end
     ylabel(ax, 'split-half r  (TAvg vs Denoised)');
     rlim = local_lim(yR);
     if ~isempty(rlim); ylim(ax, rlim); end
 
-    % ---- chosen gold star on the LEFT (analytic recovery) trajectory ----
+    % ---- GOLD markers on the LEFT (analytic recovery) trajectory:
+    %      trial-avg (box) + PSN chosen (star) ----
     yyaxis(ax, 'left');
+    if isfield(rec, 'trial_average') && ~isempty(rec.trial_average) && ~isempty(analytic_endpoint)
+        h = plot(ax, fx(analytic_endpoint_x), analytic_endpoint, 's', 'MarkerSize', 9, ...
+                 'MarkerFaceColor', mc_analytic, 'MarkerEdgeColor', 'k');
+        legH(end+1) = h; legL{end+1} = 'trial-avg (analytic)'; %#ok<AGROW>
+        yL = [yL; analytic_endpoint]; %#ok<AGROW>
+    end
     if isfield(rec, 'chosen') && ~isempty(rec.chosen) && isfield(rec.chosen, 'recovery') ...
             && ~isnan(rec.chosen.recovery)
         h = plot(ax, fx(rec.chosen.sv_frac), rec.chosen.recovery, 'p', 'MarkerSize', 18, ...
-                 'MarkerFaceColor', [1 0.84 0], 'MarkerEdgeColor', 'k', 'LineWidth', 0.9);
-        legH(end+1) = h; legL{end+1} = sprintf('PSN chosen (%s)', rec.chosen.label); %#ok<AGROW>
+                 'MarkerFaceColor', mc_analytic, 'MarkerEdgeColor', 'k', 'LineWidth', 0.9);
+        legH(end+1) = h; legL{end+1} = 'PSN chosen (analytic)'; %#ok<AGROW>
         yL = [yL; rec.chosen.recovery]; %#ok<AGROW>
     end
     ylabel(ax, 'analytic recovery  (cumsum signal - noise/t)');
@@ -148,7 +205,14 @@ function plot_recovery_tradeoff(ax, results)
     xlabel(ax, 'frac. signal var. retained');
     grid(ax, 'on');
     if ~isempty(legH)
-        legend(ax, legH, legL, 'FontSize', 7, 'Location', 'northwest');
+        % Order so the analytic (gold) entries form one block and the split-half
+        % (gray) entries another, with gold box/star adjacent, gray box/star adjacent.
+        rank = zeros(1, numel(legL));
+        for i = 1:numel(legL)
+            rank(i) = local_legrank(legL{i});
+        end
+        [~, perm] = sort(rank);
+        legend(ax, legH(perm), legL(perm), 'FontSize', 7, 'Location', 'southwest');
     end
     hold(ax, 'off');
 end
@@ -167,11 +231,45 @@ function T = invlog_fwd(x, a, W, K, lk, slope, aW)
 end
 
 
+function r = local_legrank(lbl)
+% Order legend so analytic (gold-axis) entries form one block and split-half
+% entries another, with each block's box+star adjacent. Content-based so it is
+% robust to the single- vs multi-basis label variants.
+    L = lower(lbl);
+    if contains(L, 'prediction peak')
+        if contains(L, 'analytic'), r = 0.5; else, r = 9; end
+    elseif contains(L, 'chosen')
+        if contains(L, 'analytic'), r = 2; else, r = 14; end
+    elseif contains(L, 'trial-avg')
+        if contains(L, 'analytic'), r = 1; else, r = 13; end
+    elseif contains(L, 'tradeoff')
+        r = 3;
+    elseif contains(L, 'analytic recovery')
+        r = 0;
+    elseif contains(L, 'split-half r')
+        r = 10;
+    elseif contains(L, 'wiener')
+        r = 12;
+    else
+        r = 99;
+    end
+end
+
 function lim = local_lim(yvals)
-% Floor at 0, top = max + headroom (so the legend has room), matching Python.
+% Top = max + headroom (so the legend has room). When values go negative (e.g.
+% the do-nothing tail of the analytic-recovery curve on noisy data) the lower
+% limit follows the data instead of clipping at 0, so the full curve and the
+% trial-average anchor stay visible. Matches Python _lim.
     lim = [];
     if isempty(yvals); return; end
     v = yvals(isfinite(yvals));
     if isempty(v); return; end
-    lim = [0, max(max(v), 1e-3) * 1.45];
+    vmax = max(max(v), 1e-3);
+    vmin = min(v);
+    if vmin >= 0
+        lim = [0, vmax * 1.45];
+    else
+        span = vmax - vmin;
+        lim = [vmin - 0.05*span, vmax + 0.45*span];
+    end
 end

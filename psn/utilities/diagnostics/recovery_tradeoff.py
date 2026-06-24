@@ -1,4 +1,4 @@
-"""Recovery / bias-variance tradeoff curve — COMPUTE (no plotting).
+"""Recovery / bias-variance tradeoff curve - COMPUTE (no plotting).
 
 For each requested basis we trace the MEDIAN per-unit 'TAvg vs Denoised'
 split-half reliability as the basis is truncated to K dimensions, plus
@@ -7,7 +7,7 @@ the denoiser PSN actually applied. This is the data behind the diagnostic
 "Split-half reliability vs. signal retained" panel.
 
 This lives in psn's compute layer (NOT the plotting layer) so it ALWAYS runs
-as part of psn() — independent of whether a figure is generated. The figure
+as part of psn() - independent of whether a figure is generated. The figure
 just reads results['recovery_tradeoff'] and draws it.
 
 Cost: each curve is O(n^2 * nconds) (incremental rank-K reconstruction on a
@@ -444,11 +444,23 @@ def compute_recovery_tradeoff(cSb, cNb, t, data, unit_means, has_nans, *,
         elif use_torch:
             M = cSb_t + _to_t(cNb) / float(t)
             M = M + (1e-10 * float(torch.trace(M)) / n) * torch.eye(n, device=_tdev, dtype=_tdt)
-            Dw = torch.linalg.solve(M, cSb_t).T.cpu().numpy()
+            try:
+                Dw = torch.linalg.solve(M, cSb_t).T.cpu().numpy()
+            except Exception:
+                # M is PSD but can be numerically singular: cSb is rank-deficient
+                # (its null space is floored to the 1e-10 ridge) and cNb/t is ~0 in
+                # that same null space, so M's smallest eigenvalue sits at the floor
+                # and torch.linalg.solve raises. pinv gives the minimum-norm Wiener
+                # solution; cSb shares the null space, so the filter stays bounded.
+                # Same operand order as solve, so the convention is identical.
+                Dw = (torch.linalg.pinv(M) @ cSb_t).T.cpu().numpy()
         else:
             M = cSb + cNb / t
             M = M + 1e-10 * np.trace(M) / n * np.eye(n)
-            Dw = np.linalg.solve(M, cSb).T
+            try:
+                Dw = np.linalg.solve(M, cSb).T
+            except np.linalg.LinAlgError:
+                Dw = (np.linalg.pinv(M) @ cSb).T
         out['wiener'] = {'sv_frac': _xfrac(Dw), 'split_half_r': _shr_for_D(Dw)}
 
     out['chosen'] = None
