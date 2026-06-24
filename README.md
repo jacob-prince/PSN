@@ -2,14 +2,15 @@
 
 **PSN** is a library for denoising neural data by adaptively partitioning signal and noise.
 
-> **Note:** As of May 2026, PSN is under active development. The API and algorithm are subject to change.
+> **Note:** As of June 2026, PSN is under active development. The API and algorithm are subject to change.
 
 ## What is PSN?
 
 PSN (Partitioning Signal and Noise) is a method for denoising multi-trial neural data by:
-1. Projecting data into a low-dimensional basis (e.g., eigenvectors of signal covariance)
-2. Adaptively selecting how many dimensions to retain per unit
-3. Reconstructing denoised estimates that optimize signal recovery while minimizing noise
+1. Estimating signal and noise covariances with GSN
+2. Projecting data into a basis (e.g., eigenvectors of the signal covariance)
+3. Selecting how many dimensions to retain (a single population threshold, or per-unit)
+4. Reconstructing denoised estimates that recover the underlying signal while suppressing noise
 
 PSN builds on [Generative Modeling of Signal and Noise (GSN)](https://github.com/cvnlab/GSN).
 
@@ -63,46 +64,77 @@ print(f"Retained {results['best_threshold']} dimensions")
 By default, PSN uses the `'standard'` preset. You can optionally specify a different mode:
 
 ```python
-# Standard (default): balances signal retention and out-of-sample generalization
-# Uses: basis='signal', criterion='prediction', threshold_method='hybrid'
+# Standard (default): signal basis at the max-tradeoff threshold (global).
+# A deterministic operating point that captures most of the achievable analytic
+# recovery while retaining more signal variance than the prediction peak.
+# Uses: basis='signal', criterion='max-tradeoff', threshold_method='global'
 results = psn(train_data, 'standard')
 
-# Conservative: prioritizes retaining signal
-# Uses: basis='signal', criterion='variance', threshold_method='global'
+# Conservative: prioritizes retaining signal (99% of signal variance).
+# Uses: basis='signal', criterion='variance', threshold_method='global', variance_threshold=0.99
 results = psn(train_data, 'conservative')
 
-# Aggressive: maximizes out-of-sample generalization with unit-specific adaptation
-# Uses: basis='difference', criterion='prediction', threshold_method='unit'
+# Aggressive: difference basis at the prediction peak. May improve recovery but
+# can be unstable with limited data.
+# Uses: basis='difference', criterion='prediction', threshold_method='global'
 results = psn(train_data, 'aggressive')
+
+# Compare: build the signal and difference bases (each at its max-tradeoff
+# threshold) and keep whichever has the higher split-half r at that threshold.
+results = psn(train_data, 'compare')
+
+# Wiener: full-rank matrix Wiener filter (no truncation; basis-free).
+results = psn(train_data, 'wiener')
 ```
 
 #### Custom Configuration
 
 ```python
 opt = {
-    'basis': 'signal',                # 'signal', 'difference', 'pca', 'wiener', or custom matrix
-    'criterion': 'prediction',        # 'prediction', 'variance', or 'variance_eigenvalues'
-    'threshold_method': 'hybrid',     # 'global', 'hybrid', or 'unit'
+    'basis': 'signal',                # 'signal', 'difference', 'pca', 'noise', 'random',
+                                      #   'compare', or a custom [n_units x D] matrix
+    'criterion': 'max-tradeoff',      # 'max-tradeoff' (default), 'prediction', 'variance',
+                                      #   'variance_eigenvalues', or 'wiener'
+    'threshold_method': 'global',     # 'global' (default) or 'hybrid' (per-unit thresholds)
     'basis_ordering': 'eigenvalues',  # 'eigenvalues' or 'signalvariance'
-    'variance_threshold': 0.95,       # Used when criterion='variance'
+    'variance_threshold': 0.95,       # Used when criterion='variance'/'variance_eigenvalues'
     'wantverbose': True,
     'wantfig': True,                  # Display diagnostic figures
 }
 results = psn(train_data, opt)
 ```
 
-#### Interpolating Between Prediction and Variance Targets
+The threshold criteria all operate on the **analytic recovery** curve - the
+GSN-covariance-based estimate of how well the denoised output recovers the true
+underlying signal out-of-sample, `cumsum(signal - noise/ntrials)` over the retained
+dimensions. `'prediction'` takes its peak; `'max-tradeoff'` (the default) takes the
+point farthest from the chord between the peak and the do-nothing (trial-average)
+point - closer to the peak it keeps more signal variance.
 
-The `alpha` parameter smoothly interpolates between the prediction-optimal threshold
-and a variance-retention target, letting you trade off generalization vs. signal
-preservation without committing to either extreme:
+#### Interpolating Between the Prediction Peak and Do-Nothing
+
+The `alpha` parameter smoothly interpolates, in signal-variance space, between the
+prediction peak and the trial-average (do-nothing) point:
 
 ```python
 opt = {
-    'alpha': 0.3,                 # 0 = prediction peak, 1 = variance retention target
-    'variance_threshold': 0.95,   # Defines the variance target
+    'alpha': 0.3,   # 0 = prediction peak; 1 = retain all signal variance (do nothing)
 }
 results = psn(train_data, opt)
+```
+
+`alpha` overrides `criterion` and does **not** use `variance_threshold` (its right
+endpoint is fixed at the full signal variance).
+
+#### Constraining the Threshold
+
+`allowable_thresholds` restricts the choice to a set of dimensionalities. PSN selects
+the **best** threshold among the allowable values for the chosen criterion (it never
+evaluates a threshold outside the set); a single value forces exactly that many dims:
+
+```python
+results = psn(train_data, {'allowable_thresholds': [5, 10, 20]})  # best of these
+results = psn(train_data, {'allowable_thresholds': [50]})          # force 50 dims
 ```
 
 #### Caching GSN Output Across Hyperparameter Sweeps
@@ -113,7 +145,7 @@ pass the previously computed `gsn_result` back in:
 
 ```python
 # First call computes GSN
-results = psn(train_data, {'criterion': 'prediction'})
+results = psn(train_data, {'criterion': 'max-tradeoff'})
 
 # Subsequent calls reuse the cached covariances
 for alpha in [0.0, 0.25, 0.5, 0.75, 1.0]:
@@ -125,21 +157,32 @@ for alpha in [0.0, 0.25, 0.5, 0.75, 1.0]:
 
 #### Wiener Denoising
 
-For full-rank matrix Wiener filtering (no basis truncation):
+For the full-rank matrix Wiener filter (the optimal linear estimator - minimizes
+expected mean-squared error given the signal and noise covariances; no basis
+truncation):
 
 ```python
-results = psn(train_data, {'basis': 'wiener'})
+results = psn(train_data, 'wiener')
+# equivalently: psn(train_data, {'criterion': 'wiener'})
 ```
 
-To apply Wiener shrinkage on top of a global truncation:
+#### scikit-learn Estimator (Python only)
+
+PSN also ships a scikit-learn-compatible estimator for use in pipelines / grid search:
 
 ```python
-opt = {
-    'basis': 'signal',
-    'threshold_method': 'global',
-    'denoiser_type': 'wiener',
-}
-results = psn(train_data, opt)
+from psn import PSN
+model = PSN(mode='standard')
+denoised = model.fit_transform(train_data)
+```
+
+#### GPU Acceleration (Python only)
+
+Set `device='cuda'` or `device='mps'` to run the covariance / projection / eigh work on
+a GPU via torch (the numpy CPU path is the default):
+
+```python
+results = psn(train_data, {'device': 'cuda'})
 ```
 
 #### Applying the Denoiser to Held-Out Data
@@ -165,13 +208,15 @@ results['denoiseddata']      # (n_units, n_conditions) - Denoised estimates
 results['residuals']         # (n_units, n_conditions, n_trials) - data - denoiseddata
 results['denoiser']          # (n_units, n_units) - Denoising matrix
 results['unit_means']        # (n_units,) - Per-unit means used for centering
-results['best_threshold']    # Number of dimensions retained (scalar or per-unit array)
+results['best_threshold']    # Number of dimensions retained (scalar, or per-unit array for 'hybrid')
 results['fullbasis']         # (n_units, n_dims) - Basis vectors after global ordering
 results['signalvar']         # Signal variance per dimension
 results['noisevar']          # Noise variance per dimension
+results['objective']         # Cumulative objective curve used for threshold selection
 results['svnv_before']       # (n_units, 2) - Signal/noise variance before denoising
 results['svnv_after']        # (n_units, 2) - Signal/noise variance after denoising
 results['gsn_result']        # GSN output dict (cSb, cNb, ...) for reuse / caching
+results['recovery_tradeoff'] # Diagnostic data behind the recovery-vs-signal-retained figure
 ```
 
 ---
@@ -201,7 +246,7 @@ cd('path/to/PSN/matlab')
 % Generate test data (50 units, 100 conditions, 5 trials)
 data = randn(50, 100, 5);
 
-% Apply PSN with default settings
+% Apply PSN with default settings ('standard')
 results = psn(data);
 fprintf('Denoised data shape: [%d x %d]\n', size(results.denoiseddata));
 ```
@@ -209,38 +254,48 @@ fprintf('Denoised data shape: [%d x %d]\n', size(results.denoiseddata));
 #### Using Presets
 
 ```matlab
-% Conservative: prioritizes retaining signal
-results = psn(data, 'conservative');
-
-% Standard: balances signal retention and generalization (default)
+% Standard (default): signal basis at the max-tradeoff threshold (global)
 results = psn(data, 'standard');
 
-% Aggressive: maximizes out-of-sample generalization
+% Conservative: prioritizes retaining signal (99% of signal variance)
+results = psn(data, 'conservative');
+
+% Aggressive: difference basis at the prediction peak
 results = psn(data, 'aggressive');
+
+% Compare: keep whichever of the signal/difference bases has higher split-half r
+results = psn(data, 'compare');
+
+% Wiener: full-rank matrix Wiener filter
+results = psn(data, 'wiener');
 ```
 
 #### Custom Configuration
 
 ```matlab
 opt = struct();
-opt.basis = 'signal';              % 'signal', 'difference', 'pca', or custom matrix
-opt.criterion = 'prediction';      % 'prediction', 'variance', 'variance_eigenvalues'
-opt.threshold_method = 'hybrid';   % 'global', 'hybrid', 'unit'
-opt.variance_threshold = 0.95;     % Used when criterion='variance'
+opt.basis = 'signal';              % 'signal','difference','pca','noise','random',
+                                   %   'compare', or a custom matrix
+opt.criterion = 'max-tradeoff';    % 'max-tradeoff' (default),'prediction','variance',
+                                   %   'variance_eigenvalues','wiener'
+opt.threshold_method = 'global';   % 'global' (default) or 'hybrid'
+opt.variance_threshold = 0.95;     % Used when criterion='variance'/'variance_eigenvalues'
 opt.wantverbose = true;
 opt.wantfig = true;                % Display diagnostic figures
 
 results = psn(data, opt);
 ```
 
+> The MATLAB and Python implementations are feature-for-feature equivalent. The only
+> Python-only additions are GPU acceleration (`device`) and the scikit-learn `PSN`
+> estimator class.
+
 #### Test Installation
 
-Verify GSN dependency and PSN functionality:
+Add the toolbox to the path and run the test suite:
 ```matlab
-cd('path/to/PSN/matlab')
-
-% Test GSN dependency
-test_gsn_dependency
+addpath(genpath('path/to/PSN/matlab'))
+test_psn_all_combinations
 ```
 
 #### Troubleshooting
@@ -255,14 +310,16 @@ test_gsn_dependency
 
 | Parameter | Options | Description |
 |-----------|---------|-------------|
-| **basis** | `'signal'`, `'difference'`, `'pca'`, `'wiener'`, custom matrix | Basis for dimensionality reduction |
-| **criterion** | `'prediction'`, `'variance'`, `'variance_eigenvalues'` | How to determine dimensionality threshold |
-| **threshold_method** | `'global'`, `'hybrid'`, `'unit'` | How to apply thresholds across units |
+| **basis** | `'signal'`, `'difference'`, `'pca'`, `'noise'`, `'random'`, `'compare'`, custom matrix | Basis for dimensionality reduction (`'wiener'` is a deprecated alias for `criterion='wiener'`) |
+| **criterion** | `'max-tradeoff'` (default), `'prediction'`, `'variance'`, `'variance_eigenvalues'`, `'wiener'` | How to determine the dimensionality threshold |
+| **threshold_method** | `'global'` (default), `'hybrid'` | Single population threshold, or per-unit thresholds on a shared ordering |
 | **basis_ordering** | `'eigenvalues'`, `'signalvariance'` | Initial global order of basis vectors |
-| **alpha** | `0.0` to `1.0` (or `None`) | Interpolates between prediction peak (0) and variance target (1) |
-| **variance_threshold** | `0.0` to `1.0` (default: `0.99`) | Target variance fraction (for `criterion='variance'` or with `alpha`) |
-| **denoiser_type** | `'truncation'`, `'wiener'` | Hard truncation or Wiener shrinkage (Wiener requires `threshold_method='global'`) |
-| **gsn_result** | dict | Reuse precomputed GSN covariances to skip estimation |
+| **alpha** | `0.0` to `1.0` (or `None`) | Interpolates between the prediction peak (0) and the trial-average / do-nothing point (1). Does not use `variance_threshold`. |
+| **variance_threshold** | `0.0` to `1.0` (default: `0.99`) | Target signal-variance fraction for `criterion='variance'`/`'variance_eigenvalues'` |
+| **allowable_thresholds** | vector (or `None`) | Restrict the threshold to these values (PSN picks the best one); a single value forces it |
+| **unit_groups** | `[n_units]` integer labels | Units sharing a label share a threshold (`'hybrid'` only) |
+| **gsn_result** | dict / struct | Reuse precomputed GSN covariances to skip estimation |
+| **device** *(Python only)* | `'cpu'` (default), `'cuda'`, `'mps'` | Run on GPU via torch |
 
 ---
 
@@ -272,7 +329,9 @@ Both Python and MATLAB expect data in the shape:
 - **Python**: `(n_units, n_conditions, n_trials)`
 - **MATLAB**: `[n_units x n_conditions x n_trials]`
 
-**NaN handling**: PSN supports uneven trials across conditions. Missing trials can be indicated with NaNs. Each condition must have at least one trial with valid data across all units.
+**NaN handling**: PSN supports uneven trials across conditions. Missing trials can be
+indicated with NaNs. Each condition must have at least one trial with valid data across
+all units.
 
 ---
 
