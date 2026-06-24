@@ -3,7 +3,7 @@ function s = format_threshold(best_threshold)
 %
 %   s = format_threshold(best_threshold) mirrors the Python format_threshold:
 %   the integer threshold for global mode, or 'mean +/- std across units' for
-%   per-unit (hybrid) mode -- never the full per-unit list.
+%   per-unit (hybrid) mode, never the full per-unit list.
 %
 % -------------------------------------------------------------------------
 % Inputs:

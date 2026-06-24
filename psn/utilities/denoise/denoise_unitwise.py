@@ -3,6 +3,7 @@
 import numpy as np
 from ..threshold.constrain_to_allowable import constrain_to_allowable
 from ..threshold.max_tradeoff import max_tradeoff_threshold
+from ..threshold.select_allowable import argmax_allowable, first_reach_allowable, allowable_candidates
 from .compute_unit_weighted_projections import compute_unit_weighted_projections
 from psn._device import resolve_device, to_device, from_device, is_cpu
 
@@ -76,7 +77,11 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
         compute_unit_weighted_projections(basis, signal_proj, noise_proj, ntrials,
                                             False, device=device)
 
-    # Second pass: select thresholds considering unit_groups
+    # Second pass: select thresholds considering unit_groups. When
+    # allowable_thresholds restricts the choice, each group picks the BEST
+    # threshold among the allowable values (best-among-allowable); a single
+    # allowable value forces exactly that many dimensions.
+    allow = opt['allowable_thresholds']
     unique_groups = np.unique(opt['unit_groups'])
     best_threshold = np.zeros(nunits, dtype=int)
 
@@ -85,9 +90,10 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
         group_indices = np.where(group_mask)[0]
 
         if opt.get('alpha') is not None:
-            # Alpha interpolation: blend prediction peak and variance target
+            # Alpha interpolation: blend prediction peak and the trial-average
+            # (do-nothing) point. alpha's right endpoint is the full signal
+            # variance; alpha does NOT use variance_threshold.
             alpha_val = opt['alpha']
-            vt = np.clip(opt['variance_threshold'], 0, 1)
             # Average signal vars and prediction curves across group
             avg_signal = np.mean(np.column_stack([unit_signal_vars[i] for i in group_indices]), axis=1)
             avg_curve = np.mean(np.column_stack([unit_cumsum_curves[i] for i in group_indices]), axis=1)
@@ -96,7 +102,7 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
             sig_cs = np.concatenate([[0], np.cumsum(avg_signal)])
             S_pred = sig_cs[k_pred]
             total = sig_cs[-1]
-            S_var = vt * total
+            S_var = total
             target = S_pred + alpha_val * max(0, S_var - S_pred)
             if total <= 0:
                 k_group = 0
@@ -105,26 +111,41 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
                 k_group = idx[0] if len(idx) > 0 else ndims
                 k_group = max(k_group, k_pred)
                 k_group = min(k_group, ndims)
+                if allow is not None:
+                    # Best-among-allowable: smallest allowable threshold that
+                    # reaches the target without going below the prediction peak;
+                    # else snap the unconstrained pick to the nearest allowable.
+                    C = allowable_candidates(allow, ndims)
+                    elig = C[(C >= k_pred) & (sig_cs[C] >= target)]
+                    k_group = int(elig.min()) if elig.size > 0 else int(constrain_to_allowable(k_group, C))
         elif opt['criterion'] == 'prediction':
             # Average objective curves across units in this group
             # All curves should have the same length (ndims+1)
             avg_curve = np.mean(np.column_stack([unit_cumsum_curves[i] for i in group_indices]), axis=1)
-            k_group = np.argmax(avg_curve)
-            # k_group is already the number of dims (0-indexed argmax)
+            if allow is not None:
+                k_group = argmax_allowable(avg_curve, allow)
+            else:
+                k_group = np.argmax(avg_curve)
+                # k_group is already the number of dims (0-indexed argmax)
         elif opt['criterion'] == 'max-tradeoff':
             # Max-tradeoff on this group's averaged recovery curve (per-unit thresholds)
             avg_signal = np.mean(np.column_stack([unit_signal_vars[i] for i in group_indices]), axis=1)
             avg_noise = np.mean(np.column_stack([unit_noise_vars[i] for i in group_indices]), axis=1)
-            k_group = max_tradeoff_threshold(avg_signal, avg_noise, ntrials)
+            k_group = max_tradeoff_threshold(avg_signal, avg_noise, ntrials, allowable=allow)
         elif opt['criterion'] == 'variance':
             # Average signal variances across units in this group
             avg_signal = np.mean(np.column_stack([unit_signal_vars[i] for i in group_indices]), axis=1)
             vt = np.clip(opt['variance_threshold'], 0, 1)
-            if vt == 0:
+            # Prepend 0 for consistency with global mode (index 0 = 0 dims)
+            cs = np.concatenate([[0], np.cumsum(avg_signal)])
+            if allow is not None:
+                # Best-among-allowable: smallest allowable threshold whose
+                # cumulative variance reaches the target; else the largest allowable.
+                total = cs[-1]
+                k_group = first_reach_allowable(cs, vt * total, allow)
+            elif vt == 0:
                 k_group = 0
             else:
-                # Prepend 0 for consistency with global mode (index 0 = 0 dims)
-                cs = np.concatenate([[0], np.cumsum(avg_signal)])
                 total = cs[-1]
                 if total <= 0:
                     k_group = 0
@@ -138,10 +159,6 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
         else:
             raise ValueError("criterion 'variance_eigenvalues' not supported for unit-specific modes")
 
-        # Apply allowable_thresholds constraint
-        if opt['allowable_thresholds'] is not None:
-            k_group = constrain_to_allowable(k_group, opt['allowable_thresholds'])
-
         # Assign this threshold to all units in the group
         best_threshold[group_mask] = k_group
 
@@ -152,7 +169,7 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
     if not is_cpu(device) and len(unique_thresholds) > 0:
         # GPU path: do all threshold-group matmuls on device in one shot,
         # then bring the (n, n) denoiser back to host. The matmul is the
-        # dominant cost at large nunits — GPU cuts it by 1-2 orders of
+        # dominant cost at large nunits - GPU cuts it by 1-2 orders of
         # magnitude over multi-threaded CPU.
         import torch
         tdtype = (torch.float64 if basis.dtype == np.float64

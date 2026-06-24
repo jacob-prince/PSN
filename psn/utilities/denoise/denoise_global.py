@@ -2,7 +2,7 @@
 
 import numpy as np
 from ..threshold.select_threshold_analytic import select_threshold_analytic
-from ..threshold.constrain_to_allowable import constrain_to_allowable
+from ..threshold.select_allowable import argmax_allowable
 from .compute_unit_weighted_projections import compute_unit_weighted_projections
 from psn._device import resolve_device, to_device, from_device, is_cpu
 
@@ -63,7 +63,6 @@ def denoise_global(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, o
     """
 
     nunits = basis.shape[0]
-    ndims = basis.shape[1]
     use_diff_basis = isinstance(opt['basis'], str) and opt['basis'] == 'difference'
     use_prediction = opt['criterion'] == 'prediction'
 
@@ -79,19 +78,16 @@ def denoise_global(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, o
             else:
                 _, objective = select_threshold_analytic(signal_proj, noise_proj, basis_eigenvalues, ntrials, opt)
         else:
-            # Normal optimization with constraint
-            # Threshold selection
+            # Best-among-allowable: choose the best threshold among the allowable
+            # values (no post-hoc snapping to nearest).
             if use_diff_basis and use_prediction and basis_eigenvalues is not None and opt.get('alpha') is None:
                 # FAST PATH: difference basis eigenvalues ARE the net benefit
                 objective = np.concatenate([[0], np.cumsum(basis_eigenvalues)])
-                k = np.argmax(objective)
-                # k is already the number of dims (0-indexed argmax)
+                k = argmax_allowable(objective, opt['allowable_thresholds'])
             else:
-                # Standard path (including variance_eigenvalues criterion)
+                # Standard path: select_threshold_analytic honors
+                # allowable_thresholds internally.
                 k, objective = select_threshold_analytic(signal_proj, noise_proj, basis_eigenvalues, ntrials, opt)
-
-            # Apply allowable_thresholds constraint
-            k = constrain_to_allowable(k, opt['allowable_thresholds'])
     else:
         # No constraint: normal optimization
         if use_diff_basis and use_prediction and basis_eigenvalues is not None and opt.get('alpha') is None:
