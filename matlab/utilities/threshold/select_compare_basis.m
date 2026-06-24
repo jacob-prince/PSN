@@ -1,11 +1,10 @@
-function [chosen, info] = select_compare_basis(cSb, cNb, ntrials, opt)
+function [chosen, info] = select_compare_basis(cSb, cNb, ntrials, opt, data, unit_means, has_nans)
 % SELECT_COMPARE_BASIS  Resolve basis='compare' to 'signal' or 'difference'.
 %
-%   [chosen, info] = select_compare_basis(cSb, cNb, ntrials, opt) builds the
-%   signal and difference bases, each truncated at the threshold chosen by
-%   opt.criterion, and returns whichever has the higher analytic recovery
-%   against the GSN covariances. A margin within tie_eps (1e-3) keeps 'signal'
-%   (the more near-unbiased basis). Mirrors the Python select_threshold
+%   [chosen, info] = select_compare_basis(cSb, cNb, ntrials, opt, data, ...
+%   unit_means, has_nans) builds the signal and difference bases, each truncated
+%   at its max-tradeoff threshold, and returns whichever has the higher empirical
+%   split-half r evaluated AT that threshold. Mirrors the Python select_threshold
 %   'compare' branch.
 %
 %   The eigendecompositions use eigh_descending_sym (the same routine, with the
@@ -44,9 +43,11 @@ function [chosen, info] = select_compare_basis(cSb, cNb, ntrials, opt)
 %     .V_signal,.V_difference - both candidate eigenvector matrices, so the
 %                            recovery-tradeoff figure can reuse them (no re-eigh)
 
-    tie_eps = 1e-3;
+    if nargin < 7, has_nans = false; end
+
     bases = {'signal', 'difference'};
     recovery = zeros(1, 2);
+    shr = zeros(1, 2);            % split-half r at each basis's max-tradeoff threshold
     ks = zeros(1, 2);
     svf = zeros(1, 2);
     Vs = cell(1, 2);
@@ -72,11 +73,14 @@ function [chosen, info] = select_compare_basis(cSb, cNb, ntrials, opt)
         noi = sum((cNb * V) .* V, 1)';
         total_S = sum(sig);
 
+        % The compare basis comparison itself is unconstrained; allowable_thresholds
+        % restricts only the final denoise threshold in the main pipeline.
         if strcmp(opt.criterion, 'max-tradeoff')
             k = max_tradeoff_threshold(sig, noi, ntrials);
         else
             sub_opt = opt;
             sub_opt.basis = b;
+            sub_opt.allowable_thresholds = [];
             [k, ~] = select_threshold_analytic(sig, noi, evals, ntrials, sub_opt);
         end
         k = max(0, min(k, numel(sig)));
@@ -91,6 +95,14 @@ function [chosen, info] = select_compare_basis(cSb, cNb, ntrials, opt)
             svf(i) = sv_curve(k + 1);
         end
 
+        % Split-half r of this basis truncated to its max-tradeoff threshold.
+        if k > 0
+            D = V(:, 1:k) * V(:, 1:k)';
+        else
+            D = zeros(size(V, 1));
+        end
+        shr(i) = split_half_r(data, D, unit_means, has_nans);
+
         ks(i) = k;
         Vs{i} = V;
         evals_all{i} = evals;
@@ -98,8 +110,8 @@ function [chosen, info] = select_compare_basis(cSb, cNb, ntrials, opt)
         noi_all{i} = noi;
     end
 
-    % Prefer 'signal' (more near-unbiased) unless 'difference' wins by > tie_eps.
-    if (recovery(2) - recovery(1)) > tie_eps
+    % Choose the basis with the higher split-half r at its max-tradeoff threshold.
+    if shr(2) > shr(1)
         chosen = 'difference';
         ci = 2;
     else
@@ -118,11 +130,11 @@ function [chosen, info] = select_compare_basis(cSb, cNb, ntrials, opt)
     info.V_signal = Vs{1};
     info.V_difference = Vs{2};
     % Selection metrics for results.threshold_selection / results.diagnostics.
-    info.tie_eps = tie_eps;
     info.chosen_best_threshold = ks(ci);
     info.chosen_recovery = recovery(ci);
     info.chosen_sv_frac = svf(ci);
+    info.chosen_split_half_r = shr(ci);
     info.candidates = struct( ...
-        'signal',     struct('best_threshold', ks(1), 'recovery', recovery(1), 'sv_frac', svf(1)), ...
-        'difference', struct('best_threshold', ks(2), 'recovery', recovery(2), 'sv_frac', svf(2)));
+        'signal',     struct('best_threshold', ks(1), 'recovery', recovery(1), 'sv_frac', svf(1), 'split_half_r', shr(1)), ...
+        'difference', struct('best_threshold', ks(2), 'recovery', recovery(2), 'sv_frac', svf(2), 'split_half_r', shr(2)));
 end

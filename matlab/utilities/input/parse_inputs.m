@@ -24,7 +24,7 @@ function [data, opt] = parse_inputs(varargin)
 %   'conservative' - basis='signal', criterion='variance', threshold_method='global', variance_threshold=0.99
 %   'standard'     - basis='signal', criterion='max-tradeoff', threshold_method='global' (same as default)
 %   'aggressive'   - basis='difference', criterion='prediction', threshold_method='global'
-%   'compare'      - basis='compare', criterion='max-tradeoff', threshold_method='hybrid'
+%   'compare'      - basis='compare', criterion='max-tradeoff', threshold_method='global'
 %   'wiener'       - criterion='wiener' (full-rank matrix Wiener filter)
 %
 % For 'conservative'/'standard'/'aggressive'/'compare', any fields in the options
@@ -66,7 +66,7 @@ function [data, opt] = parse_inputs(varargin)
                 case 'compare'
                     opt.basis = 'compare';
                     opt.criterion = 'max-tradeoff';
-                    opt.threshold_method = 'hybrid';
+                    opt.threshold_method = 'global';
 
                 case 'wiener'
                     % Full-rank matrix Wiener filter. Basis-free and untruncated,

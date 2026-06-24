@@ -69,13 +69,13 @@ def parse_inputs(*args):
       'conservative' - Sets basis='signal', criterion='variance', threshold_method='global', variance_threshold=0.99
       'standard'     - Sets basis='signal', criterion='max-tradeoff', threshold_method='global' (same as default)
       'aggressive'   - Sets basis='difference', criterion='prediction', threshold_method='global'
-      'compare'      - Sets basis='compare', criterion='max-tradeoff', threshold_method='hybrid'
+      'compare'      - Sets basis='compare', criterion='max-tradeoff', threshold_method='global'
                        (compares the signal-basis vs difference-basis threshold and keeps the better one)
       'wiener'       - Sets criterion='wiener' (full-rank matrix Wiener filter)
 
     Option-override priority:
       For 'conservative', 'standard', 'aggressive', and 'compare', any keys supplied
-      in the options dict OVERRIDE the mode's defaults -- the dict takes priority.
+      in the options dict OVERRIDE the mode's defaults: the dict takes priority.
       Example: psn(data, 'aggressive', {'threshold_method': 'hybrid'}) keeps the
       'aggressive' basis/criterion but uses hybrid thresholds.
 
@@ -119,14 +119,13 @@ def parse_inputs(*args):
 
             elif mode == 'compare':
                 # Build the signal and difference bases at their max-tradeoff
-                # points and keep whichever has the higher analytic recovery
-                # (ties keep the more near-unbiased signal basis).
+                # points and keep whichever has the higher split-half r at that threshold.
                 opt['basis'] = 'compare'
                 opt['criterion'] = 'max-tradeoff'
-                opt['threshold_method'] = 'hybrid'
+                opt['threshold_method'] = 'global'
 
             elif mode == 'wiener':
-                # Full-rank matrix Wiener filter (Bayes-optimal linear estimator).
+                # Full-rank matrix Wiener filter (optimal linear estimator).
                 # Wiener is a criterion, not a basis. It ignores the basis/criterion/
                 # threshold pipeline, so reject any contradicting options outright.
                 opt['criterion'] = 'wiener'
