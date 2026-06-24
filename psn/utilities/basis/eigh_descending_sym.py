@@ -25,7 +25,7 @@ def eigh_descending_sym(matrix, do_symmetrize=False, device='cpu'):
         Where to run the O(n^3) eigh. 'cpu' (default) uses numpy. A GPU device
         ('cuda'/'mps') runs it via torch on-device. Note: a GPU eigh picks a
         different orthonormal basis on degenerate eigenspaces than numpy, so
-        downstream thresholds can differ by a few percent from a CPU run — an
+        downstream thresholds can differ by a few percent from a CPU run - an
         inherent property of the backend, not a bug.
 
     Returns

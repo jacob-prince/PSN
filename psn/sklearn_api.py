@@ -32,7 +32,7 @@ class PSN(BaseEstimator, TransformerMixin):
         - 'conservative' : signal basis, variance criterion, 99% retained (global)
         - 'standard'     : signal basis at the max-tradeoff threshold (global)
         - 'aggressive'   : difference basis at the prediction peak (global)
-        - 'compare'      : pick signal vs difference by analytic recovery (hybrid)
+        - 'compare'      : pick signal vs difference by split-half r at each max-tradeoff K (global)
         - 'wiener'       : full-rank matrix Wiener filter (basis-free, untruncated)
 
     basis : str or ndarray, optional
@@ -47,11 +47,12 @@ class PSN(BaseEstimator, TransformerMixin):
     variance_threshold : float, optional
         Fraction retained for the 'variance' criteria, in [0, 1].
     allowable_thresholds : array-like, optional
-        Constrain the threshold to these values.
+        Restrict the threshold to these values (PSN picks the best one among them).
     unit_groups : array-like, optional
         ``[nunits]`` integer labels; units sharing a label share a threshold (hybrid).
     alpha : float, optional
-        Interpolation in [0, 1] between the prediction peak and the variance target.
+        Interpolation in [0, 1] between the prediction peak (0) and the
+        trial-average / do-nothing point (1). Does not use variance_threshold.
     gsn_result : dict, optional
         Precomputed ``{'cSb', 'cNb'}`` to skip GSN estimation (e.g. for sweeps).
     gsn_args : dict, optional
@@ -141,7 +142,7 @@ class PSN(BaseEstimator, TransformerMixin):
         self.wantverbose = wantverbose
         self.wantfig = wantfig
 
-    # -- sklearn fitted-state protocol -------------------------------------
+    # sklearn fitted-state protocol ----------------------------------------
     @property
     def _is_fitted(self):
         """True once fit() has populated the learned attributes."""
@@ -321,7 +322,7 @@ class PSN(BaseEstimator, TransformerMixin):
 
         return plot_diagnostic_figures(self.input_data_, results, **kwargs)
 
-    # -- pickling: strip callables (e.g. cmap) from opt_used_ ----------------
+    # pickling: strip callables (e.g. cmap) from opt_used_ ------------------
     def __getstate__(self):
         state = super().__getstate__()
         opt = state.get('opt_used_')

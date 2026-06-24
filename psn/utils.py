@@ -37,7 +37,7 @@ def perform_gsn(data, opt=None):
     if opt is None:
         opt = {}
 
-    # Route through the installed gsn package — the single source of truth
+    # Route through the installed gsn package - the single source of truth
     # for GSN. PSN does not vendor its own copy of the estimator.
     return gsn_perform_gsn(data, opt)
 

@@ -111,7 +111,7 @@ function [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, data
         basis = normalize_orthonormalize_basis(basis);
         % Eigenvalues optional: when the caller already has them (e.g. eigvecs
         % cached from a prior GSN run via use_cached_eigvecs), pass them through
-        % so downstream uses 'eigenvalues' ordering -- making basis=<eigvecs of
+        % so downstream uses 'eigenvalues' ordering, making basis=<eigvecs of
         % cSb> bit-equivalent to basis='signal' end-to-end.
         if nargin >= 9 && ~isempty(custom_basis_eigenvalues)
             ev = custom_basis_eigenvalues(:);

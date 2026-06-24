@@ -1,7 +1,7 @@
 """Full-rank matrix Wiener filter for PSN.
 
 Provides the full-rank matrix Wiener filter D = Σ_S @ (Σ_S + Σ_N/t)^{-1}
-(criterion='wiener'), the Bayes-optimal linear estimator. It applies no
+(criterion='wiener'), the optimal linear estimator. It applies no
 truncation and bypasses basis construction entirely.
 """
 
@@ -15,7 +15,7 @@ def denoise_fullrank_wiener(cSb, cNb, data, trial_avg, unit_means, ntrials_avg, 
     """Full-rank matrix Wiener filter: D = Σ_S @ (Σ_S + Σ_N/t)^{-1}.
 
     Bypasses basis construction, ordering, criterion, and thresholding.
-    This is the Bayes-optimal linear estimator when signal and noise
+    This is the optimal linear estimator when signal and noise
     covariances are known.
 
     Parameters

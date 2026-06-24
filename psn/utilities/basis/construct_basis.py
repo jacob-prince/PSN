@@ -98,7 +98,7 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
             raise ValueError(f'Unknown basis type: {basis_spec}')
 
     else:
-        # User-provided custom basis. Eigenvalues optional — pass them
+        # User-provided custom basis. Eigenvalues optional - pass them
         # via `custom_basis_eigenvalues` when the caller already has
         # them (e.g. when reusing eigvecs cached from a previous GSN
         # run). When provided, downstream uses 'eigenvalues' ordering

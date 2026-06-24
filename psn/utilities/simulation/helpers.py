@@ -118,7 +118,7 @@ def _load_image_as_array(path):
         import matplotlib.image as mpimg
         arr = mpimg.imread(path)
     arr = np.asarray(arr, dtype=float)
-    # Normalize integer pixel ranges (e.g. uint8 0–255) to [0, 1]; leave
+    # Normalize integer pixel ranges (e.g. uint8 0-255) to [0, 1]; leave
     # already-normalized float images untouched.
     if arr.size and arr.max() > 1.0:
         arr = arr / 255.0

@@ -63,7 +63,7 @@ def compute_unit_weighted_projections(basis, signal_proj, noise_proj, ntrials,
 
     if is_cpu(device):
         # Vectorized numpy path. The original implementation looped
-        # over nunits and built per-unit lists — at large nunits the
+        # over nunits and built per-unit lists - at large nunits the
         # Python iteration overhead dominates the cheap inner ops.
         # The vectorized form below is 10-50× faster on CPU and
         # trivially portable to GPU.

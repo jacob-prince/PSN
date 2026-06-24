@@ -90,7 +90,7 @@ def adjust_alignment_gradient_descent(U_signal, U_noise_init, alpha, k,
 def _qr_preserve_alignment(U, U_signal, k):
     """QR orthonormalization that preserves alignment signs for the first k columns."""
     Q, _ = np.linalg.qr(U)
-    # QR can flip column signs — fix by ensuring dot(Q[:,i], U_signal[:,i])
+    # QR can flip column signs - fix by ensuring dot(Q[:,i], U_signal[:,i])
     # has the same sign as dot(U[:,i], U_signal[:,i]) for the aligned columns
     for i in range(k):
         if np.dot(Q[:, i], U_signal[:, i]) < 0:

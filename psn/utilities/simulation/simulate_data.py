@@ -135,7 +135,7 @@ def generate_data(nvox=50, ncond=200, ntrial=5, signal_decay=2.0, noise_decay=1.
     # non-fast) sees a 2D (ncond, nvox) array. This is where a filepath to
     # an image gets loaded and image-shaped arrays get flattened. The signal
     # is authoritative for the data dimensions, so derive ncond/nvox from it
-    # (overriding the defaults) — this is what makes `generate_data(
+    # (overriding the defaults) - this is what makes `generate_data(
     # true_signal='picture.jpg')` work without restating its shape.
     if true_signal is not None:
         true_signal = _coerce_true_signal(true_signal)

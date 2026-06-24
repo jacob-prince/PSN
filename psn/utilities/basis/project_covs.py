@@ -23,7 +23,7 @@ def project_covs(cS, cN, B, device='cpu'):
     <B> - [nunits x ndims] orthonormal basis matrix with basis vectors as columns
 
     <device> - 'cpu' (default), 'cuda', 'mps', or 'auto'. Set to a
-      non-cpu device to run the two matmuls on a torch device — at
+      non-cpu device to run the two matmuls on a torch device - at
       nunits ≥ 10000 the GPU is 20-50× faster than CPU numpy.
 
     -------------------------------------------------------------------------

@@ -2,7 +2,7 @@ function results = denoise_fullrank_wiener(cSb, cNb, data, trial_avg, unit_means
 % DENOISE_FULLRANK_WIENER  Full-rank matrix Wiener filter: D = Sigma_S (Sigma_S + Sigma_N/t)^{-1}.
 %
 %   results = denoise_fullrank_wiener(cSb, cNb, data, trial_avg, unit_means, ...
-%   ntrials_avg, nunits, gsn_result, opt) applies the Bayes-optimal linear
+%   ntrials_avg, nunits, gsn_result, opt) applies the optimal linear
 %   estimator. It bypasses basis construction, ordering, criterion and
 %   thresholding (no truncation; all dimensions continuously weighted). Mirrors
 %   the Python denoise_fullrank_wiener and returns a complete results struct.
