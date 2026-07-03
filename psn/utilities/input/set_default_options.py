@@ -38,6 +38,8 @@ def set_default_options(opt, nunits):
       wantverbose        = True
       figurepath         = None
       cmap               = None (uses cmapsign4 in visualization)
+      skip_split_half    = False (keep analytic recovery curve but skip the
+                           costly empirical split-half tradeoff computation)
     """
 
     # Create a copy to avoid modifying the original
@@ -90,6 +92,9 @@ def set_default_options(opt, nunits):
 
     if 'alpha' not in opt:
         opt['alpha'] = None
+
+    if 'skip_split_half' not in opt:
+        opt['skip_split_half'] = False
 
     # Auto-detect: if allowable_thresholds is a single value, force threshold_method to 'global'
     if opt['allowable_thresholds'] is not None:

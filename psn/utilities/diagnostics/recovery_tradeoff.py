@@ -128,7 +128,8 @@ def compute_recovery_tradeoff(cSb, cNb, t, data, unit_means, has_nans, *,
                               chosen_sv_frac=None,
                               V_signal=None, V_difference=None, D_wiener=None,
                               unit_idx=None, unit_K=None, unit_groups=None,
-                              chosen_basis_key=None, device='cpu'):
+                              chosen_basis_key=None, device='cpu',
+                              skip_split_half=False):
     """Compute the recovery-tradeoff data dict (no matplotlib).
 
     Traces, over truncation K, the analytic recovery curve and the empirical
@@ -170,6 +171,15 @@ def compute_recovery_tradeoff(cSb, cNb, t, data, unit_means, has_nans, *,
         data for hybrid mode (unit indices, per-unit K, group labels, basis key).
 
     <device> - 'cpu' (numpy) or a GPU device for the eigendecomposition.
+
+    <skip_split_half> - bool. When True, compute ONLY the analytic recovery
+        curve(s) and skip every empirical split-half computation: the per-K
+        split-half truncation curves (the O(n^2 * nconds * nKs) per-unit
+        reliability loop that dominates runtime, especially on NaN data where
+        it falls to the numpy per-unit path), plus the trial-average, Wiener,
+        and chosen-point split-half markers. The analytic recovery trace, its
+        prediction peak, the max-tradeoff chord/inset, and the chosen point's
+        analytic marker are all preserved. Default False.
 
     -------------------------------------------------------------------------
     Returns:
@@ -381,7 +391,7 @@ def compute_recovery_tradeoff(cSb, cNb, t, data, unit_means, has_nans, *,
     # Per-unit faint traces are computed for the CHOSEN basis only, and only
     # when PSN used unit-specific thresholds (each unit has its own K).
     want_units = (unit_idx is not None and unit_K is not None
-                  and chosen_basis_key in which)
+                  and chosen_basis_key in which and not skip_split_half)
 
     def _unit_traces(svf_sub, unit_ys, svf_full, Ks, basis_key):
         mx, my = [], []
@@ -412,7 +422,9 @@ def compute_recovery_tradeoff(cSb, cNb, t, data, unit_means, has_nans, *,
 
     if 'signal' in which:
         Vsig = np.asarray(V_signal) if V_signal is not None else _eig_desc(cSb)
-        if want_units and chosen_basis_key == 'signal':
+        if skip_split_half:
+            xs = ys = None
+        elif want_units and chosen_basis_key == 'signal':
             xs, ys, u_ys, svf_full, Ks = _trunc_curve(Vsig, unit_idx)
             out['unit_traces'] = _unit_traces(xs, u_ys, svf_full, Ks, 'signal')
         else:
@@ -424,7 +436,9 @@ def compute_recovery_tradeoff(cSb, cNb, t, data, unit_means, has_nans, *,
     if 'difference' in which:
         Vdif = (np.asarray(V_difference) if V_difference is not None
                 else _eig_desc(cSb - cNb / t))
-        if want_units and chosen_basis_key == 'difference':
+        if skip_split_half:
+            xd = yd = None
+        elif want_units and chosen_basis_key == 'difference':
             xd, yd, u_ys, svf_full, Ks = _trunc_curve(Vdif, unit_idx)
             out['unit_traces'] = _unit_traces(xd, u_ys, svf_full, Ks, 'difference')
         else:
@@ -433,12 +447,12 @@ def compute_recovery_tradeoff(cSb, cNb, t, data, unit_means, has_nans, *,
         out['difference_basis'] = {'sv_frac': xd, 'split_half_r': yd,
                                    'analytic_sv_frac': sv_a, 'analytic_recovery': rec_a}
 
-    if include_trial_avg:
+    if include_trial_avg and not skip_split_half:
         y_ta = (float(_shr_fast_t(aA_t, aB_t)) if use_torch
                 else _shr_from_dn(tavg_A, tavg_B))
         out['trial_average'] = {'sv_frac': 1.0, 'split_half_r': y_ta}
 
-    if include_wiener:
+    if include_wiener and not skip_split_half:
         if D_wiener is not None:
             Dw = np.asarray(D_wiener)
         elif use_torch:
@@ -467,14 +481,16 @@ def compute_recovery_tradeoff(cSb, cNb, t, data, unit_means, has_nans, *,
     if denoiser is not None:
         D = np.asarray(denoiser).T
         x_ch = float(chosen_sv_frac) if chosen_sv_frac is not None else _xfrac(D)
-        out['chosen'] = {'sv_frac': x_ch, 'split_half_r': _shr_for_D(D),
+        shr = None if skip_split_half else _shr_for_D(D)
+        out['chosen'] = {'sv_frac': x_ch, 'split_half_r': shr,
                          'label': _threshold_label(best_threshold)}
 
     return out
 
 
 def attach_recovery_tradeoff(results, cSb, cNb, t, data, unit_means, has_nans,
-                             orig_basis, nunits, device='cpu', extra_bases=None):
+                             orig_basis, nunits, device='cpu', extra_bases=None,
+                             skip_split_half=False):
     """Compute the recovery-tradeoff data and store it on results.
 
     Applies the size+basis policy, reuses any already-computed bases / Wiener
@@ -507,6 +523,10 @@ def attach_recovery_tradeoff(results, cSb, cNb, t, data, unit_means, has_nans,
 
     <extra_bases> - optional {'signal': V, 'difference': V} to reuse bases already
         computed elsewhere (e.g. both 'compare' candidates). Default: None.
+
+    <skip_split_half> - bool. Forwarded to compute_recovery_tradeoff: keep the
+        analytic recovery curve(s) but skip all empirical split-half computation
+        (the runtime-dominating per-unit reliability loop). Default: False.
 
     -------------------------------------------------------------------------
     Returns:
@@ -565,7 +585,8 @@ def attach_recovery_tradeoff(results, cSb, cNb, t, data, unit_means, has_nans,
         chosen_sv_frac=chosen_sv_frac,
         V_signal=V_signal, V_difference=V_difference, D_wiener=D_wiener,
         unit_idx=unit_idx, unit_K=unit_K, unit_groups=unit_groups,
-        chosen_basis_key=chosen_basis_key, device=device)
+        chosen_basis_key=chosen_basis_key, device=device,
+        skip_split_half=skip_split_half)
     # Analytic recovery at the chosen operating point (for the figure's star on
     # the analytic trajectory), interpolated on the chosen basis's curve.
     if rec is not None and rec.get('chosen') is not None:

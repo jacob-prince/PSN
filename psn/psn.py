@@ -293,6 +293,13 @@ def psn(*args, **kwargs):
       <wantverbose> - boolean. Whether to show messages during execution.
         Default: True.
 
+      <skip_split_half> - boolean. When True, keep the analytic recovery curve
+        but skip the empirical split-half computation in the recovery-tradeoff
+        diagnostic (the per-K, per-unit reliability loop that dominates runtime
+        at large nunits and on NaN data). results['recovery_tradeoff'] is still
+        populated with the analytic curve; its split-half fields are None.
+        Default: False.
+
     -------------------------------------------------------------------------
     Returns:
     -------------------------------------------------------------------------
@@ -538,7 +545,8 @@ def psn(*args, **kwargs):
                 'best_threshold': results.get('best_threshold')}
             attach_recovery_tradeoff(
                 results, cSb, cNb, ntrials_avg, data, unit_means, has_nans,
-                'wiener', nunits, device=opt['device'])
+                'wiener', nunits, device=opt['device'],
+                skip_split_half=opt.get('skip_split_half', False))
             if opt['wantfig']:
                 if opt['wantverbose']:
                     _vlog('figure', 'generating diagnostic figure')
@@ -583,7 +591,8 @@ def psn(*args, **kwargs):
         attach_recovery_tradeoff(
             results, cSb, cNb, ntrials_avg, data, unit_means, has_nans,
             _orig_basis, nunits, device=opt['device'],
-            extra_bases=tsel.get('diagnostics', {}).get('eigvecs_by_basis'))
+            extra_bases=tsel.get('diagnostics', {}).get('eigvecs_by_basis'),
+            skip_split_half=opt.get('skip_split_half', False))
 
         if opt['wantverbose']:
             ts = results['threshold_selection']
@@ -885,7 +894,8 @@ def psn(*args, **kwargs):
     if not opt.get('_skip_recovery_tradeoff'):
         attach_recovery_tradeoff(
             results, cSb, cNb, ntrials_avg, data, unit_means, has_nans,
-            _orig_basis, nunits, device=opt['device'])
+            _orig_basis, nunits, device=opt['device'],
+            skip_split_half=opt.get('skip_split_half', False))
 
     # =========================================================================
     # STEP 13: Visualization

@@ -362,14 +362,17 @@ def _plot_recovery_tradeoff(ax, rec):
     # trial-average (do-nothing): split-half-colored box on the split-half (right)
     # axis + analytic-colored box on the analytic (left) curve. Wiener stays right.
     ta = rec.get('trial_average')
-    if ta is not None:
+    if ta is not None and ta.get('split_half_r') is not None:
         ax_r.scatter([ta['sv_frac']], [ta['split_half_r']], marker='s', s=70, color=mc_splithalf,
                      edgecolor='k', linewidth=0.6, zorder=5, label='trial-avg (split-half)')
         yR.append(np.asarray([ta['split_half_r']]))
-        if analytic_endpoint is not None:
-            ax.scatter([analytic_endpoint_x], [analytic_endpoint], marker='s', s=70, color=mc_analytic,
-                       edgecolor='k', linewidth=0.6, zorder=5, label='trial-avg (analytic)')
-            yL.append(np.asarray([analytic_endpoint]))
+    # Analytic trial-avg box lives at the curve's full-retention endpoint, so it
+    # is drawn from the analytic curve alone - independent of any split-half data
+    # (present even when skip_split_half drops the split-half trial-avg marker).
+    if analytic_endpoint is not None:
+        ax.scatter([analytic_endpoint_x], [analytic_endpoint], marker='s', s=70, color=mc_analytic,
+                   edgecolor='k', linewidth=0.6, zorder=5, label='trial-avg (analytic)')
+        yL.append(np.asarray([analytic_endpoint]))
     w = rec.get('wiener')
     if w is not None:
         ax_r.scatter([w['sv_frac']], [w['split_half_r']], marker='D', s=70, color='limegreen',
