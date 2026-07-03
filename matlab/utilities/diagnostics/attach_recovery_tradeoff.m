@@ -181,6 +181,14 @@ function results = attach_recovery_tradeoff(results, cSb, cNb, t, data, unit_mea
         if ~isempty(cb)
             rt.chosen.recovery = np_interp(chosen_sv_frac, cb.analytic_sv_frac, cb.analytic_recovery);
         end
+        rt.chosen.basis = ck;   % basis the operating point was chosen on (for the inset)
+    end
+
+    % Criterion drives the max-tradeoff inset in the figure (only drawn then).
+    rt.criterion = '';
+    if isfield(results, 'opt_used') && isfield(results.opt_used, 'criterion') ...
+            && (ischar(results.opt_used.criterion) || isstring(results.opt_used.criterion))
+        rt.criterion = char(results.opt_used.criterion);
     end
 
     results.recovery_tradeoff = rt;

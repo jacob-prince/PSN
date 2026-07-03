@@ -401,7 +401,7 @@ function fig = visualization(data, results, varargin)
         else
             title(ax4, 'Basis Eigenvalues');
         end
-        legend(ax4, 'Location', 'best', 'FontSize', 7);
+        legend_behind(ax4, 'Location', 'best', 'FontSize', 7);
         grid(ax4, 'on');
         finalize_dim_xaxis(ax4, fwd4, axmode4, nd4, 10, [-0.5, nd4 - 0.5]);
 
@@ -446,7 +446,7 @@ function fig = visualization(data, results, varargin)
         xlabel(ax4, 'Dimension');
         ylabel(ax4, 'Variance');
         title(ax4, 'Ordering Criterion');
-        legend(ax4, 'Location', 'best', 'FontSize', 7);
+        legend_behind(ax4, 'Location', 'best', 'FontSize', 7);
         grid(ax4, 'on');
         finalize_dim_xaxis(ax4, fwd4, axmode4, nd4, 10, [-0.5, nd4 - 0.5]);
 
@@ -552,7 +552,7 @@ function fig = visualization(data, results, varargin)
                 xlabel(ax5, 'Dimension');
             end
             title(ax5, 'Signal and Noise Variance');
-            legend(ax5, 'Location', 'best', 'FontSize', 7);
+            legend_behind(ax5, 'Location', 'best', 'FontSize', 7);
             grid(ax5, 'on');
             finalize_dim_xaxis(ax5, fwd5, axmode5, nd5, 10, [-0.5, nd5 * 1.02]);
         else
@@ -579,6 +579,23 @@ function fig = visualization(data, results, varargin)
         % Use x=0.5 for the zero-dimension case, then shift rest by 1
         % This allows log scale while preserving the "0 dims" data point
         zero_placeholder = 0.5;  % Position for "0 dimensions" in log scale
+
+        % Objective trace/marker color, matched to the recovery panel (fig7) and the
+        % basis the operating point was chosen on: blue = signal, green = difference
+        % (default green otherwise).
+        obj_basis = '';
+        if isfield(results, 'threshold_selection') && isfield(results.threshold_selection, 'basis') ...
+                && (ischar(results.threshold_selection.basis) || isstring(results.threshold_selection.basis))
+            obj_basis = char(results.threshold_selection.basis);
+        end
+        if isempty(obj_basis) && isfield(opt, 'basis') && (ischar(opt.basis) || isstring(opt.basis))
+            obj_basis = char(opt.basis);
+        end
+        switch obj_basis
+            case 'signal';     obj_color = [0.122 0.467 0.706];
+            case 'difference'; obj_color = [0.173 0.627 0.173];
+            otherwise;         obj_color = [0.3 0.7 0.3];
+        end
 
         % Check if unit-specific objectives are available
         if isfield(results, 'unit_objectives') && ~isempty(results.unit_objectives)
@@ -657,13 +674,13 @@ function fig = visualization(data, results, varargin)
             else
                 x_obj = 0:length(results.objective)-1;
             end
-            h_sum = plot(ax6, x_obj, results.objective, 'LineWidth', 2, 'Color', [0.3 0.7 0.3]);
+            h_sum = plot(ax6, x_obj, results.objective, 'LineWidth', 2, 'Color', obj_color);
             ylabel(ax6, 'analytic recovery (population)');
-            set(ax6, 'YColor', [0.3 0.7 0.3]);
+            set(ax6, 'YColor', obj_color);
 
             % Peak of population analytic recovery (triangle) + do-nothing box at
             % full retention. Per-unit chosen thresholds are the scatter dots above.
-            objc = [0.3 0.7 0.3];
+            objc = obj_color;
             obj = results.objective(:);
             n_dim = length(obj) - 1;
             [~, max_idx] = max(obj);
@@ -689,7 +706,7 @@ function fig = visualization(data, results, varargin)
             hold(ax6, 'off');
 
             % Add legend
-            legend(ax6, [h_units(1), h_sum, h_peak, h_box], ...
+            legend_behind(ax6, [h_units(1), h_sum, h_peak, h_box], ...
                    {'units', 'analytic recovery (population)', ...
                     sprintf('prediction peak (K=%d)', kp), ...
                     sprintf('trial-avg / do-nothing (K=%d)', n_dim)}, ...
@@ -703,12 +720,12 @@ function fig = visualization(data, results, varargin)
             else
                 x_obj = 0:length(results.objective)-1;
             end
-            plot(ax6, x_obj, results.objective, 'LineWidth', 1.5, 'Color', [0.3 0.7 0.3]);
+            plot(ax6, x_obj, results.objective, 'LineWidth', 1.5, 'Color', obj_color);
 
             % Markers (parity with Python): triangle = peak (prediction peak),
             % star = chosen threshold, box = trial-average / do-nothing (keep
             % every dimension). Curve-colored, distinguished by shape.
-            objc = [0.3 0.7 0.3];
+            objc = obj_color;
             obj = results.objective(:);
             n_dim = length(obj) - 1;
             hold(ax6, 'on');
@@ -754,7 +771,7 @@ function fig = visualization(data, results, varargin)
             leg_l{end+1} = sprintf('trial-avg / do-nothing (K=%d)', n_dim);
 
             hold(ax6, 'off');
-            legend(ax6, leg_h, leg_l, 'Location', 'best', 'FontSize', 7);
+            legend_behind(ax6, leg_h, leg_l, 'Location', 'best', 'FontSize', 7);
 
             if isfield(results, 'alpha_info') && ~isempty(results.alpha_info)
                 title(ax6, sprintf('Analytic recovery vs. dimensions (alpha=%g)', results.alpha_info.alpha));

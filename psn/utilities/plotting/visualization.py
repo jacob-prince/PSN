@@ -238,6 +238,16 @@ def _set_tail_invlog_xscale(ax, split=0.9, expand=0.4, K=99):
     _draw_axis_break(ax, a)        # mark the linear -> inverse-log split
 
 
+def _legend(ax, *args, **kwargs):
+    """ax.legend(...) but placed BEHIND the plotted data (low zorder) so it never
+    obscures curves/markers where they overlap it. This is the default for every
+    legend in the diagnostic figure."""
+    leg = ax.legend(*args, **kwargs)
+    if leg is not None:
+        leg.set_zorder(0.5)        # below data lines (2) and markers (>=3)
+    return leg
+
+
 def _plot_recovery_tradeoff(ax, rec):
     """Draw the recovery / bias-variance tradeoff panel from PRECOMPUTED data
     (results['recovery_tradeoff'], built in psn() by compute_recovery_tradeoff).
@@ -287,15 +297,27 @@ def _plot_recovery_tradeoff(ax, rec):
             else:
                 ax_r.scatter(mx, my, s=18, color=[1, 0.3, 0.3], alpha=0.65, zorder=4)
 
-    # Per-basis colors as (analytic solid, split-half dashed); the chosen/trial-avg
-    # markers reuse the primary basis's colors so each box/star matches its trace.
-    BASIS_COLORS = {'signal_basis': ('#1f77b4', '#ff7f0e'),       # blue / orange
-                    'difference_basis': ('#2ca02c', '#9467bd')}   # green / purple
+    # Per-basis colors as (analytic solid, split-half dashed). The analytic (solid)
+    # keeps the basis identity color (blue = signal, green = difference) so it
+    # matches the fig6 objective trace. The signal split-half (dashed) is GOLD to
+    # match the gold "TAvg vs Denoised" dots in the split-half reliability panel
+    # (fig14); the difference split-half is purple so the two dashed curves stay
+    # distinguishable in compare mode.
+    GOLD = (1.0, 0.84, 0.0)
+    BASIS_COLORS = {'signal_basis': ('#1f77b4', GOLD),           # blue  / gold
+                    'difference_basis': ('#2ca02c', '#9467bd')}  # green / purple
     present = [k for k in ('signal_basis', 'difference_basis')
                if rec.get(k) is not None and (rec[k].get('analytic_recovery') is not None
                                               or rec[k].get('split_half_r') is not None)]
     multi = len(present) > 1
-    mc_analytic, mc_splithalf = BASIS_COLORS[present[0]] if present else ('#1f77b4', '#ff7f0e')
+    # Marker/primary color follows the basis the operating point was CHOSEN on, so
+    # the analytic markers (peak/chosen/trial-avg) match that trace and the fig6
+    # objective (in compare mode this is the chosen, not merely the first, basis).
+    _cb = (rec.get('chosen') or {}).get('basis')
+    _prim = (f'{_cb}_basis' if _cb in ('signal', 'difference')
+             and rec.get(f'{_cb}_basis') is not None
+             else (present[0] if present else 'signal_basis'))
+    mc_analytic, mc_splithalf = BASIS_COLORS[_prim]
 
     # analytic recovery SOLID (left axis), split-half r DASHED (right axis).
     for key, name in (('signal_basis', 'signal'), ('difference_basis', 'difference')):
@@ -334,8 +356,7 @@ def _plot_recovery_tradeoff(ax, rec):
             yc = prim_ar[kpk:]
             ychord = prim_ar[kpk] + (prim_ar[-1] - prim_ar[kpk]) * \
                 (xs - prim_asf[kpk]) / (prim_asf[-1] - prim_asf[kpk])
-            ax.fill_between(xs, ychord, yc, color='0.5', alpha=0.15, zorder=0,
-                            label='max-tradeoff gap')
+            ax.fill_between(xs, ychord, yc, color='0.5', alpha=0.15, zorder=0)
             ax.plot(xs, ychord, ls=':', color='0.45', lw=1.0, zorder=1)
 
     # trial-average (do-nothing): split-half-colored box on the split-half (right)
@@ -372,10 +393,15 @@ def _plot_recovery_tradeoff(ax, rec):
     ax.set_ylabel('analytic recovery  (cumsum signal - noise/t)')
     ax_r.set_ylabel('split-half r  (TAvg vs Denoised)')
 
-    # Y-limits per axis: top = max + headroom so the legend has room. When values
-    # go negative (e.g. the do-nothing tail of the analytic-recovery curve on
-    # noisy data) the lower limit follows the data instead of clipping at 0, so
-    # the full curve and the trial-average anchor stay visible.
+    # Y-limits per axis: set the top to top_mult x the peak-to-bottom range so the
+    # data peak lands at 1/top_mult of the axis height, keeping the top clear for the
+    # top-left legend (and, in max-tradeoff mode, the upper-right inset too). 3x in
+    # max-tradeoff mode (needs room for the inset), 2x otherwise (legend only). When
+    # values go negative (e.g. the do-nothing tail of the analytic-recovery curve on
+    # noisy data) the lower limit follows the data instead of clipping at 0.
+    is_mt = rec.get('criterion') == 'max-tradeoff'
+    top_mult = 3.0 if is_mt else 2.0
+
     def _lim(yvals):
         v = np.concatenate(yvals) if yvals else None
         if v is None:
@@ -386,9 +412,10 @@ def _plot_recovery_tradeoff(ax, rec):
         vmax = max(float(np.max(v)), 1e-3)
         vmin = float(np.min(v))
         if vmin >= 0:
-            return (0.0, vmax * 1.45)
+            return (0.0, top_mult * vmax)
         span = vmax - vmin
-        return (vmin - 0.05 * span, vmax + 0.45 * span)
+        bottom = vmin - 0.05 * span
+        return (bottom, bottom + top_mult * (vmax - bottom))
     lL, lR = _lim(yL), _lim(yR)
     if lL:
         ax.set_ylim(*lL)
@@ -415,8 +442,107 @@ def _plot_recovery_tradeoff(ax, rec):
         if 'wiener' in L:            return 12
         return 99
     pairs = sorted(zip(h1 + h2, l1 + l2), key=lambda hl: _rank(hl[1]))
-    ax.legend([h for h, _ in pairs], [l for _, l in pairs],
-              fontsize=7, loc='lower left', framealpha=0.85)
+    # Upper-left, two columns so the legend runs along the top and stays compact (the
+    # ylim rule keeps the data in the lower half/third, so the upper area is clear).
+    _legend(ax, [h for h, _ in pairs], [l for _, l in pairs],
+            fontsize=6.5, ncol=2, columnspacing=1.0,
+            handletextpad=0.5, loc='upper left', framealpha=0.85)
+
+    # Inset (upper-right): linear-axis zoom of the max-tradeoff selection geometry.
+    _draw_max_tradeoff_inset(ax, rec)
+
+
+def _draw_max_tradeoff_inset(ax, rec):
+    """Lower-left inset that zooms, on LINEAR axes, into the descending limb where
+    the max-tradeoff criterion picks the operating point. Coordinates are
+    normalized so the recovery peak sits at (0,1) and the trial-average
+    (do-nothing) at (1,0); the peak->trial-average chord is then the anti-diagonal
+    u+v=1, and max-tradeoff selects the curve point of greatest perpendicular
+    distance from it (argmax of the shaded gap). argmax perpendicular distance is
+    affine-invariant, so this clean square view marks the SAME operating point
+    psn() chose while drawing a true right angle. Only rendered in max-tradeoff
+    mode."""
+    if rec.get('criterion') != 'max-tradeoff':
+        return
+    ch = rec.get('chosen')
+    if not ch or ch.get('recovery') is None or ch.get('sv_frac') is None:
+        return
+    # Basis the operating point was chosen on (fallback: first present).
+    key = f"{ch.get('basis')}_basis" if ch.get('basis') in ('signal', 'difference') else None
+    if key is None or rec.get(key) is None:
+        key = next((k for k in ('signal_basis', 'difference_basis')
+                    if rec.get(k) is not None), None)
+    if key is None:
+        return
+    b = rec[key]
+    if b.get('analytic_sv_frac') is None or b.get('analytic_recovery') is None:
+        return
+    asf = np.asarray(b['analytic_sv_frac'], float)
+    ar = np.asarray(b['analytic_recovery'], float)
+    if asf.size < 3 or ar.size < 3:
+        return
+    kpk = int(np.argmax(ar))
+    xpk, rpk, xend, rend = asf[kpk], ar[kpk], asf[-1], ar[-1]
+    if kpk >= ar.size - 1 or xend == xpk or (rpk - rend) <= 1e-12 \
+            or not np.isfinite(ch['recovery']):
+        return
+
+    # Normalized descending limb: u in [0,1] (0=peak, 1=trial-avg), v in [0,1] (1=peak).
+    u = (asf[kpk:] - xpk) / (xend - xpk)
+    v = (ar[kpk:] - rend) / (rpk - rend)
+    u_ch = (ch['sv_frac'] - xpk) / (xend - xpk)
+    v_ch = (ch['recovery'] - rend) / (rpk - rend)
+    tt = (u_ch + v_ch - 1) / 2.0                      # foot of perpendicular on u+v=1
+    foot = (u_ch - tt, v_ch - tt)
+
+    mc = '#2ca02c' if key == 'difference_basis' else '#1f77b4'   # matches the panel trace
+    perpc = '#d81a1a'
+
+    # Top-right corner, pushed up and right into the whitespace the top headroom
+    # opens up, with just enough gap above so the title does not hit the top frame.
+    axi = ax.inset_axes([0.655, 0.52, 0.335, 0.335])
+    axi.set_facecolor('white')
+    axi.fill_between(u, v, 1 - u, color='0.5', alpha=0.12, lw=0)          # gap curve<->chord
+    axi.plot([0, 1], [1, 0], '--', color='0.35', lw=1.0)                 # chord
+    axi.plot(u, v, '-', color=mc, lw=1.6)                                # recovery curve
+    axi.scatter([0], [1], marker='^', s=45, color=mc, edgecolor='k',
+                linewidth=0.6, zorder=5)                                 # peak
+    axi.scatter([1], [0], marker='s', s=40, color=mc, edgecolor='k',
+                linewidth=0.6, zorder=5)                                 # trial-avg
+    axi.plot([u_ch, foot[0]], [v_ch, foot[1]], '-', color=perpc, lw=1.4,
+             zorder=6)                                                   # perpendicular
+    axi.scatter([foot[0]], [foot[1]], s=18, facecolor='white',
+                edgecolor=perpc, linewidth=1.0, zorder=6)                # foot
+    axi.scatter([u_ch], [v_ch], marker='*', s=150, color=mc, edgecolor='k',
+                linewidth=0.6, zorder=7)                                 # chosen
+
+    axi.set_aspect('equal', adjustable='box')      # equal units -> the right angle reads true
+    axi.set_xlim(-0.06, 1.10)
+    axi.set_ylim(-0.06, 1.10)
+    # Tick labels in the ACTUAL units: both axes are linear (affine) maps of them,
+    # u -> frac. signal var. retained, v -> analytic recovery, so labelling the
+    # fixed tick positions with the real values is exact.
+    xt = np.array([0.0, 0.5, 1.0])
+    axi.set_xticks(xt)
+    axi.set_yticks(xt)
+    axi.set_xticklabels(_fmt_ticks(xpk + xt * (xend - xpk)))
+    axi.set_yticklabels(_fmt_ticks(rend + xt * (rpk - rend)))
+    axi.tick_params(labelsize=6, length=2)
+    axi.set_title('max-tradeoff (zoom)', fontsize=7, pad=2)
+    axi.set_xlabel('frac. signal retained', fontsize=6.5, labelpad=1)
+    axi.set_ylabel('analytic recovery', fontsize=6.5, labelpad=1)
+
+
+def _fmt_ticks(vals):
+    """Format tick values with the fewest decimals that keeps them all distinct
+    (the descending limb can crowd near frac=1, so a fixed precision would collapse
+    adjacent labels)."""
+    vals = [float(v) for v in vals]
+    for d in range(1, 9):
+        s = [f'{v:.{d}f}' for v in vals]
+        if len(set(s)) == len(s):
+            return s
+    return [f'{v:.8f}' for v in vals]
 
 
 
@@ -789,7 +915,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
             ax4.set_title('$\\Sigma_S$ Eigenvalues (signal basis)')
         else:
             ax4.set_title('Basis Eigenvalues')
-        ax4.legend(loc='best', fontsize=7)
+        _legend(ax4, loc='best', fontsize=7)
         ax4.grid(True)
         if use_logscale:
             _set_headtail_log_xscale(ax4, len(evals), rotation=45)
@@ -833,7 +959,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         ax4.set_xlabel('Dimension')
         ax4.set_ylabel('Variance')
         ax4.set_title('Ordering Criterion')
-        ax4.legend(loc='best', fontsize=7)
+        _legend(ax4, loc='best', fontsize=7)
         ax4.grid(True)
         if use_logscale:
             _set_headtail_log_xscale(ax4, len(signal_vars), rotation=45)
@@ -952,7 +1078,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
             if line_thresh is not None:
                 lines = lines + [line_thresh]
             labels = [l.get_label() for l in lines]
-            ax5_left.legend(lines, labels, loc='best', fontsize=7)
+            _legend(ax5_left, lines, labels, loc='best', fontsize=7)
             ax5_left.grid(True)
 
             if use_logscale:
@@ -1050,7 +1176,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
             # Combined legend
             lines = [line_weights, line_obj, h_peak, h_box]
             labels = [l.get_label() for l in lines]
-            ax6.legend(lines, labels, loc='best', fontsize=8)
+            _legend(ax6, lines, labels, loc='best', fontsize=8)
 
         ax6.set_xlabel('Dimension')
         ax6.set_title(f'Wiener weights & analytic recovery (eff. dims = {effective_dims:.1f})')
@@ -1170,7 +1296,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                 if x_lo != x_hi:
                     ax6.axvspan(x_lo, x_hi, alpha=0.08, color='blue')
 
-            ax6_left.legend(legend_handles, legend_labels, loc='best', fontsize=7)
+            _legend(ax6_left, legend_handles, legend_labels, loc='best', fontsize=7)
 
             if alpha_info is not None:
                 ax6.set_title(f'Analytic recovery vs. dimensions (alpha={alpha_info["alpha"]}){subsample_suffix_units}')
@@ -1223,7 +1349,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                 if x_lo != x_hi:
                     ax6.axvspan(x_lo, x_hi, alpha=0.08, color='blue')
 
-            ax6.legend(loc='best', fontsize=7)
+            _legend(ax6, loc='best', fontsize=7)
 
             if alpha_info is not None:
                 ax6.set_title(f'Analytic recovery vs. dimensions (alpha={alpha_info["alpha"]})')
@@ -1301,7 +1427,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         # Legend
         lines = [line_weights, line_obj, h_star]
         labels = [l.get_label() for l in lines]
-        ax6.legend(lines, labels, loc='best', fontsize=8)
+        _legend(ax6, lines, labels, loc='best', fontsize=8)
 
         ax6.set_xlabel('Dimension (cSb eigenbasis)')
         ax6.set_title(f'Implied Wiener Weights in Signal Basis (eff. dims = {effective_dims:.1f})')

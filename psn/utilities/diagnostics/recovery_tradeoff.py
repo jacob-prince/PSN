@@ -579,7 +579,10 @@ def attach_recovery_tradeoff(results, cSb, cNb, t, data, unit_means, has_nans,
                 rec['chosen']['sv_frac'],
                 np.asarray(bdat['analytic_sv_frac'], float),
                 np.asarray(bdat['analytic_recovery'], float)))
+        rec['chosen']['basis'] = cb   # basis the operating point was chosen on (inset)
 
     if rec is not None:
+        # Criterion drives the max-tradeoff inset in the figure (only drawn then).
+        rec['criterion'] = opt_used.get('criterion')
         results['recovery_tradeoff'] = rec
     return results
