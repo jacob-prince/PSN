@@ -43,11 +43,11 @@ def _reject_wiener_conflicts(user_opt, force_wiener=False):
             "pipeline. Remove these conflicting options: " + ", ".join(conflicts) + ".")
 
 
-def parse_inputs(*args):
+def parse_inputs(*args, **kwargs):
     """PARSE_INPUTS  Parse flexible input arguments to psn()
 
-    [data, opt] = parse_inputs(*args) parses the variable input arguments
-    passed to psn() and returns the data array and options dict.
+    [data, opt] = parse_inputs(*args, **kwargs) parses the variable input
+    arguments passed to psn() and returns the data array and options dict.
 
     -------------------------------------------------------------------------
     Inputs:
@@ -58,6 +58,13 @@ def parse_inputs(*args):
       (data, 'mode')              - Use predefined mode ('conservative', 'standard', 'aggressive')
       (data, opt)                 - Use custom options dict
       (data, 'mode', opt)         - Use predefined mode with option overrides
+
+    <kwargs> - Any option may also be passed as a keyword argument, e.g.
+      psn(data, device='cuda') or psn(data, 'standard', basis='signal'). Keyword
+      options behave exactly like a trailing options dict: they are merged into
+      (and take precedence over) any positional options dict. The whole dict may
+      also be passed as opt=..., e.g. psn(data, opt={'device': 'cuda'}); any other
+      keyword options override its entries.
 
     -------------------------------------------------------------------------
     Returns:
@@ -89,6 +96,25 @@ def parse_inputs(*args):
 
     if len(args) < 1:
         raise ValueError('PSN requires at least one input argument (data)')
+
+    # The options dict may also be passed as the `opt` keyword: psn(data, opt={...}).
+    # Its value IS the options dict; any other keyword options override its entries.
+    if 'opt' in kwargs:
+        opt_kw = kwargs.pop('opt')
+        if opt_kw is None:
+            opt_kw = {}
+        if not isinstance(opt_kw, dict):
+            raise ValueError("The 'opt' keyword argument must be a dict of options.")
+        kwargs = _merge_dicts(opt_kw, kwargs)
+
+    # Keyword options (e.g. psn(data, device='cuda')) behave exactly like a trailing
+    # options dict: merge them into (and override) any positional options dict, so
+    # every mode / Wiener-conflict check below applies to them unchanged.
+    if kwargs:
+        if len(args) >= 2 and isinstance(args[-1], dict):
+            args = args[:-1] + (_merge_dicts(args[-1], kwargs),)
+        else:
+            args = args + (dict(kwargs),)
 
     data = args[0]
     opt = {}

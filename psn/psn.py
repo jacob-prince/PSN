@@ -26,7 +26,7 @@ from .utilities.diagnostics.recovery_tradeoff import attach_recovery_tradeoff
 from .utilities.plotting.safe_visualize_results import safe_visualize_results
 
 
-def psn(*args):
+def psn(*args, **kwargs):
     """PSN  Denoise neural data using PSN (Partitioning Signal and Noise).
 
     -------------------------------------------------------------------------
@@ -107,6 +107,11 @@ def psn(*args):
 
     <opt> (optional) - dict with the following fields. The options most users
     touch are in the first group; the rest are advanced and can be ignored.
+
+    This dict can be passed positionally (psn(data, {...})) or as the opt keyword
+    (psn(data, opt={...})). Every option below can also be given individually as a
+    keyword argument, e.g. psn(data, device='cuda') or psn(data, 'standard',
+    basis='signal'); keyword options take precedence over a positional options dict.
 
     ----- BASIS & THRESHOLD SELECTION -----
 
@@ -241,6 +246,31 @@ def psn(*args):
               wantverbose    - whether to print diagnostic output (default: False)
               random_seed    - RNG seed used inside GSN
           If None or omitted, defaults are used.
+
+      <device> (optional) - string or torch.device. Hardware for the heavy linear
+        algebra (GSN covariance estimation, basis eigendecomposition, covariance
+        projections, denoiser construction). Pass your data as an ordinary numpy
+        array exactly as usual - PSN moves the internal arrays onto the device for
+        you; you do NOT pre-move the data. A GPU is used ONLY when explicitly asked:
+            'cpu'          - (default) run on CPU: torch-CPU when torch is
+                             importable, else numpy. No GPU is touched.
+            'cuda'         - run on the CUDA GPU (needs a torch build with CUDA;
+                             check torch.cuda.is_available()).
+            'mps'          - run on the Apple-Silicon GPU (Metal).
+            'auto' / None  - treated as 'cpu'. This deliberately does NOT auto-pick
+                             a GPU, so a cluster job never lands on one by accident.
+            a torch.device - torch.device('cuda')/('mps') is honored; a CPU
+                             torch.device maps to 'cpu'.
+        The value is normalized once and propagated to every stage, so the whole
+        pipeline runs on the chosen device. GPU acceleration pays off mainly at
+        large nunits (~10k+), where the matmul/solve work dominates; for small
+        problems CPU is usually as fast (no host<->device transfer overhead).
+        Requires PyTorch (with CUDA support for 'cuda'). Default: 'cpu'.
+
+        Example (CUDA GPU on a cluster):
+            results = psn(data, device='cuda')                # keyword form
+            results = psn(data, 'standard', device='cuda')    # a mode + keyword
+            results = psn(data, {'basis': 'signal', 'device': 'cuda'})  # options dict
 
     ----- FIGURE -----
 
@@ -378,7 +408,7 @@ def psn(*args):
 
     _t_start = time.time()
 
-    data, opt = parse_inputs(*args)
+    data, opt = parse_inputs(*args, **kwargs)
     nunits, nconds, ntrials, ntrials_avg, has_nans = validate_data(data)
     opt = set_default_options(opt, nunits)
 
