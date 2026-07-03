@@ -71,7 +71,12 @@ def compute_unit_weighted_projections(basis, signal_proj, noise_proj, ntrials,
         sig_all = W * signal_proj[None, :]                             # (n, d)
         noi_all = W * noise_proj[None, :]                              # (n, d)
         if do_unit_ranking:
-            unit_orderings = np.argsort(sig_all, axis=1)[:, ::-1].copy()
+            # Descending by signal variance, ties broken by ASCENDING dim index.
+            # Sorting the negated values with a STABLE sort keeps tied entries in
+            # their original (ascending-index) order; the torch path below uses
+            # the matching stable+descending sort, so the two backends produce
+            # bit-identical orderings even when signal variances tie.
+            unit_orderings = np.argsort(-sig_all, axis=1, kind='stable')
             row_idx = np.arange(nunits)[:, None]
             sig_sorted = sig_all[row_idx, unit_orderings]
             noi_sorted = noi_all[row_idx, unit_orderings]
@@ -97,7 +102,9 @@ def compute_unit_weighted_projections(basis, signal_proj, noise_proj, ntrials,
         sig_all = W * sp_t[None, :]
         noi_all = W * np_t[None, :]
         if do_unit_ranking:
-            order_t = torch.argsort(sig_all, dim=1, descending=True)
+            # Stable + descending => ties broken by ascending dim index, matching
+            # the numpy path's np.argsort(-sig_all, kind='stable') exactly.
+            order_t = torch.argsort(sig_all, dim=1, descending=True, stable=True)
             sig_sorted_t = torch.gather(sig_all, 1, order_t)
             noi_sorted_t = torch.gather(noi_all, 1, order_t)
             unit_orderings = from_device(order_t).astype(int)

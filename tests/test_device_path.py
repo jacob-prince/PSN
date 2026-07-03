@@ -209,7 +209,11 @@ class TestUnitWeightedProjectionsDevice:
             sig_u = w * sp
             noi_u = w * npj
             if do_unit_ranking:
-                ord_ref = np.argsort(sig_u)[::-1]
+                # Descending by signal variance, ties broken by ascending dim
+                # index (stable) - the backend-portable convention that the CPU
+                # and GPU paths now share (np.argsort(-x, stable) == torch stable
+                # descending). Must match compute_unit_weighted_projections.
+                ord_ref = np.argsort(-sig_u, kind='stable')
             else:
                 ord_ref = np.arange(B.shape[1])
             sig_ref = sig_u[ord_ref]
