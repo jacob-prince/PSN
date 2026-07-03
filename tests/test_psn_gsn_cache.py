@@ -217,10 +217,10 @@ class TestVerbose:
             'gsn_result': base_result['gsn_result'],
         })
         captured = capsys.readouterr()
-        assert 'Using provided GSN result' in captured.out
-        assert 'Running GSN' not in captured.out
+        assert 'reusing provided gsn_result' in captured.out
+        assert 'estimating covariances via GSN' not in captured.out
 
     def test_verbose_fresh_message(self, sim_data, capsys):
         psn(sim_data, {'wantfig': False, 'wantverbose': True})
         captured = capsys.readouterr()
-        assert 'Running GSN' in captured.out
+        assert 'estimating covariances via GSN' in captured.out
