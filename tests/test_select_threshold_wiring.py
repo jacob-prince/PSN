@@ -65,17 +65,12 @@ def test_explicit_basis_has_no_threshold_selection():
 
 
 def test_compare_tiebreak_prefers_signal(monkeypatch):
-    """When the two bases' analytic recovery tie, 'compare' keeps signal."""
+    """When the two bases' split-half r tie, 'compare' keeps signal."""
     import psn.utilities.threshold.select_threshold as st
     d = _data()
     g = psn(d, {**OPT, 'basis': 'signal'})['gsn_result']
-    # force identical recovery for both candidates -> tie -> signal wins
-    orig = st._select_lowrank
-    def _equal(cSb, cNb, t, basis_key, criterion, opt, device='cpu'):
-        rec = orig(cSb, cNb, t, basis_key, criterion, opt, device=device)
-        rec['recovery'] = 0.5
-        return rec
-    monkeypatch.setattr(st, '_select_lowrank', _equal)
+    # force identical split-half r for both candidates -> tie -> signal wins
+    monkeypatch.setattr(st, 'split_half_r', lambda *a, **kw: 0.5)
     comp = psn(d, {**OPT, 'basis': 'compare', 'criterion': 'max-tradeoff',
                    'threshold_method': 'hybrid', 'gsn_result': g})
     assert comp['threshold_selection']['basis'] == 'signal'
