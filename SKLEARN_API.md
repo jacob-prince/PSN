@@ -1,144 +1,110 @@
-# PSN Sklearn API Implementation
+# PSN scikit-learn API (Python)
 
-## Overview
+PSN ships a scikit-learn-compatible estimator, `PSN`, that wraps the functional
+`psn()` API behind the standard `fit` / `transform` / `fit_transform` interface. It
+subclasses `BaseEstimator` and `TransformerMixin`, so it supports
+`get_params` / `set_params` / `clone` and drops into `Pipeline` and `GridSearchCV`.
 
-The PSN (Partitioning Signal and Noise) package now supports both functional use and sklearn-compatible APIs, providing maximum flexibility for users.
+```python
+from psn import PSN
+```
 
-## New PSN Class
+---
 
-The `PSN` class implements sklearn's `BaseEstimator` and `TransformerMixin` interfaces, providing:
+## Quick start
 
-- **fit()**: Estimate the optimal denoiser
-- **transform()**: Apply denoiser to data
-- **fit_transform()**: Combined fitting and transformation
-- **score()**: Quality assessment using noise ceiling
-- **get_params()** / **set_params()**: Parameter management
+```python
+from psn import PSN, generate_data
 
-## Utility Functions
+train, test, _ = generate_data(nvox=50, ncond=200, ntrial=5, random_seed=42)
 
-The package includes reusable scoring functions in `psn.utils`:
+# Fit on [nunits x nconds x ntrials]; transform returns [nunits x nconds]
+model = PSN()                                   # no mode -> 'standard' default
+denoised = model.fit_transform(train)          # [nunits x nconds]
 
-- **`negative_mse_columns()`**: Negative mean squared error for each column
-- **`r2_score_columns()`**: R² (coefficient of determination) for each column
+# Apply the learned denoiser to held-out data
+denoised_test = model.transform(test)          # [nunits x nconds x ntrials] or [nunits x nconds]
+```
 
-These can be used independently or as part of the PSN sklearn API.
+---
 
 ## Parameters
 
-### basis (string or numpy array)
-- `'signal'`: GSN cSb (V = 0) - **DEFAULT**
-- `'whitened-signal'`: GSN cNb * GSN cSb (V = 1)
-- `'noise'`: GSN cNb (V = 2)
-- `'pca'`: naive PCA (V = 3)
-- `'random'`: random basis (V = 4) - not recommended
-- `matrix`: user-supplied orthonormal basis
-
-### cv (cross-validation strategy)
-- `'unit'`: unit thresholding, separate CV threshold per unit (**default**)
-- `'population'`: population thresholding, one threshold for all units
-- `None`: magnitude thresholding, retains dimensions for 95% signal variance
-
-### scoring (for CV modes 'unit' or 'population')
-- `'mse'`: Mean Squared Error (**default**)
-- `'r2'`: Coefficient of determination (R²)
-- `callable`: any sklearn scoring function or custom function
-
-### mag_threshold
-- `0.95` (**default**): proportion of variance to keep when cv=None
-- Any scalar between 0 and 1
-
-### unit_groups
-- `None` (**default**): each unit gets its own threshold ('unit' mode) or all units share ('population' mode)
-- `array-like`: integer array specifying which units share CV thresholds (only for 'unit' mode)
-
-### Other Parameters
-- `verbose`: bool - print progress messages
-- `wantfig`: bool (**default True**) - generate diagnostic figures
-- `gsn_kwargs`: dict - additional GSN parameters
-
-## Usage Examples
-
-### Basic Usage
-```python
-from psn import PSN
-
-# Fit and transform with defaults
-denoiser = PSN()
-denoiser.fit(data)  # data shape: (nunits, nconds, ntrials)
-denoised_data = denoiser.transform(data)
-```
-
-### Population Thresholding with PCA
-```python
-denoiser = PSN(basis='pca', cv='population')
-denoiser.fit(data)
-denoised_data = denoiser.transform(data)
-```
-
-### Magnitude Thresholding
-```python
-denoiser = PSN(basis='signal', cv=None, mag_threshold=0.90)
-denoiser.fit(data)
-denoised_data = denoiser.transform(data)
-```
-
-### Custom Basis
-```python
-custom_basis = np.linalg.qr(np.random.randn(nunits, nunits))[0]
-denoiser = PSN(basis=custom_basis, cv='unit')
-denoiser.fit(data)
-denoised_data = denoiser.transform(data)
-```
-
-### Sklearn Pipeline Integration
-```python
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import GridSearchCV
-
-# Create pipeline
-pipeline = Pipeline([
-    ('denoiser', PSN()),
-    ('classifier', SomeClassifier())
-])
-
-# Grid search over PSN parameters
-param_grid = {
-    'denoiser__basis': ['signal', 'pca'],
-    'denoiser__cv': ['unit', 'population'],
-    'denoiser__mag_threshold': [0.90, 0.95, 0.99]
-}
-
-grid_search = GridSearchCV(pipeline, param_grid)
-grid_search.fit(X, y)
-```
-
-## Backward Compatibility
-
-The original functional interface remains unchanged:
+The constructor mirrors the functional `psn()` options — see the main
+[README](README.md) for their semantics. Every parameter defaults to `None` (use the
+preset / library default); any value you set **overrides** the preset.
 
 ```python
-from psn import psn
-
-# Original functional API still works
-results = psn(data, V=0, opt={'cv_mode': 0}, wantfig=True)
+PSN(mode=None, *, basis=None, criterion=None, threshold_method=None,
+    basis_ordering=None, variance_threshold=None, allowable_thresholds=None,
+    unit_groups=None, alpha=None, gsn_result=None, gsn_args=None, device=None,
+    split_half_metric=None, cmap=None, wantverbose=True, wantfig=False)
 ```
 
-## Key Features
+- **mode** — `None` (default; same as `'standard'`), `'conservative'`, `'standard'`,
+  `'aggressive'`, `'compare'`, or `'wiener'`. A preset that any non-`None` parameter
+  below overrides (except `'wiener'`, which rejects conflicting options).
+- **basis / criterion / threshold_method / basis_ordering / variance_threshold /
+  allowable_thresholds / unit_groups / alpha** — the core PSN options (see README).
+- **gsn_result / gsn_args** — reuse precomputed GSN covariances / forward GSN options.
+- **device** — `'cpu'` (default), `'cuda'`, `'mps'` (GPU only when explicitly set).
+- **split_half_metric / cmap** — diagnostic-figure options.
+- **wantverbose** — print progress (default `True`).
+- **wantfig** — draw the diagnostic figure during `fit` (default `False`; override
+  per call with `fit(..., visualize=True)`).
 
-1. **Full sklearn compatibility**: Supports pipelines, grid search, cross-validation
-2. **Flexible data shapes**: Handles both 2D (trial-averaged) and 3D (single-trial) data
-3. **Multiple basis options**: Signal, whitened-signal, noise, PCA, random, or custom
-4. **Multiple thresholding strategies**: Unit-wise, population, or magnitude-based
-5. **Diagnostic plotting**: Automatic figure generation with `wantfig=True`
-6. **Quality scoring**: Built-in noise ceiling scoring for model evaluation
+---
 
-## Files Modified
+## Methods
 
-- `psn/psn.py`: Added `PSN` class with sklearn interface
-- `psn/__init__.py`: Added `PSN` to exports
-- `examples/sklearn_api_demo.py`: Comprehensive demonstration script
+- **`fit(X, y=None, visualize=None)`** — learn the denoiser from `X` shaped
+  `[nunits x nconds x ntrials]` (`y` is ignored; present for the sklearn API).
+- **`transform(X)`** — apply the learned denoiser; `X` is `[nunits x nconds x ntrials]`
+  (trial-averaged internally) or already `[nunits x nconds]`. Returns `[nunits x nconds]`.
+- **`fit_transform(X, y=None, visualize=None)`** — fit, then return the denoised
+  trial-averaged training data.
+- **`plot_diagnostics(figurepath=None, cmap=None, **kwargs)`** — diagnostic figure for
+  the fitted data.
+- **`get_params()` / `set_params(**params)`** — standard sklearn introspection.
 
-## Dependencies
+### Fitted attributes (trailing underscore)
 
-- scikit-learn (already in requirements.txt)
-- All existing PSN dependencies (numpy, scipy, matplotlib, GSN)
+`denoiseddata_`, `residuals_`, `denoiser_`, `unit_means_`, `best_threshold_`,
+`fullbasis_`, `signalvar_`, `noisevar_`, `objective_`, `svnv_before_`, `svnv_after_`,
+`gsn_result_`, `recovery_tradeoff_`, `opt_used_`, and (for `'compare'` / `'wiener'`)
+`threshold_selection_` / `diagnostics_`.
+
+---
+
+## Examples
+
+```python
+# Override options directly (no preset)
+model = PSN(basis='difference', criterion='prediction', threshold_method='hybrid')
+
+# Combine a preset with an override
+model = PSN(mode='aggressive', threshold_method='hybrid')
+
+# GPU (no mode -> 'standard' default)
+model = PSN(device='cuda')
+
+# sklearn introspection / cloning
+model.get_params()['criterion']
+model.set_params(alpha=0.3)
+from sklearn.base import clone
+clone(model)
+```
+
+Because it implements the estimator protocol, `PSN` can be used inside a `Pipeline`
+or swept with `GridSearchCV` over its parameters (e.g.
+`{'basis': ['signal', 'difference'], 'criterion': ['max-tradeoff', 'prediction']}`).
+
+See the notebooks in `examples/` for runnable demos.
+
+---
+
+## Relationship to the functional API
+
+`PSN` is a thin wrapper: each parameter maps 1:1 to a `psn()` option, and `fit`
+simply calls `psn(X, mode, opt)`. The functional API (`from psn import psn`) remains
+the primary interface — see the main [README](README.md).

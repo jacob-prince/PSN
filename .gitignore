@@ -4,6 +4,7 @@
 *.png
 */z-old/*
 *.jpg
+!examples/sunset*.jpg
 */debug/*
 *.mat
 *.npy
