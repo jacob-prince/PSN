@@ -99,7 +99,7 @@ class TestRecoveryTradeoffWienerFallback:
         pipeline, so patching it is safe and deterministically covers the except
         branch even though no real data reliably trips torch's singularity check.
         """
-        import torch
+        torch = pytest.importorskip('torch')
 
         data = _well_conditioned_data()
         primary = psn(data, QUIET)['recovery_tradeoff']['wiener']
