@@ -26,7 +26,7 @@ def generate_data(nvox=50, ncond=200, ntrial=5, signal_decay=2.0, noise_decay=1.
                  noise_multiplier=3.0, align_alpha=0.5, align_k=10, random_seed=42,
                  want_fig=False, signal_cov=None, true_signal=None, noise_cov=None, cluster_units=False, verbose=True,
                  *, fast: bool = False, rank_signal: int = 50, rank_noise: int = 200,
-                 isotropic_noise: float = 0.0, return_cov: bool | None = None,
+                 isotropic_noise: float = 0.0, return_cov=None,
                  max_nvox_for_cov: int = 2000):
     """Generate synthetic neural data with controlled signal and noise structure.
 
