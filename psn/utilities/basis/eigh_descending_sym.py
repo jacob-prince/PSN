@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from psn._device import resolve_device, is_cpu, to_device, from_device
+from psn._device import from_device, is_cpu, resolve_device, to_device
 
 
 def eigh_descending_sym(matrix, do_symmetrize=False, device='cpu'):

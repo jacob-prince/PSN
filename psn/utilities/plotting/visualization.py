@@ -2,7 +2,6 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
-import scipy.stats as stats
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 
@@ -435,14 +434,22 @@ def _plot_recovery_tradeoff(ax, rec):
     h2, l2 = ax_r.get_legend_handles_labels()
     def _rank(lbl):
         L = lbl.lower()
-        if 'prediction peak' in L:   return 0.5 if 'analytic' in L else 9
-        if 'chosen' in L:            return 2 if 'analytic' in L else 14
-        if 'trial-avg' in L:         return 1 if 'analytic' in L else 13
-        if 'tradeoff' in L:          return 3
-        if 'analytic recovery' in L: return 0
-        if 'split-half r' in L:      return 10
-        if L == 'units':             return 11
-        if 'wiener' in L:            return 12
+        if 'prediction peak' in L:
+            return 0.5 if 'analytic' in L else 9
+        if 'chosen' in L:
+            return 2 if 'analytic' in L else 14
+        if 'trial-avg' in L:
+            return 1 if 'analytic' in L else 13
+        if 'tradeoff' in L:
+            return 3
+        if 'analytic recovery' in L:
+            return 0
+        if 'split-half r' in L:
+            return 10
+        if L == 'units':
+            return 11
+        if 'wiener' in L:
+            return 12
         return 99
     pairs = sorted(zip(h1 + h2, l1 + l2), key=lambda hl: _rank(hl[1]))
     # Upper-left, two columns so the legend runs along the top and stays compact (the

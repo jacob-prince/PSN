@@ -1,28 +1,27 @@
 """PSN utilities package."""
 
 # Input utilities
-from .input.validate_data import validate_data
-from .input.parse_inputs import parse_inputs
-from .input.set_default_options import set_default_options
-
 # Basis utilities
 from .basis.construct_basis import construct_basis
 from .basis.project_covs import project_covs
-
-# Threshold utilities
-from .threshold.select_threshold_analytic import select_threshold_analytic
-from .threshold.constrain_to_allowable import constrain_to_allowable
+from .denoise.compute_unit_weighted_projections import compute_unit_weighted_projections
 
 # Denoising utilities
 from .denoise.denoise_global import denoise_global
 from .denoise.denoise_unitwise import denoise_unitwise
-from .denoise.compute_unit_weighted_projections import compute_unit_weighted_projections
 
 # Diagnostics utilities
 from .diagnostics.compute_signal_noise_diagnostics import compute_signal_noise_diagnostics
+from .input.parse_inputs import parse_inputs
+from .input.set_default_options import set_default_options
+from .input.validate_data import validate_data
 
 # Plotting utilities
 from .plotting.visualize_results import visualize_results
+from .threshold.constrain_to_allowable import constrain_to_allowable
+
+# Threshold utilities
+from .threshold.select_threshold_analytic import select_threshold_analytic
 
 __all__ = [
     # Input

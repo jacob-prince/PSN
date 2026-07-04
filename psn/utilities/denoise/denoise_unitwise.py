@@ -1,11 +1,17 @@
 """Unit-specific denoising utility for PSN."""
 
 import numpy as np
+
+from psn._device import from_device, is_cpu, resolve_device, to_device
+
 from ..threshold.constrain_to_allowable import constrain_to_allowable
 from ..threshold.max_tradeoff import max_tradeoff_threshold
-from ..threshold.select_allowable import argmax_allowable, first_reach_allowable, allowable_candidates
+from ..threshold.select_allowable import (
+    allowable_candidates,
+    argmax_allowable,
+    first_reach_allowable,
+)
 from .compute_unit_weighted_projections import compute_unit_weighted_projections
-from psn._device import resolve_device, to_device, from_device, is_cpu
 
 
 def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, opt):

@@ -6,10 +6,10 @@ the full-rank Wiener filter back to the caller. See select_threshold.
 """
 import numpy as np
 
-from .max_tradeoff import max_tradeoff_threshold
-from .select_threshold_analytic import select_threshold_analytic
 from ..basis.eigh_descending_sym import eigh_descending_sym
 from ..diagnostics.split_half import split_half_r
+from .max_tradeoff import max_tradeoff_threshold
+from .select_threshold_analytic import select_threshold_analytic
 
 _HARD_CRITERIA = ('max-tradeoff', 'prediction', 'variance', 'variance_eigenvalues')
 

@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from psn._device import resolve_device, to_device, from_device, is_cpu
+from psn._device import from_device, is_cpu, resolve_device, to_device
 
 
 def project_covs(cS, cN, B, device='cpu'):

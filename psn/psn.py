@@ -5,25 +5,26 @@ Partitioning Signal and Noise (PSN) methodology.
 """
 
 import time
+
 import numpy as np
 
 # Import utilities
 from ._device import report_device_status, select_pipeline_device
-from .utils import perform_gsn
-from .utilities.input.parse_inputs import parse_inputs
-from .utilities.input.validate_data import validate_data
-from .utilities.input.set_default_options import set_default_options
-from .utilities.input.load_gsn_result import load_gsn_result
 from .utilities.basis.construct_basis import construct_basis
 from .utilities.basis.project_covs import project_covs
 from .utilities.basis.use_cached_eigvecs import use_cached_eigvecs
 from .utilities.denoise.denoise_global import denoise_global
 from .utilities.denoise.denoise_unitwise import denoise_unitwise
 from .utilities.denoise.denoise_wiener import denoise_fullrank_wiener
-from .utilities.threshold.select_threshold import select_threshold, format_threshold
 from .utilities.diagnostics.compute_signal_noise_diagnostics import compute_signal_noise_diagnostics
 from .utilities.diagnostics.recovery_tradeoff import attach_recovery_tradeoff
+from .utilities.input.load_gsn_result import load_gsn_result
+from .utilities.input.parse_inputs import parse_inputs
+from .utilities.input.set_default_options import set_default_options
+from .utilities.input.validate_data import validate_data
 from .utilities.plotting.safe_visualize_results import safe_visualize_results
+from .utilities.threshold.select_threshold import format_threshold, select_threshold
+from .utils import perform_gsn
 
 
 def psn(*args, **kwargs):

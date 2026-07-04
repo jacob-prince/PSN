@@ -1,9 +1,7 @@
 """Input parsing utility for PSN."""
 
-import numpy as np
 
 from .merge_dicts import merge_dicts as _merge_dicts
-
 
 # Pipeline options that the full-rank matrix Wiener filter ignores entirely (it is
 # basis-free and applies no truncation). Specifying any of these alongside a Wiener

@@ -7,7 +7,8 @@ truncation and bypasses basis construction entirely.
 
 import numpy as np
 
-from psn._device import resolve_device, to_device, from_device, is_cpu
+from psn._device import from_device, is_cpu, resolve_device, to_device
+
 from ..basis.eigh_descending_sym import eigh_descending_sym
 
 

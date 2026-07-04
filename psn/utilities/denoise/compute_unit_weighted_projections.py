@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from psn._device import resolve_device, to_device, from_device, is_cpu
+from psn._device import from_device, is_cpu, resolve_device, to_device
 
 
 def compute_unit_weighted_projections(basis, signal_proj, noise_proj, ntrials,

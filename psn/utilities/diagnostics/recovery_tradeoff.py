@@ -18,7 +18,7 @@ GPU when device is cuda/mps), numpy otherwise / for NaN data.
 
 import numpy as np
 
-from psn._device import is_cpu, _torch_available
+from psn._device import _torch_available, is_cpu
 
 
 def recovery_curve_policy(nunits, basis):

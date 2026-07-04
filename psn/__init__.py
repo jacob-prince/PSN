@@ -19,7 +19,10 @@ except ImportError:
 
 # Import simulation if available
 try:
-    from .utilities.simulation.simulate_data import generate_data, generate_heterogeneous_populations
+    from .utilities.simulation.simulate_data import (
+        generate_data,
+        generate_heterogeneous_populations,
+    )
     _has_simulation = True
 except ImportError:
     _has_simulation = False

@@ -3,7 +3,9 @@
 import numpy as np
 
 from .eigh_descending_sym import eigh_descending_sym as _eigh_descending_sym
-from .normalize_orthonormalize_basis import normalize_orthonormalize_basis as _normalize_orthonormalize_basis
+from .normalize_orthonormalize_basis import (
+    normalize_orthonormalize_basis as _normalize_orthonormalize_basis,
+)
 
 
 def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_avg, has_nans,

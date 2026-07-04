@@ -10,14 +10,16 @@ structures for both signal and noise components. The data generation process all
 
 import numpy as np
 
-from .adjust_alignment_gradient_descent import adjust_alignment_gradient_descent as _adjust_alignment_gradient_descent
+from ..plotting.plot_data_diagnostic import plot_data_diagnostic
+from .adjust_alignment_gradient_descent import (
+    adjust_alignment_gradient_descent as _adjust_alignment_gradient_descent,
+)
 from .helpers import (
     _align_noise_basis_lowrank,
     _coerce_true_signal,
     _random_orthonormal_columns,
     _visualize_heterogeneous_populations,
 )
-from ..plotting.plot_data_diagnostic import plot_data_diagnostic
 
 
 def generate_data(nvox=50, ncond=200, ntrial=5, signal_decay=2.0, noise_decay=1.25,
@@ -522,7 +524,7 @@ def generate_heterogeneous_populations(
     
     if verbose:
         print(f"\n{'='*80}")
-        print(f"GENERATING HETEROGENEOUS POPULATION DATA")
+        print("GENERATING HETEROGENEOUS POPULATION DATA")
         print(f"{'='*80}")
         print(f"  Populations: {n_populations}")
         print(f"  Units per population: {units_per_pop}")

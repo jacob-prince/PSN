@@ -2,9 +2,9 @@
 
 import numpy as np
 
-from .max_tradeoff import max_tradeoff_threshold
 from .constrain_to_allowable import constrain_to_allowable
-from .select_allowable import argmax_allowable, first_reach_allowable, allowable_candidates
+from .max_tradeoff import max_tradeoff_threshold
+from .select_allowable import allowable_candidates, argmax_allowable, first_reach_allowable
 
 
 def select_threshold_analytic(signal, noise, basis_eigenvalues, ntrials, opt):

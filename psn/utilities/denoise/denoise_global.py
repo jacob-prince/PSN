@@ -1,10 +1,12 @@
 """Global (population-level) denoising utility for PSN."""
 
 import numpy as np
-from ..threshold.select_threshold_analytic import select_threshold_analytic
+
+from psn._device import from_device, is_cpu, resolve_device, to_device
+
 from ..threshold.select_allowable import argmax_allowable
+from ..threshold.select_threshold_analytic import select_threshold_analytic
 from .compute_unit_weighted_projections import compute_unit_weighted_projections
-from psn._device import resolve_device, to_device, from_device, is_cpu
 
 
 def denoise_global(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, opt):
