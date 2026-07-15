@@ -30,7 +30,7 @@ def validate_options(opt, nunits):
     - basis_ordering: must be 'eigenvalues', 'signalvariance', or 'prediction'
     - variance_threshold: must be a finite value in [0,1]
     - alpha: if set, must be a finite scalar in [0,1] (else None)
-    - allowable_thresholds: numeric scalar or 1D vector with non-negative values
+    - allowable_thresholds: scalar or 1D vector of finite, non-negative integers
     - unit_groups: must have length nunits, contain non-negative integers
     - Compatibility: 'variance_eigenvalues' requires named basis (not custom/random)
       and only works with 'global' threshold_method
@@ -72,8 +72,12 @@ def validate_options(opt, nunits):
         allowable_arr = np.asarray(opt['allowable_thresholds'])
         if not np.issubdtype(allowable_arr.dtype, np.number) or allowable_arr.ndim > 1:
             raise ValueError('allowable_thresholds must be a numeric scalar or 1D vector')
+        if not np.all(np.isfinite(allowable_arr)):
+            raise ValueError('allowable_thresholds must contain finite values')
         if np.any(allowable_arr < 0):
             raise ValueError('allowable_thresholds must contain only non-negative values')
+        if not np.all(allowable_arr == np.floor(allowable_arr)):
+            raise ValueError('allowable_thresholds must contain integer dimension counts')
         # Note: Upper bound checked later against actual basis dimensions (ndims), not nunits
 
     if len(opt['unit_groups']) != nunits:

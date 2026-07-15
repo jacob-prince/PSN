@@ -66,8 +66,14 @@ function validate_options(opt, nunits)
         if ~isnumeric(opt.allowable_thresholds) || ~isvector(opt.allowable_thresholds)
             error('allowable_thresholds must be a numeric vector');
         end
+        if ~all(isfinite(opt.allowable_thresholds))
+            error('allowable_thresholds must contain finite values');
+        end
         if any(opt.allowable_thresholds < 0)
             error('allowable_thresholds must contain only non-negative values');
+        end
+        if ~all(opt.allowable_thresholds == floor(opt.allowable_thresholds))
+            error('allowable_thresholds must contain integer dimension counts');
         end
         % Note: Upper bound checked later against actual basis dimensions (ndims), not nunits
     end

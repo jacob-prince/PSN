@@ -597,9 +597,10 @@ class TestOptionValidation:
                                 'wantfig': False, 'wantverbose': False})
         assert 'denoiseddata' in res
 
-    @pytest.mark.parametrize('bad', [[[1, 2], [3, 4]], -1, [1, -2], 'x'])
+    @pytest.mark.parametrize('bad', [[[1, 2], [3, 4]], -1, [1, -2], 'x',
+                                     np.nan, np.inf, 1.9, [2, 3.5]])
     def test_bad_allowable_thresholds_raises(self, sample_data, bad):
-        """2D, negative, or non-numeric allowable_thresholds raises."""
+        """2D, negative, non-numeric, non-finite, or fractional allowable_thresholds raises."""
         with pytest.raises(ValueError, match='allowable_thresholds'):
             psn(sample_data, {'allowable_thresholds': bad,
                               'wantfig': False, 'wantverbose': False})
