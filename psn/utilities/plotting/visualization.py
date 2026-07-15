@@ -721,8 +721,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         else:
             threshold_info.append(f"Forced threshold: {int(allowable)}")
     if opt.get('alpha') is not None:
-        vt = opt.get('variance_threshold', 0.99)
-        threshold_info.append(f"Variance target: {vt}")
+        threshold_info.append("Alpha target: peak→trial-average")
     elif criterion in ['variance', 'variance_eigenvalues']:
         vt = opt.get('variance_threshold', 0.99)
         threshold_info.append(f"Variance threshold: {vt}")
