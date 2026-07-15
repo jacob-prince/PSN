@@ -387,6 +387,12 @@ class TestUnitGroups:
 class TestGSNArguments:
     """Test gsn_args options."""
 
+    def test_gsn_args_not_mutated(self, small_data):
+        """psn() must not leak its GSN defaults into the caller's gsn_args dict."""
+        gsn_args = {'foo': 'bar'}
+        psn(small_data, {'gsn_args': gsn_args, 'wantfig': False, 'wantverbose': False})
+        assert gsn_args == {'foo': 'bar'}
+
     def test_gsn_wantverbose(self, small_data):
         """Test GSN verbose option."""
         results = psn(small_data, {

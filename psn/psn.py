@@ -491,19 +491,16 @@ def psn(*args, **kwargs):
     if opt.get('gsn_result') is not None:
         # load_gsn_result also structurally validates the cache (see there).
         gsn_result = load_gsn_result(opt['gsn_result'], nunits)
-        # Auto-upgrade: when the user asked for basis='signal' or
-        # 'difference' AND the loaded gsn_result has matching eigvecs +
-        # eigvals cached, swap basis to the matrix + propagate the
-        # eigvalues. PSN's downstream then skips its own eigh (which is
-        # the dominant cost at large nunits) while producing bit-
-        # equivalent results to the string-basis path.
+        # If the cache carries matching eigvecs for a signal/difference basis,
+        # swap them in so PSN skips its own eigh (bit-equivalent result).
         opt = use_cached_eigvecs(opt, gsn_result)
         if opt['wantverbose']:
             _vlog('GSN', f"reusing provided gsn_result (skipping GSN); covariances {nunits}x{nunits}")
     else:
         if opt['wantverbose']:
             _vlog('GSN', 'estimating covariances via GSN (no gsn_result provided)')
-        gsn_opt = opt['gsn_args'] if opt['gsn_args'] is not None else {}
+        # Copy so the defaults below don't leak into the caller's gsn_args dict.
+        gsn_opt = dict(opt.get('gsn_args') or {})
         if 'wantverbose' not in gsn_opt:
             gsn_opt['wantverbose'] = False
         if 'wantshrinkage' not in gsn_opt:
