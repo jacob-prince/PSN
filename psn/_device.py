@@ -88,7 +88,7 @@ def report_device_status(opt):
         backend = f"GSN cov={'torch-CPU' if torch_avail else 'numpy'}, PSN core=numpy"
     else:
         backend = f"GSN cov + PSN core = torch ({device})"
-    print()  # blank line: visually separates this run's trace from prior output
+    print()  # separates this run's trace from prior output
     print(f"[PSN] device  | {device} ({tv}; {backend})")
     return device
 

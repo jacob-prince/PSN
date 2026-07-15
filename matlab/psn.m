@@ -400,7 +400,7 @@ opt = set_default_options(opt, nunits);
 orig_basis = opt.basis;
 
 if opt.wantverbose
-    fprintf('\n');   % blank line: visually separates this run's trace from prior output
+    fprintf('\n');   % separates this run's trace from prior output
     if has_nans
         vlog('input', ['%d units x %d conditions x %d trials; NaNs present -> ' ...
                        'uneven-trials path, avg %.2f valid trials/condition'], ...
