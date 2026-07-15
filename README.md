@@ -50,18 +50,27 @@ all units.
 ### Python
 
 ```python
+import numpy as np
 from psn import psn, generate_data
 
-# Synthetic data: (n_units, n_conditions, n_trials)
-train_data, _, _ = generate_data(nvox=50, ncond=200, ntrial=5, random_seed=42)
+# Synthetic train and test sets: (n_units, n_conditions, n_trials)
+train_data, test_data, ground_truth = generate_data(
+    nvox=50, ncond=200, ntrial=5, random_seed=42
+)
 
-results = psn(train_data)                  # 'standard' (default)
-results = psn(train_data, 'conservative')  # 99% signal-variance retention
-results = psn(train_data, 'aggressive')    # difference basis, prediction peak
-results = psn(train_data, 'compare')       # best of signal vs difference basis
-results = psn(train_data, 'wiener')        # full-rank matrix Wiener filter
+results = psn(train_data)                  # recommended default: balanced denoising
+results = psn(train_data, 'conservative')  # remove noise cautiously, keep more of the signal
+results = psn(train_data, 'aggressive')    # remove noise more strongly (best with plenty of data)
+results = psn(train_data, 'compare')       # auto-pick whichever setting best reproduces the data
+results = psn(train_data, 'wiener')        # optimal linear filter, no cutoff (minimizes error)
 
 denoised = results['denoiseddata']         # (n_units, n_conditions)
+
+# Apply the fitted denoiser to held-out test data
+denoiser   = results['denoiser']           # (n_units, n_units)
+unit_means = results['unit_means'][:, None]
+test_avg   = np.nanmean(test_data, axis=2)                       # (n_units, n_conditions)
+denoised_test = denoiser.T @ (test_avg - unit_means) + unit_means
 ```
 
 ### MATLAB
@@ -70,11 +79,11 @@ denoised = results['denoiseddata']         # (n_units, n_conditions)
 cd('path/to/PSN/matlab')
 data = randn(50, 100, 5);                 % [n_units x n_conditions x n_trials]
 
-results = psn(data);                       % 'standard' (default)
-results = psn(data, 'conservative');
-results = psn(data, 'aggressive');
-results = psn(data, 'compare');
-results = psn(data, 'wiener');
+results = psn(data);                       % recommended default: balanced denoising
+results = psn(data, 'conservative');       % remove noise cautiously, keep more of the signal
+results = psn(data, 'aggressive');         % remove noise more strongly (best with plenty of data)
+results = psn(data, 'compare');            % auto-pick whichever setting best reproduces the data
+results = psn(data, 'wiener');             % optimal linear filter, no cutoff (minimizes error)
 ```
 
 > The MATLAB and Python implementations are feature-for-feature equivalent for the
@@ -115,30 +124,50 @@ denoised = np.clip(results['denoiseddata'].reshape(H, W, C), 0, 1)
 
 ## Configuration
 
-Options can be passed as a dict, via `opt=`, or as keyword arguments. A named
-mode can be combined with any of these:
+### Presets
+
+Most users only need one of these named presets. They differ in how aggressively
+they strip noise, i.e. how much of the data they keep versus discard.
+
+| Preset | What it does | When to use it |
+|--------|--------------|----------------|
+| *(default)* / `'standard'` | Balanced denoising: a good tradeoff between removing noise and preserving signal. | Start here. |
+| `'conservative'` | Removes noise cautiously, keeping more of the original signal. | When discarding real signal is costlier than leaving in some noise. |
+| `'aggressive'` | Removes noise more strongly; can recover more but is less stable on small datasets. | When you have plenty of trials/conditions. |
+| `'compare'` | Tries two strategies and automatically keeps whichever best reproduces held-out trials. | When you're unsure which setting fits your data. |
+| `'wiener'` | The optimal linear filter (minimizes mean-squared error); uses the full data with no dimension cutoff. It shrinks each direction toward zero, trading some bias for lower variance. | When you want the theoretically optimal estimate. |
+
+### Advanced parameters
+
+The presets above are the recommended interface. If you want to build a custom
+combination, pass options as a dict, via `opt=`, or as keyword arguments, and a
+preset can be combined with any of these (keyword options win):
 
 ```python
 psn(train_data, {'basis': 'signal', 'device': 'cuda'})   # positional dict
 psn(train_data, opt={'basis': 'signal'})                  # opt= keyword
 psn(train_data, basis='signal', device='cuda')            # keywords
-psn(train_data, 'aggressive', device='cuda')              # mode + keyword override
+psn(train_data, 'aggressive', device='cuda')              # preset + keyword override
 ```
 
 In MATLAB, pass an options struct: `psn(data, opt)`.
 
+The two central knobs are **basis** (which directions in the data to denoise
+along) and **criterion** (how many of those directions to keep). The presets set
+both for you.
+
 | Parameter | Options | Description |
 |-----------|---------|-------------|
-| **basis** | `'signal'` (default), `'difference'`, `'pca'`, `'noise'`, `'random'`, `'compare'`, custom matrix | Basis for dimensionality reduction |
-| **criterion** | `'max-tradeoff'` (default), `'prediction'`, `'variance'`, `'variance_eigenvalues'`, `'wiener'` | How to select the dimensionality threshold |
-| **threshold_method** | `'global'` (default), `'hybrid'` | Single population threshold, or per-unit thresholds on a shared ordering |
-| **alpha** | `0.0`–`1.0` (or `None`) | Interpolates between the prediction peak (0) and the trial average / do-nothing point (1). Overrides `criterion`. |
-| **variance_threshold** | `0.0`–`1.0` (default `0.99`) | Target signal-variance fraction for `criterion='variance'`/`'variance_eigenvalues'` |
-| **allowable_thresholds** | vector (or `None`) | Restrict the threshold to these values; a single value forces that many dims |
-| **basis_ordering** | `'eigenvalues'` (default), `'signalvariance'` | Initial global order of basis vectors |
-| **unit_groups** | `[n_units]` integer labels | Units sharing a label share a threshold (`'hybrid'` only) |
-| **gsn_result** | dict / struct | Reuse precomputed GSN covariances to skip estimation |
-| **device** *(Python only)* | `'cpu'` (default), `'cuda'`, `'mps'` | Run on GPU via torch (only when explicitly set) |
+| **basis** | `'signal'` (default), `'difference'`, `'pca'`, `'noise'`, `'random'`, `'compare'`, custom matrix | Which set of directions to denoise along. `'signal'` favours directions carrying the most signal; `'difference'` uses the directions of the signal-minus-noise covariance difference (hence the name), which denoises more aggressively. |
+| **criterion** | `'max-tradeoff'` (default), `'prediction'`, `'variance'`, `'variance_eigenvalues'`, `'wiener'` | How many directions to keep. `'max-tradeoff'` balances signal kept vs. noise removed; `'variance'` keeps a target fraction of signal; `'wiener'` keeps all with optimal weighting. |
+| **threshold_method** | `'global'` (default), `'hybrid'` | Use one cutoff for all units, or a per-unit cutoff on a shared ordering. |
+| **alpha** | `0.0`–`1.0` (or `None`) | A single dial from most aggressive (0) to no denoising (1). Overrides `criterion` when set. |
+| **variance_threshold** | `0.0`–`1.0` (default `0.99`) | Fraction of signal to keep when `criterion` is `'variance'`/`'variance_eigenvalues'`. |
+| **allowable_thresholds** | vector (or `None`) | Restrict the cutoff to these values; a single value forces exactly that many dimensions. |
+| **basis_ordering** | `'eigenvalues'` (default), `'signalvariance'` | Order in which directions are considered for keeping. |
+| **unit_groups** | `[n_units]` integer labels | Units sharing a label share a cutoff (`'hybrid'` only). |
+| **gsn_result** | dict / struct | Reuse precomputed GSN covariances to skip re-estimation. |
+| **device** *(Python only)* | `'cpu'` (default), `'cuda'`, `'mps'` | Run on GPU via torch (only when explicitly set). |
 
 ---
 
@@ -155,21 +184,10 @@ for alpha in [0.0, 0.25, 0.5, 0.75, 1.0]:
     out = psn(train_data, alpha=alpha, gsn_result=results['gsn_result'])
 ```
 
-#### Applying the Denoiser to Held-Out Data
-
-```python
-results = psn(train_data)
-denoiser = results['denoiser']
-unit_means = results['unit_means'][:, None]
-
-test_avg = np.nanmean(test_data, axis=2)
-denoised_test = denoiser.T @ (test_avg - unit_means) + unit_means
-```
-
 #### GPU Acceleration (Python only)
 
 Set `device='cuda'` or `device='mps'` to run the heavy linear algebra on GPU via torch.
-Pass data as a numpy array — PSN handles the transfer. GPU pays off mainly at large
+Pass data as a numpy array; PSN handles the transfer. GPU pays off mainly at large
 `n_units` (~10k+).
 
 ```python
@@ -222,4 +240,4 @@ MIT. See [LICENSE](LICENSE).
 
 ## Contributing
 
-Feedback, bug reports, and contributions are welcome — please open an issue or pull request on GitHub.
+Feedback, bug reports, and contributions are welcome; please open an issue or pull request on GitHub.
