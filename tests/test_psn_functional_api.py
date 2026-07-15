@@ -273,6 +273,19 @@ class TestBasisOrdering:
 class TestAllowableThresholds:
     """Test allowable_thresholds constraint."""
 
+    def test_compare_respects_allowable_thresholds(self, sample_data):
+        """compare must rank bases at thresholds inside the allowable set, not
+        pick a basis at a disallowed K and then denoise at an allowed one."""
+        allowed = [3, 5, 7]
+        results = psn(sample_data, {
+            'basis': 'compare', 'allowable_thresholds': allowed,
+            'wantfig': False, 'wantverbose': False,
+        })
+        cands = results['diagnostics']['candidates']
+        for b in ('signal', 'difference'):
+            assert cands[b]['best_threshold'] in allowed
+        assert int(np.ravel(results['best_threshold'])[0]) in allowed
+
     def test_single_threshold(self, sample_data):
         """Test forcing a specific threshold."""
         forced_threshold = 5

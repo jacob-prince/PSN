@@ -67,12 +67,13 @@ def _select_lowrank(cSb, cNb, t, basis_key, criterion, opt, device='cpu'):
     sig = _per_dim_var(cSb, V)
     noi = _per_dim_var(cNb, V)
     total_S = float(np.sum(sig))
-    # The compare basis comparison itself is unconstrained; allowable_thresholds
-    # restricts only the final denoise threshold in the main pipeline.
+    # Honor allowable_thresholds so each candidate's K is the one the denoiser
+    # would actually use; compare must not rank bases at a disallowed threshold.
+    allowable = opt.get('allowable_thresholds')
     if criterion == 'max-tradeoff':
-        k = max_tradeoff_threshold(sig, noi, t)
+        k = max_tradeoff_threshold(sig, noi, t, allowable=allowable)
     else:                                   # 'prediction' / 'variance' etc.
-        k, _ = select_threshold_analytic(sig, noi, evals, t, {**opt, 'criterion': criterion, 'allowable_thresholds': None})
+        k, _ = select_threshold_analytic(sig, noi, evals, t, {**opt, 'criterion': criterion})
     sv_curve, rec_curve = _analytic_recovery_curve(sig, noi, t, total_S)
     k = int(np.clip(k, 0, len(sig)))
     return {

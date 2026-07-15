@@ -73,14 +73,14 @@ function [chosen, info] = select_compare_basis(cSb, cNb, ntrials, opt, data, uni
         noi = sum((cNb * V) .* V, 1)';
         total_S = sum(sig);
 
-        % The compare basis comparison itself is unconstrained; allowable_thresholds
-        % restricts only the final denoise threshold in the main pipeline.
+        % Honor allowable_thresholds so each candidate's K is the one the denoiser
+        % would actually use; compare must not rank bases at a disallowed threshold.
+        if isfield(opt, 'allowable_thresholds'), at = opt.allowable_thresholds; else, at = []; end
         if strcmp(opt.criterion, 'max-tradeoff')
-            k = max_tradeoff_threshold(sig, noi, ntrials);
+            k = max_tradeoff_threshold(sig, noi, ntrials, at);
         else
             sub_opt = opt;
             sub_opt.basis = b;
-            sub_opt.allowable_thresholds = [];
             [k, ~] = select_threshold_analytic(sig, noi, evals, ntrials, sub_opt);
         end
         k = max(0, min(k, numel(sig)));
