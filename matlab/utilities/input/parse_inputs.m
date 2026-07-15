@@ -123,7 +123,7 @@ function reject_wiener_conflicts(user_opt, force_wiener)
     if ~requests_wiener
         return;
     end
-    ignored = {'basis', 'criterion', 'threshold_method', 'basis_ordering', ...
+    ignored = {'basis', 'basis_eigenvalues', 'criterion', 'threshold_method', 'basis_ordering', ...
                'allowable_thresholds', 'variance_threshold', 'alpha', 'unit_groups'};
     conflicts = {};
     for i = 1:numel(ignored)

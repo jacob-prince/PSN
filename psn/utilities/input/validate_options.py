@@ -29,7 +29,8 @@ def validate_options(opt, nunits):
     - threshold_method: must be 'global' or 'hybrid'
     - basis_ordering: must be 'eigenvalues', 'signalvariance', or 'prediction'
     - variance_threshold: must be in [0,1]
-    - allowable_thresholds: must be numeric vector with non-negative values
+    - alpha: if set, must be a numeric scalar in [0,1] (else None)
+    - allowable_thresholds: numeric scalar or 1D vector with non-negative values
     - unit_groups: must have length nunits, contain non-negative integers
     - Compatibility: 'variance_eigenvalues' requires named basis (not custom/random)
       and only works with 'global' threshold_method
@@ -57,12 +58,18 @@ def validate_options(opt, nunits):
     if opt['variance_threshold'] < 0 or opt['variance_threshold'] > 1:
         raise ValueError('variance_threshold must be between 0 and 1')
 
+    if opt.get('alpha') is not None:
+        alpha = opt['alpha']
+        if isinstance(alpha, bool) or not isinstance(alpha, (int, float, np.integer, np.floating)):
+            raise ValueError('alpha must be a scalar in [0, 1] or None')
+        if alpha < 0 or alpha > 1:
+            raise ValueError('alpha must be a scalar in [0, 1] or None')
+
     if opt['allowable_thresholds'] is not None:
-        if not isinstance(opt['allowable_thresholds'], (list, np.ndarray)):
-            raise ValueError('allowable_thresholds must be a numeric vector')
+        # Scalar or 1D vector; a scalar means "force that many dims" (parity with MATLAB).
         allowable_arr = np.asarray(opt['allowable_thresholds'])
-        if allowable_arr.ndim != 1:
-            raise ValueError('allowable_thresholds must be a 1D vector')
+        if not np.issubdtype(allowable_arr.dtype, np.number) or allowable_arr.ndim > 1:
+            raise ValueError('allowable_thresholds must be a numeric scalar or 1D vector')
         if np.any(allowable_arr < 0):
             raise ValueError('allowable_thresholds must contain only non-negative values')
         # Note: Upper bound checked later against actual basis dimensions (ndims), not nunits

@@ -6,9 +6,9 @@ from .merge_dicts import merge_dicts as _merge_dicts
 # Pipeline options that the full-rank matrix Wiener filter ignores entirely (it is
 # basis-free and applies no truncation). Specifying any of these alongside a Wiener
 # request is contradictory and is rejected rather than silently overridden.
-_WIENER_IGNORED_OPTS = ('basis', 'criterion', 'threshold_method', 'basis_ordering',
-                        'allowable_thresholds', 'variance_threshold', 'alpha',
-                        'unit_groups')
+_WIENER_IGNORED_OPTS = ('basis', 'basis_eigenvalues', 'criterion', 'threshold_method',
+                        'basis_ordering', 'allowable_thresholds', 'variance_threshold',
+                        'alpha', 'unit_groups')
 
 
 def _reject_wiener_conflicts(user_opt, force_wiener=False):
@@ -86,9 +86,9 @@ def parse_inputs(*args, **kwargs):
 
       'wiener' is the exception: the full-rank Wiener filter is basis-free and
       applies no truncation, so it ignores the whole basis/criterion/threshold
-      pipeline. Supplying a contradicting option (basis, criterion, threshold_method,
-      basis_ordering, allowable_thresholds, variance_threshold, alpha, or unit_groups)
-      raises a ValueError instead of being silently ignored. The same check applies
+      pipeline. Supplying a contradicting option (basis, basis_eigenvalues, criterion,
+      threshold_method, basis_ordering, allowable_thresholds, variance_threshold, alpha,
+      or unit_groups) raises a ValueError instead of being silently ignored. The same check applies
       to a direct dict that requests Wiener via criterion='wiener' or basis='wiener'.
     """
 

@@ -9,6 +9,7 @@ Tests the current psn() functional API with all combinations of:
 
 import numpy as np
 import pytest
+
 from psn import psn
 
 
@@ -519,6 +520,7 @@ class TestPresetModes:
         {'threshold_method': 'hybrid'},
         {'criterion': 'prediction'},
         {'basis': 'signal'},
+        {'basis_eigenvalues': [1.0, 2.0]},
         {'variance_threshold': 0.9},
         {'alpha': 0.3},
     ])
@@ -547,6 +549,53 @@ class TestPresetModes:
         results = psn(sample_data, {'basis': 'wiener', 'criterion': 'wiener',
                                     'wantfig': False, 'wantverbose': False})
         assert 'denoiseddata' in results
+
+
+# ============================================================================
+# Option validation (alpha, allowable_thresholds)
+# ============================================================================
+
+class TestOptionValidation:
+    """Explicit checks for the scalar-override validation holes."""
+
+    @pytest.mark.parametrize('bad', [-0.1, 1.5, 2, 'x', [0.5]])
+    def test_bad_alpha_raises(self, sample_data, bad):
+        """alpha must be a scalar in [0, 1]; out-of-range / non-scalar raises."""
+        with pytest.raises(ValueError, match='alpha'):
+            psn(sample_data, {'alpha': bad, 'wantfig': False, 'wantverbose': False})
+
+    @pytest.mark.parametrize('at', [3, (1, 2, 3), [2, 4], np.array([1, 3])])
+    def test_allowable_thresholds_accepts_scalar_and_vector(self, sample_data, at):
+        """A scalar (force that many dims), tuple, list, and ndarray are all valid."""
+        res = psn(sample_data, {'allowable_thresholds': at,
+                                'wantfig': False, 'wantverbose': False})
+        assert 'denoiseddata' in res
+
+    @pytest.mark.parametrize('bad', [[[1, 2], [3, 4]], -1, [1, -2], 'x'])
+    def test_bad_allowable_thresholds_raises(self, sample_data, bad):
+        """2D, negative, or non-numeric allowable_thresholds raises."""
+        with pytest.raises(ValueError, match='allowable_thresholds'):
+            psn(sample_data, {'allowable_thresholds': bad,
+                              'wantfig': False, 'wantverbose': False})
+
+
+# ============================================================================
+# Data input validation
+# ============================================================================
+
+class TestDataInputValidation:
+    """Non-numeric / non-3D data raises a clean error, not a cryptic np.isnan crash."""
+
+    @pytest.mark.parametrize('bad', [
+        np.array([[[1, 2], [3, 4]], [[5, 6], [7, 8]]], dtype=object),  # object 3D
+        np.full((4, 3, 2), 'x'),                                        # string 3D
+        np.zeros((4, 3, 2), dtype=bool),                                # bool 3D
+        [[[1, 2], [3, 4]], [[5, 6], [7, 8]]],                           # nested list (array-like)
+        np.zeros((4, 3)),                                               # 2D numeric
+    ])
+    def test_non_numeric_or_non_3d_raises(self, bad):
+        with pytest.raises(ValueError, match='3D numeric array'):
+            psn(bad, {'wantfig': False, 'wantverbose': False})
 
 
 # ============================================================================

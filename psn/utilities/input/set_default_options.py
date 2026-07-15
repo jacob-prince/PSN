@@ -99,7 +99,7 @@ def set_default_options(opt, nunits):
     # Auto-detect: if allowable_thresholds is a single value, force threshold_method to 'global'
     if opt['allowable_thresholds'] is not None:
         allowable_arr = np.asarray(opt['allowable_thresholds'])
-        if allowable_arr.ndim == 1 and len(allowable_arr) == 1:
+        if allowable_arr.size == 1:            # bare scalar or length-1 vector
             if opt['threshold_method'] != 'global':
                 if opt['wantverbose']:
                     print("PSN: allowable_thresholds is a single value, automatically setting threshold_method to 'global'")
