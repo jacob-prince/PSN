@@ -58,8 +58,8 @@ function validate_options(opt, nunits)
         end
     end
 
-    if opt.variance_threshold < 0 || opt.variance_threshold > 1
-        error('variance_threshold must be between 0 and 1');
+    if ~isfinite(opt.variance_threshold) || opt.variance_threshold < 0 || opt.variance_threshold > 1
+        error('variance_threshold must be a finite value between 0 and 1');
     end
 
     if ~isempty(opt.allowable_thresholds)
@@ -93,8 +93,8 @@ function validate_options(opt, nunits)
 
     % alpha: scalar in [0,1] or empty (disabled). Does not apply to criterion='wiener'.
     if isfield(opt, 'alpha') && ~isempty(opt.alpha)
-        if ~isnumeric(opt.alpha) || ~isscalar(opt.alpha) || opt.alpha < 0 || opt.alpha > 1
-            error('alpha must be a scalar in [0, 1] or empty');
+        if ~isnumeric(opt.alpha) || ~isscalar(opt.alpha) || ~isfinite(opt.alpha) || opt.alpha < 0 || opt.alpha > 1
+            error('alpha must be a finite scalar in [0, 1] or empty');
         end
     end
 end

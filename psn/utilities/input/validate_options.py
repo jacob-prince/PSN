@@ -28,8 +28,8 @@ def validate_options(opt, nunits):
     - criterion: must be 'prediction', 'max-tradeoff', 'variance', or 'variance_eigenvalues'
     - threshold_method: must be 'global' or 'hybrid'
     - basis_ordering: must be 'eigenvalues', 'signalvariance', or 'prediction'
-    - variance_threshold: must be in [0,1]
-    - alpha: if set, must be a numeric scalar in [0,1] (else None)
+    - variance_threshold: must be a finite value in [0,1]
+    - alpha: if set, must be a finite scalar in [0,1] (else None)
     - allowable_thresholds: numeric scalar or 1D vector with non-negative values
     - unit_groups: must have length nunits, contain non-negative integers
     - Compatibility: 'variance_eigenvalues' requires named basis (not custom/random)
@@ -55,15 +55,17 @@ def validate_options(opt, nunits):
     if opt['basis_ordering'] not in valid_orderings:
         raise ValueError(f"basis_ordering must be one of: {', '.join(valid_orderings)}")
 
-    if opt['variance_threshold'] < 0 or opt['variance_threshold'] > 1:
-        raise ValueError('variance_threshold must be between 0 and 1')
+    vt = opt['variance_threshold']
+    if not np.isfinite(vt) or vt < 0 or vt > 1:
+        raise ValueError('variance_threshold must be a finite value between 0 and 1')
 
     if opt.get('alpha') is not None:
         alpha = opt['alpha']
         if isinstance(alpha, bool) or not isinstance(alpha, (int, float, np.integer, np.floating)):
             raise ValueError('alpha must be a scalar in [0, 1] or None')
-        if alpha < 0 or alpha > 1:
-            raise ValueError('alpha must be a scalar in [0, 1] or None')
+        # NaN slips past bare < / > comparisons (both false), so check finiteness.
+        if not np.isfinite(alpha) or alpha < 0 or alpha > 1:
+            raise ValueError('alpha must be a finite scalar in [0, 1] or None')
 
     if opt['allowable_thresholds'] is not None:
         # Scalar or 1D vector; a scalar means "force that many dims" (parity with MATLAB).

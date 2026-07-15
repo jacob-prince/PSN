@@ -577,11 +577,18 @@ class TestPresetModes:
 class TestOptionValidation:
     """Explicit checks for the scalar-override validation holes."""
 
-    @pytest.mark.parametrize('bad', [-0.1, 1.5, 2, 'x', [0.5]])
+    @pytest.mark.parametrize('bad', [-0.1, 1.5, 2, 'x', [0.5], np.nan, np.inf])
     def test_bad_alpha_raises(self, sample_data, bad):
-        """alpha must be a scalar in [0, 1]; out-of-range / non-scalar raises."""
+        """alpha must be a finite scalar in [0, 1]; out-of-range/non-scalar/nan raises."""
         with pytest.raises(ValueError, match='alpha'):
             psn(sample_data, {'alpha': bad, 'wantfig': False, 'wantverbose': False})
+
+    @pytest.mark.parametrize('bad', [np.nan, np.inf, -0.1, 1.5])
+    def test_bad_variance_threshold_raises(self, sample_data, bad):
+        """variance_threshold must be finite and in [0, 1]; nan/inf/out-of-range raises."""
+        with pytest.raises(ValueError, match='variance_threshold'):
+            psn(sample_data, {'criterion': 'variance', 'variance_threshold': bad,
+                              'wantfig': False, 'wantverbose': False})
 
     @pytest.mark.parametrize('at', [3, (1, 2, 3), [2, 4], np.array([1, 3])])
     def test_allowable_thresholds_accepts_scalar_and_vector(self, sample_data, at):
