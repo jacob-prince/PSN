@@ -1,11 +1,19 @@
-"""Scikit-learn compatible estimator for PSN (Partitioning Signal and Noise).
+"""Scikit-learn-style estimator for PSN (Partitioning Signal and Noise).
 
 The :class:`PSN` estimator wraps the functional :func:`psn` API behind the
 standard scikit-learn ``fit`` / ``transform`` / ``fit_transform`` interface.
-Because it subclasses :class:`sklearn.base.BaseEstimator` and
-:class:`sklearn.base.TransformerMixin`, it supports ``get_params`` /
-``set_params`` / ``clone`` and can be dropped into a :class:`~sklearn.pipeline.Pipeline`
-or :class:`~sklearn.model_selection.GridSearchCV`.
+Subclassing :class:`sklearn.base.BaseEstimator` and
+:class:`sklearn.base.TransformerMixin` gives it ``get_params`` / ``set_params`` /
+``clone`` and lets it act as a single step in a :class:`~sklearn.pipeline.Pipeline`.
+
+It is NOT a drop-in for scikit-learn's model-selection machinery
+(:class:`~sklearn.model_selection.GridSearchCV`, ``cross_val_score``,
+``check_estimator``). PSN data is shaped ``[nunits, nconds, ntrials]`` with UNITS
+on axis 0, whereas scikit-learn treats axis 0 as samples, so the default CV
+splitters would partition units rather than conditions. PSN is also unsupervised
+(no ``y``, no ``score``), so ``GridSearchCV`` has nothing to optimise without a
+custom scorer. To cross-validate, split the conditions axis yourself; see the
+Notes in :class:`PSN` and SKLEARN_API.md.
 """
 
 import numpy as np
@@ -99,6 +107,18 @@ class PSN(BaseEstimator, TransformerMixin):
         Per-unit diagnostics (hybrid mode only).
     input_data_ : ndarray
         Copy of the training data (kept for plot_diagnostics).
+
+    Notes
+    -----
+    ``PSN`` follows the scikit-learn estimator/transformer protocol (``fit``,
+    ``transform``, ``fit_transform``, ``get_params``, ``set_params``, ``clone``)
+    and works as a single :class:`~sklearn.pipeline.Pipeline` step. It is
+    deliberately NOT wired for scikit-learn model selection: ``X`` is
+    ``[nunits, nconds, ntrials]`` (units on axis 0, not samples) and PSN is
+    unsupervised, so ``GridSearchCV`` / ``cross_val_score`` / ``check_estimator``
+    do not apply out of the box - their splitters would partition units. To
+    cross-validate, split the CONDITIONS axis yourself: fit on a subset of
+    conditions and call ``transform`` on the held-out conditions.
 
     Examples
     --------

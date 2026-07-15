@@ -4,13 +4,13 @@ Tests the PSN class implementation including fit, transform, fit_transform,
 plot_diagnostics, pickling, and various edge cases.
 """
 
-import numpy as np
 import pickle
 import tempfile
+
+import numpy as np
 import pytest
 
 from psn import PSN, psn
-
 
 # =============================================================================
 # Fixtures
@@ -817,6 +817,40 @@ class TestSklearnProtocol:
             est = clone(base).set_params(criterion=crit, threshold_method='global')
             est.fit(sample_data)
             assert est.opt_used_['criterion'] == crit
+
+
+# =============================================================================
+# Cross-validation (correct axis) and the limits of sklearn compatibility
+# =============================================================================
+
+class TestCrossValidation:
+    """Pin the ACTUAL guarantees, not sklearn-CV compatibility.
+
+    PSN works as a Pipeline step and can be cross-validated by splitting the
+    CONDITIONS axis by hand, but it has no ``score`` (so GridSearchCV /
+    cross_val_score have nothing to optimise) and its layout (units on axis 0)
+    is incompatible with sklearn's default splitters. These tests lock that in
+    so the docs and reality can't drift back apart.
+    """
+
+    def test_no_score_method(self):
+        """Unsupervised: no target and no score for GridSearchCV to optimise."""
+        assert not hasattr(PSN(), 'score')
+
+    def test_manual_condition_fold_cv(self, sample_data):
+        """The supported CV pattern: split conditions, fit on the train
+        conditions, transform the held-out conditions."""
+        nconds = sample_data.shape[1]
+        n_folds = 5
+        rng = np.random.default_rng(0)
+        folds = np.array_split(rng.permutation(nconds), n_folds)
+        for k in range(n_folds):
+            test_c = folds[k]
+            train_c = np.concatenate([folds[j] for j in range(n_folds) if j != k])
+            model = PSN(wantverbose=False, wantfig=False).fit(sample_data[:, train_c, :])
+            out = model.transform(sample_data[:, test_c, :])
+            assert out.shape == (sample_data.shape[0], len(test_c))
+            assert np.all(np.isfinite(out))
 
 
 # =============================================================================

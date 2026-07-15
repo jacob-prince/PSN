@@ -1,9 +1,16 @@
 # PSN scikit-learn API (Python)
 
-PSN ships a scikit-learn-compatible estimator, `PSN`, that wraps the functional
+PSN ships a scikit-learn-style estimator, `PSN`, that wraps the functional
 `psn()` API behind the standard `fit` / `transform` / `fit_transform` interface. It
 subclasses `BaseEstimator` and `TransformerMixin`, so it supports
-`get_params` / `set_params` / `clone` and drops into `Pipeline` and `GridSearchCV`.
+`get_params` / `set_params` / `clone` and works as a single `Pipeline` step.
+
+> **Not a drop-in for `GridSearchCV` / `cross_val_score` / `check_estimator`.**
+> PSN data is `[nunits, nconds, ntrials]` with units on axis 0, but scikit-learn
+> treats axis 0 as samples, so its default CV splitters would partition *units*
+> rather than hold out data. PSN is also unsupervised (no `y`, no `score`). To
+> cross-validate, split the conditions axis yourself; see
+> [Cross-validation & model selection](#cross-validation--model-selection).
 
 ```python
 from psn import PSN
@@ -95,11 +102,41 @@ from sklearn.base import clone
 clone(model)
 ```
 
-Because it implements the estimator protocol, `PSN` can be used inside a `Pipeline`
-or swept with `GridSearchCV` over its parameters (e.g.
-`{'basis': ['signal', 'difference'], 'criterion': ['max-tradeoff', 'prediction']}`).
+Because it implements the transformer protocol, `PSN` can be used as a single
+step in a `Pipeline`. See the notebooks in `examples/` for runnable demos.
 
-See the notebooks in `examples/` for runnable demos.
+---
+
+## Cross-validation & model selection
+
+`PSN` is **not** compatible with scikit-learn's CV utilities (`GridSearchCV`,
+`cross_val_score`, `check_estimator`) as-is, for two reasons:
+
+1. **Axis convention.** PSN expects `[nunits, nconds, ntrials]` with units on
+   axis 0. scikit-learn's splitters (`KFold`, etc.) split axis 0, so they would
+   partition *units*, changing the population and the covariance dimensions,
+   rather than holding out data.
+2. **Unsupervised.** PSN has no target `y` and no `score` method, so there is
+   nothing for `GridSearchCV` to optimise without a custom scorer.
+
+To cross-validate a hyperparameter, split the **conditions** axis yourself and
+score however suits your analysis:
+
+```python
+import numpy as np
+from psn import PSN
+
+n_folds = 5
+rng = np.random.default_rng(0)
+folds = np.array_split(rng.permutation(train.shape[1]), n_folds)   # over conditions
+
+for k in range(n_folds):
+    test_c  = folds[k]
+    train_c = np.concatenate([folds[j] for j in range(n_folds) if j != k])
+    model = PSN(criterion='prediction', wantverbose=False).fit(train[:, train_c, :])
+    denoised_heldout = model.transform(train[:, test_c, :])        # [nunits, len(test_c)]
+    # ... score denoised_heldout against a held-out trial average, etc.
+```
 
 ---
 
