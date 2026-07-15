@@ -599,6 +599,39 @@ class TestDataInputValidation:
 
 
 # ============================================================================
+# Global RNG hygiene
+# ============================================================================
+
+class TestGlobalRNGUnchanged:
+    """Library code must not seed or advance the global NumPy RNG."""
+
+    @staticmethod
+    def _state():
+        s = np.random.get_state()
+        return s[0], s[1].copy(), s[2]
+
+    @staticmethod
+    def _unchanged(a, b):
+        return a[0] == b[0] and np.array_equal(a[1], b[1]) and a[2] == b[2]
+
+    def test_random_basis_leaves_global_rng_untouched(self, sample_data):
+        np.random.seed(12345)
+        before = self._state()
+        psn(sample_data, {'basis': 'random', 'wantfig': False, 'wantverbose': False})
+        assert self._unchanged(before, self._state())
+
+    def test_diagnostic_figure_leaves_global_rng_untouched(self, sample_data):
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        np.random.seed(12345)
+        before = self._state()
+        psn(sample_data, {'wantfig': True, 'wantverbose': False})
+        plt.close('all')
+        assert self._unchanged(before, self._state())
+
+
+# ============================================================================
 # Test Data Dimensions
 # ============================================================================
 

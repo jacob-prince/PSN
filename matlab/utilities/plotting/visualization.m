@@ -63,8 +63,8 @@ function fig = visualization(data, results, varargin)
     % Unit subsampling
     subsample_units = nunits > 500;
     if subsample_units
-        rng(42);  % For reproducibility
-        subsample_idx = sort(randperm(nunits, n_subsample));
+        su = RandStream('mt19937ar', 'Seed', 42);  % local; leave global rng untouched
+        subsample_idx = sort(randperm(su, nunits, n_subsample));
     else
         subsample_idx = 1:nunits;
     end
@@ -72,8 +72,8 @@ function fig = visualization(data, results, varargin)
     % Condition subsampling (for trace plots)
     subsample_conds = nconds > 500;
     if subsample_conds
-        rng(43);  % Different seed for conditions
-        subsample_cond_idx = sort(randperm(nconds, n_subsample));
+        sc = RandStream('mt19937ar', 'Seed', 43);  % local; leave global rng untouched
+        subsample_cond_idx = sort(randperm(sc, nconds, n_subsample));
     else
         subsample_cond_idx = 1:nconds;
     end
@@ -1051,9 +1051,9 @@ function fig = visualization(data, results, varargin)
     x_positions = [1, 2, 3];
     labels = {'TAvg vs TAvg', 'TAvg vs Denoised', 'Denoised vs Denoised'};
 
-    % Add jitter for subsampled units
-    rng(42);
-    x_jitter_sub = (rand(n_sub, 1) - 0.5) * 0.16;
+    % Add jitter for subsampled units (local RNG; leave global rng untouched)
+    sj = RandStream('mt19937ar', 'Seed', 42);
+    x_jitter_sub = (rand(sj, n_sub, 1) - 0.5) * 0.16;
 
     hold(ax13, 'on');
 
@@ -1166,7 +1166,8 @@ function fig = visualization(data, results, varargin)
         % Define x positions
         x_before = 1;
         x_after = 2;
-        x_jitter_diag = (rand(n_sub, 1) - 0.5) * 0.1;
+        sjd = RandStream('mt19937ar', 'Seed', 43);  % local; leave global rng untouched
+        x_jitter_diag = (rand(sjd, n_sub, 1) - 0.5) * 0.1;
 
         % Plot 14: Signal Variance
         ax14 = nexttile(t, [1 3]);  % Row 4, signal variance

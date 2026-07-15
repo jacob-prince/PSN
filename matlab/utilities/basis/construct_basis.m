@@ -85,12 +85,10 @@ function [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, data
                 % GSN-estimated signal variance.
 
             case 'random'
-                % Random orthonormal basis (no meaningful eigenvalues)
-                % NOTE: This resets the global RNG state for reproducibility
-                % To avoid affecting other random operations, consider using a separate RandStream
-                rng('default');
-                rng(42);
-                [basis, ~] = qr(randn(nunits));
+                % Random orthonormal basis (no meaningful eigenvalues). Use a
+                % local RandStream so the global rng state is left untouched.
+                s = RandStream('mt19937ar', 'Seed', 42);
+                [basis, ~] = qr(randn(s, nunits));
                 basis_eigenvalues = [];
 
             otherwise

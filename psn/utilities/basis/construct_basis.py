@@ -90,23 +90,19 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
             # GSN-estimated signal variance.
 
         elif basis_spec == 'random':
-            # Random orthonormal basis (no meaningful eigenvalues)
-            # NOTE: This sets the RNG state for reproducibility
-            np.random.seed(42)
-            basis, _ = np.linalg.qr(np.random.randn(nunits, nunits))
+            # Random orthonormal basis (no meaningful eigenvalues). Use a local
+            # RNG (fixed seed for reproducibility) so the global stream is untouched.
+            rng = np.random.RandomState(42)
+            basis, _ = np.linalg.qr(rng.randn(nunits, nunits))
             basis_eigenvalues = None
 
         else:
             raise ValueError(f'Unknown basis type: {basis_spec}')
 
     else:
-        # User-provided custom basis. Eigenvalues optional - pass them
-        # via `custom_basis_eigenvalues` when the caller already has
-        # them (e.g. when reusing eigvecs cached from a previous GSN
-        # run). When provided, downstream uses 'eigenvalues' ordering
-        # instead of the signalvariance fallback, which makes
-        # opt['basis']=<eigvecs of cSb> equivalent to
-        # opt['basis']='signal' end-to-end.
+        # User-provided custom basis. When custom_basis_eigenvalues is given,
+        # downstream uses 'eigenvalues' ordering instead of the signalvariance
+        # fallback (so passing cSb's eigvecs matches basis='signal' end-to-end).
         basis = basis_spec
 
         if basis.shape[0] != nunits:

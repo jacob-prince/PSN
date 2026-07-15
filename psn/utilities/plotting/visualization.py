@@ -586,9 +586,6 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     if cmap is None:
         cmap = cmapsign4()
 
-    # Set random seed for reproducibility
-    np.random.seed(42)
-
     # Increase font sizes globally for this figure
     plt.rcParams.update({
         'font.size': 12,
@@ -626,16 +623,16 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # Unit subsampling
     subsample_units = nunits > 500
     if subsample_units:
-        np.random.seed(42)  # For reproducibility
-        subsample_idx = np.sort(np.random.choice(nunits, n_subsample, replace=False))
+        rng_units = np.random.RandomState(42)  # local RNG; leave global state untouched
+        subsample_idx = np.sort(rng_units.choice(nunits, n_subsample, replace=False))
     else:
         subsample_idx = np.arange(nunits)
 
     # Condition subsampling (for trace plots)
     subsample_conds = nconds > 500
     if subsample_conds:
-        np.random.seed(43)  # Different seed for conditions
-        subsample_cond_idx = np.sort(np.random.choice(nconds, n_subsample, replace=False))
+        rng_conds = np.random.RandomState(43)  # local RNG; leave global state untouched
+        subsample_cond_idx = np.sort(rng_conds.choice(nconds, n_subsample, replace=False))
     else:
         subsample_cond_idx = np.arange(nconds)
 
@@ -1675,8 +1672,8 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     x_positions = np.array([1, 2, 3])
     labels = ['TAvg vs TAvg', 'TAvg vs Denoised', 'Denoised vs Denoised']
 
-    # Add jitter for subsampled units
-    x_jitter_sub = (np.random.rand(n_sub) - 0.5) * 0.16
+    # Add jitter for subsampled units (local RNG; leave global state untouched)
+    x_jitter_sub = (np.random.RandomState(42).rand(n_sub) - 0.5) * 0.16
 
     # Connecting lines (subsampled)
     for ii in range(n_sub):
@@ -1786,7 +1783,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         # Define x positions
         x_before = 1
         x_after = 2
-        x_jitter_diag = (np.random.rand(n_sub) - 0.5) * 0.1
+        x_jitter_diag = (np.random.RandomState(43).rand(n_sub) - 0.5) * 0.1
 
         # Plot 14: Signal Variance
         ax14 = fig.add_subplot(gs[3, 0:2])  # Row 3, columns 0-1

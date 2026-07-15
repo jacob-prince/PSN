@@ -334,7 +334,7 @@ def generate_data(nvox=50, ncond=200, ntrial=5, signal_decay=2.0, noise_decay=1.
             # Cap align_k to not exceed available dimensions
             effective_k = min(align_k, nvox)
             U_noise = _adjust_alignment_gradient_descent(
-                U_signal, U_noise, align_alpha, effective_k, verbose=verbose
+                U_signal, U_noise, align_alpha, effective_k, verbose=verbose, rng=rng
             )
 
         # Create diagonal eigenvalues for noise
@@ -357,7 +357,7 @@ def generate_data(nvox=50, ncond=200, ntrial=5, signal_decay=2.0, noise_decay=1.
         # Re-align noise after recalculating U_signal (only if noise_cov was not user-provided)
         if align_k > 0 and not user_provided_noise_cov:
             U_noise = _adjust_alignment_gradient_descent(
-                U_signal, U_noise, align_alpha, align_k, verbose=verbose
+                U_signal, U_noise, align_alpha, align_k, verbose=verbose, rng=rng
             )
             # Rebuild noise covariance matrix with the realigned eigenvectors
             noise_cov = U_noise @ np.diag(noise_eigs) @ U_noise.T
