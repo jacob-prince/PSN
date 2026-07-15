@@ -26,9 +26,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-import gsn.fast_perform_gsn as _fg                              # noqa: E402
-from gsn.fast_perform_gsn import _HAS_TORCH, fast_perform_gsn   # noqa: E402
-
+import gsn.fast_perform_gsn as _fg  # noqa: E402
+from gsn.fast_perform_gsn import _HAS_TORCH, fast_perform_gsn  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Data generators - a spread of realistic shapes and conditioning

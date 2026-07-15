@@ -30,7 +30,7 @@ import numpy as np
 import pytest
 
 import psn
-from psn._device import resolve_device, is_cpu
+from psn._device import is_cpu, resolve_device
 
 try:
     import torch
@@ -192,8 +192,9 @@ class TestUnitWeightedProjectionsDevice:
     def test_cpu_vectorized_matches_legacy_loop(self, small_data, do_unit_ranking):
         """The CPU path was rewritten to be vectorized; verify it
         matches a known-good per-unit-loop reference."""
-        from psn.utilities.denoise.compute_unit_weighted_projections \
-            import compute_unit_weighted_projections
+        from psn.utilities.denoise.compute_unit_weighted_projections import (
+            compute_unit_weighted_projections,
+        )
         _, res = small_data
         B = res['eigvecs_signal']
         sp = np.maximum(np.einsum('ij,jk,ki->k',
@@ -227,8 +228,9 @@ class TestUnitWeightedProjectionsDevice:
     @pytest.mark.skipif(_TEST_DEVICE is None, reason=_SKIP_REASON)
     @pytest.mark.parametrize('do_unit_ranking', [True, False])
     def test_device_matches_cpu(self, small_data, do_unit_ranking):
-        from psn.utilities.denoise.compute_unit_weighted_projections \
-            import compute_unit_weighted_projections
+        from psn.utilities.denoise.compute_unit_weighted_projections import (
+            compute_unit_weighted_projections,
+        )
         _, res = small_data
         B = res['eigvecs_signal']
         sp = np.maximum(np.einsum('ij,jk,ki->k', B.T, res['cSb'], B), 0)

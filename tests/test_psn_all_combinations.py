@@ -6,6 +6,7 @@ to ensure comprehensive coverage and detect any interaction issues.
 
 import numpy as np
 import pytest
+
 from psn import psn
 
 

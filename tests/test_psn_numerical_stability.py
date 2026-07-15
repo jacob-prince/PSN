@@ -9,6 +9,7 @@ This test file focuses on:
 
 import numpy as np
 import pytest
+
 from psn import psn
 
 

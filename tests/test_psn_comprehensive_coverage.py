@@ -6,6 +6,7 @@ degenerate data, and parameter interactions not fully covered in other test file
 
 import numpy as np
 import pytest
+
 from psn import psn
 
 

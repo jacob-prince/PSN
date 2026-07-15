@@ -8,7 +8,6 @@ A shared gsn_result is passed where an exact denoiser match is asserted, so GSN
 estimation is identical across the runs being compared.
 """
 import numpy as np
-import pytest
 
 from psn.psn import psn
 

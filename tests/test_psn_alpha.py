@@ -14,14 +14,14 @@ variance_threshold. Covers:
 - Visualization runs without error
 """
 
+import matplotlib
 import numpy as np
 import pytest
-import matplotlib
+
 matplotlib.use('Agg')
 
 from psn import psn
 from psn.utilities.threshold.select_threshold_analytic import select_threshold_analytic
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

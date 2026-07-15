@@ -33,14 +33,13 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-import psn                                              # noqa: E402
-from psn.psn import psn as psn_fn                       # noqa: E402
+from psn.psn import psn as psn_fn  # noqa: E402
+
 # ``psn.psn`` resolves to the function (re-exported from ``psn/__init__.py``),
 # not the submodule. Grab the actual module from sys.modules so we can
 # monkey-patch its ``perform_gsn`` reference.
 _psn_mod = sys.modules['psn.psn']
 from gsn.perform_gsn import perform_gsn as _ref_perform_gsn  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Data generators

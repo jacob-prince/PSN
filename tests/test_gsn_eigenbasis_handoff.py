@@ -61,12 +61,12 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from gsn.fast_perform_gsn import _eigh_descending_numpy
+from gsn.perform_gsn import perform_gsn
 
 import psn
-from psn.utilities.basis.eigh_descending_sym import eigh_descending_sym
 from psn.utilities.basis.construct_basis import construct_basis
-from gsn.perform_gsn import perform_gsn
-from gsn.fast_perform_gsn import _eigh_descending_numpy
+from psn.utilities.basis.eigh_descending_sym import eigh_descending_sym
 
 try:
     import torch
@@ -201,8 +201,10 @@ class TestEighConvention:
         VALUE descending, so negative eigenvalues sort to the tail.
         Sign convention must hold for those columns too."""
         rng = np.random.default_rng(2)
-        A = rng.standard_normal((40, 40)); A = A @ A.T
-        B = rng.standard_normal((40, 40)); B = B @ B.T
+        A = rng.standard_normal((40, 40))
+        A = A @ A.T
+        B = rng.standard_normal((40, 40))
+        B = B @ B.T
         M = A - 0.5 * B                              # indefinite
         d_g, V_g = _eigh_descending_numpy(M)
         d_p, V_p = eigh_descending_sym(M)

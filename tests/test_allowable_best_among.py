@@ -11,10 +11,10 @@ import numpy as np
 import pytest
 
 from psn import psn
-from psn.utilities.threshold.select_threshold_analytic import select_threshold_analytic
 from psn.utilities.threshold.constrain_to_allowable import constrain_to_allowable
 from psn.utilities.threshold.max_tradeoff import max_tradeoff_threshold
 from psn.utilities.threshold.select_allowable import argmax_allowable, first_reach_allowable
+from psn.utilities.threshold.select_threshold_analytic import select_threshold_analytic
 
 
 # --------------------------------------------------------------------------- #

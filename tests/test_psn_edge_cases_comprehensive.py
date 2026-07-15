@@ -5,8 +5,8 @@ Tests edge cases, NaN handling, extreme data conditions, and error scenarios.
 
 import numpy as np
 import pytest
-from psn import psn
 
+from psn import psn
 
 # ============================================================================
 # Test NaN Handling

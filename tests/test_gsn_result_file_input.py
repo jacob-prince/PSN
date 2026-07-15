@@ -30,15 +30,11 @@ changes or PSN's loader logic regresses, this file fails immediately.
 """
 from __future__ import annotations
 
-import os
-import tempfile
-
 import numpy as np
 import pytest
-
-import psn
 from gsn.perform_gsn import perform_gsn
 
+import psn
 
 # ---------------------------------------------------------------------------
 # Fixtures
