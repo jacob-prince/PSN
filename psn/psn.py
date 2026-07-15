@@ -89,8 +89,8 @@ def psn(*args, **kwargs):
     psn(data,'aggressive',{'threshold_method':'hybrid'}) keeps the 'aggressive' basis
     and criterion but switches to hybrid thresholds. The 'wiener' mode is the
     exception: it is basis-free and untruncated, so combining it with a conflicting
-    <basis>, <criterion>, <threshold_method>, <basis_ordering>, <allowable_thresholds>,
-    <variance_threshold>, <alpha>, or <unit_groups> raises a ValueError instead.
+    <basis>, <basis_eigenvalues>, <criterion>, <threshold_method>, <basis_ordering>,
+    <allowable_thresholds>, <variance_threshold>, <alpha>, or <unit_groups> raises a ValueError instead.
 
     -------------------------------------------------------------------------
     Inputs:
@@ -169,9 +169,9 @@ def psn(*args, **kwargs):
                                    this applies NO truncation (all dimensions are kept and
                                    continuously weighted) and it is basis-free. Because it
                                    bypasses the basis/criterion/threshold pipeline, supplying a
-                                   conflicting <basis>, <threshold_method>, <basis_ordering>,
-                                   <allowable_thresholds>, <variance_threshold>, <alpha>, or
-                                   <unit_groups> raises a ValueError rather than being ignored.
+                                   conflicting <basis>, <basis_eigenvalues>, <threshold_method>,
+                                   <basis_ordering>, <allowable_thresholds>, <variance_threshold>,
+                                   <alpha>, or <unit_groups> raises a ValueError rather than being ignored.
         Default: 'max-tradeoff'.
         (Note that <criterion> set to 'variance_eigenvalues' is not compatible with
          the B and 'random' cases of <basis>, and is also not compatible with
@@ -239,6 +239,9 @@ def psn(*args, **kwargs):
         expensive GSN estimation and uses these covariances directly. This is
         useful for sweeping over hyperparameters (alpha, basis, criterion, etc.)
         on the same data without re-running GSN each time.
+        The cache must describe the same population of units (same units, same
+        order) as the data being denoised. PSN structurally validates it but
+        cannot verify the population matches.
         Default: None (run GSN normally).
 
       <gsn_args> (optional) - dict of options passed directly to the GSN routine
@@ -486,13 +489,8 @@ def psn(*args, **kwargs):
 
     _t_gsn = time.time()
     if opt.get('gsn_result') is not None:
-        gsn_result = load_gsn_result(opt['gsn_result'])
-        if 'cSb' not in gsn_result or 'cNb' not in gsn_result:
-            raise ValueError("opt['gsn_result'] must contain 'cSb' and 'cNb' keys")
-        if gsn_result['cSb'].shape[0] != nunits:
-            raise ValueError(
-                f"gsn_result covariance size ({gsn_result['cSb'].shape[0]}) "
-                f"does not match data ({nunits} units)")
+        # load_gsn_result also structurally validates the cache (see there).
+        gsn_result = load_gsn_result(opt['gsn_result'], nunits)
         # Auto-upgrade: when the user asked for basis='signal' or
         # 'difference' AND the loaded gsn_result has matching eigvecs +
         # eigvals cached, swap basis to the matrix + propagate the

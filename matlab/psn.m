@@ -60,8 +60,8 @@ function [results] = psn(varargin)
 %   psn(data,'aggressive',struct('threshold_method','hybrid')) keeps the 'aggressive'
 %   basis and criterion but switches to hybrid thresholds. The 'wiener' mode is the
 %   exception: it is basis-free and untruncated, so combining it with a conflicting
-%   <basis>, <criterion>, <threshold_method>, <basis_ordering>, <allowable_thresholds>,
-%   <variance_threshold>, <alpha>, or <unit_groups> raises an error instead.
+%   <basis>, <basis_eigenvalues>, <criterion>, <threshold_method>, <basis_ordering>,
+%   <allowable_thresholds>, <variance_threshold>, <alpha>, or <unit_groups> raises an error instead.
 %
 % -------------------------------------------------------------------------
 % Inputs:
@@ -135,9 +135,9 @@ function [results] = psn(varargin)
 %                                this applies NO truncation (all dimensions are kept and
 %                                continuously weighted) and it is basis-free. Because it
 %                                bypasses the basis/criterion/threshold pipeline, supplying a
-%                                conflicting <basis>, <threshold_method>, <basis_ordering>,
-%                                <allowable_thresholds>, <variance_threshold>, <alpha>, or
-%                                <unit_groups> raises an error rather than being ignored.
+%                                conflicting <basis>, <basis_eigenvalues>, <threshold_method>,
+%                                <basis_ordering>, <allowable_thresholds>, <variance_threshold>,
+%                                <alpha>, or <unit_groups> raises an error rather than being ignored.
 %     Default: 'max-tradeoff'.
 %     (Note that <criterion> set to 'variance_eigenvalues' is not compatible with
 %      the B and 'random' cases of <basis>, and is also not compatible with
@@ -207,6 +207,9 @@ function [results] = psn(varargin)
 %       basis, criterion, ...) on the same data. If the struct also carries
 %       cached eigvecs/eigvals for the requested signal/difference basis, PSN
 %       additionally skips its own eigendecomposition.
+%       The cache must describe the same population of units (same units, same
+%       order) as the data being denoised. PSN structurally validates it but
+%       cannot verify the population matches.
 %       Default: [] (run GSN normally).
 %
 %   <gsn_args> (optional) - struct of options passed directly to the GSN routine
@@ -439,14 +442,8 @@ if isfield(opt, 'gsn_result') && ~isempty(opt.gsn_result)
     % Reuse a provided GSN result (struct or path to a .mat file), skipping the
     % expensive GSN estimation, useful for sweeping hyperparameters (alpha,
     % basis, criterion, ...) on the same data. Mirrors the Python opt['gsn_result'].
-    gsn_result = load_gsn_result(opt.gsn_result);
-    if ~isfield(gsn_result, 'cSb') || ~isfield(gsn_result, 'cNb')
-        error('opt.gsn_result must contain cSb and cNb fields');
-    end
-    if size(gsn_result.cSb, 1) ~= nunits
-        error('gsn_result covariance size (%d) does not match data (%d units)', ...
-              size(gsn_result.cSb, 1), nunits);
-    end
+    % load_gsn_result also structurally validates the cache (see there).
+    gsn_result = load_gsn_result(opt.gsn_result, nunits);
     % If the loaded result carries cached eigvecs for the requested signal/
     % difference basis, swap basis -> matrix + eigenvalues so construct_basis
     % skips its own O(N^3) eigh (bit-equivalent to the string-basis path).

@@ -1,12 +1,17 @@
-function gsn_result = load_gsn_result(gsn_result)
-% LOAD_GSN_RESULT  Normalize a gsn_result reference into a struct of GSN arrays.
+function gsn_result = load_gsn_result(gsn_result, nunits)
+% LOAD_GSN_RESULT  Normalize a gsn_result reference into a struct and validate it.
 %
-%   gsn_result = load_gsn_result(gsn_result) accepts a result that is already a
-%   struct, or a path to a '.mat' file, so a GSN run persisted to disk can be
-%   reused across many psn() calls without re-running GSN. For a path, the
+%   gsn_result = load_gsn_result(gsn_result, nunits) accepts a result that is
+%   already a struct, or a path to a '.mat' file, so a GSN run persisted to disk
+%   can be reused across many psn() calls without re-running GSN. For a path, the
 %   standard GSN fields (cSb, cNb, plus any optional eigvecs/eigvals from GSN's
-%   eigenbasis-returns feature) are loaded into a struct. Mirror of the Python
-%   load_gsn_result.
+%   eigenbasis-returns feature) are loaded into a struct. The normalized struct
+%   is then structurally checked by validate_gsn_result against <nunits>. Mirror
+%   of the Python load_gsn_result.
+%
+%   Validation cannot tell whether a persisted cache describes the same
+%   population of units as the data being denoised, so keep each cache paired
+%   with its population.
 %
 % -------------------------------------------------------------------------
 % Inputs:
@@ -23,8 +28,8 @@ function gsn_result = load_gsn_result(gsn_result)
 % Returns:
 % -------------------------------------------------------------------------
 %
-% <gsn_result> - struct of GSN outputs (expected to contain at least .cSb and
-%   .cNb; the caller validates).
+% <gsn_result> - validated struct of GSN outputs (contains at least .cSb and
+%   .cNb).
 
     if ischar(gsn_result) || isstring(gsn_result)
         path = char(gsn_result);
@@ -46,4 +51,5 @@ function gsn_result = load_gsn_result(gsn_result)
     elseif ~isstruct(gsn_result)
         error('opt.gsn_result must be a struct or a path to a .mat file');
     end
+    gsn_result = validate_gsn_result(gsn_result, nunits);
 end
