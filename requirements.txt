@@ -3,5 +3,6 @@ scipy>=1.7.0
 matplotlib>=3.3.0
 scikit-learn
 pytest>=6.0.0
-git+https://github.com/cvnlab/GSN.git@v1.2.0
+# GSN v1.2.0, pinned to its immutable commit SHA rather than the movable tag.
+git+https://github.com/cvnlab/GSN.git@234c82aa17d34d37e3af275d8e9dbeb313a559c8
 
