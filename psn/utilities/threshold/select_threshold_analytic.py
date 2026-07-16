@@ -2,6 +2,10 @@
 
 import numpy as np
 
+from .constrain_to_allowable import constrain_to_allowable
+from .max_tradeoff import max_tradeoff_threshold
+from .select_allowable import allowable_candidates, argmax_allowable, first_reach_allowable
+
 
 def select_threshold_analytic(signal, noise, basis_eigenvalues, ntrials, opt):
     """SELECT_THRESHOLD_ANALYTIC  Choose threshold using analytic or variance criterion
@@ -43,8 +47,9 @@ def select_threshold_analytic(signal, noise, basis_eigenvalues, ntrials, opt):
     Criteria:
     -------------------------------------------------------------------------
 
-    <criterion> = 'prediction': Maximize expected out-of-sample prediction
-      quality by finding k that maximizes cumsum(signal - noise/ntrials)
+    <criterion> = 'prediction': Maximize the analytic recovery (the analytic
+      estimate of out-of-sample signal recovery) by finding k that maximizes
+      cumsum(signal - noise/ntrials)
 
     <criterion> = 'variance': Retain dimensions until cumulative signal
       variance reaches variance_threshold * total_signal_variance
@@ -58,6 +63,11 @@ def select_threshold_analytic(signal, noise, basis_eigenvalues, ntrials, opt):
     scaled_noise = noise / ntrials
     diff = signal - scaled_noise
 
+    # When restricted to an allowable set, selection picks the BEST threshold
+    # among those values (best-among-allowable) rather than searching all
+    # thresholds and snapping. None searches all thresholds (default).
+    allow = opt.get('allowable_thresholds', None)
+
     # Alpha interpolation: blend between prediction peak and variance target
     if opt.get('alpha') is not None:
         alpha = opt['alpha']
@@ -68,8 +78,9 @@ def select_threshold_analytic(signal, noise, basis_eigenvalues, ntrials, opt):
         sig_cumsum = np.concatenate([[0], np.cumsum(signal)])
         S_pred = sig_cumsum[k_pred]
         total_signal = sig_cumsum[-1]
-        vt = np.clip(opt['variance_threshold'], 0, 1)
-        S_var = vt * total_signal
+        # alpha's right endpoint is the trial-average (do-nothing) point: retain
+        # ALL signal variance. alpha does NOT use variance_threshold.
+        S_var = total_signal
         # 3. Interpolate
         target = S_pred + alpha * max(0, S_var - S_pred)
         # 4. Find threshold
@@ -80,14 +91,31 @@ def select_threshold_analytic(signal, noise, basis_eigenvalues, ntrials, opt):
             k = idx[0] if len(idx) > 0 else ndims
             k = max(k, k_pred)  # never go below prediction peak
             k = min(k, ndims)
+            if allow is not None:
+                # Best-among-allowable: smallest allowable threshold that reaches
+                # the target without going below the prediction peak; if none
+                # qualify, snap the unconstrained pick to the nearest allowable.
+                C = allowable_candidates(allow, ndims)
+                elig = C[(C >= k_pred) & (sig_cumsum[C] >= target)]
+                k = int(elig.min()) if elig.size > 0 else int(constrain_to_allowable(k, C))
         objective = pred_objective  # return prediction curve for viz
         return k, objective
 
     if opt['criterion'] == 'prediction':
-        # Maximize expected out-of-sample prediction quality
+        # Maximize the analytic recovery (cumsum(signal - noise/ntrials))
         objective = np.concatenate([[0], np.cumsum(diff)])
-        k = np.argmax(objective)
-        # k is already the number of dims (0-indexed argmax)
+        if allow is not None:
+            k = argmax_allowable(objective, allow)
+        else:
+            k = np.argmax(objective)
+            # k is already the number of dims (0-indexed argmax)
+
+    elif opt['criterion'] == 'max-tradeoff':
+        # Max-tradeoff: operating point that captures the
+        # bulk of the achievable recovery (farthest point from the peak->trial-
+        # average chord). The objective curve returned is the recovery curve.
+        objective = np.concatenate([[0], np.cumsum(diff)])
+        k = max_tradeoff_threshold(signal, noise, ntrials, allowable=allow)
 
     elif opt['criterion'] == 'variance':
         # Retain fraction of signal variance
@@ -95,7 +123,12 @@ def select_threshold_analytic(signal, noise, basis_eigenvalues, ntrials, opt):
         objective = np.concatenate([[0], np.cumsum(signal)])
 
         vt = np.clip(opt['variance_threshold'], 0, 1)
-        if vt == 0:
+        if allow is not None:
+            # Best-among-allowable: smallest allowable threshold whose cumulative
+            # variance reaches the target; if none reach it, the largest allowable.
+            total = objective[-1]
+            k = first_reach_allowable(objective, vt * total, allow)
+        elif vt == 0:
             k = 0
         else:
             total = objective[-1]
@@ -129,7 +162,12 @@ def select_threshold_analytic(signal, noise, basis_eigenvalues, ntrials, opt):
             objective = np.concatenate([[0], np.cumsum(pos_evals)])
 
         vt = np.clip(opt['variance_threshold'], 0, 1)
-        if vt == 0:
+        if allow is not None:
+            # Best-among-allowable: smallest allowable threshold whose cumulative
+            # variance reaches the target; if none reach it, the largest allowable.
+            total = objective[-1]
+            k = first_reach_allowable(objective, vt * total, allow)
+        elif vt == 0:
             k = 0
         else:
             total = objective[-1]

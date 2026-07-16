@@ -19,17 +19,18 @@ function opt = set_default_options(opt, nunits)
 %
 % <opt> - complete struct with all required fields. Defaults are:
 %   basis              = 'signal'
-%   criterion          = 'prediction'
-%   threshold_method   = 'hybrid'
+%   criterion          = 'max-tradeoff'
+%   threshold_method   = 'global'
 %   basis_ordering     = 'eigenvalues'
 %   variance_threshold = 0.99
 %   allowable_thresholds = []
-%   unit_groups        = (1:nunits)' for hybrid/unit modes, zeros for global
+%   unit_groups        = (1:nunits)' for hybrid mode, zeros for global
 %   gsn_args           = struct()
 %   wantfig            = 1
 %   figurepath         = '' (empty = display only, no save)
 %   wantverbose        = 1
 %   cmap               = [] (uses cmapsign4 in visualization)
+%   alpha              = [] (disabled; interpolates between prediction and variance)
 
     % Normalize string inputs to char for consistent strcmp behavior
     % MATLAB string type ("text") vs char array ('text') behave differently with ischar()
@@ -51,11 +52,11 @@ function opt = set_default_options(opt, nunits)
     end
 
     if ~isfield(opt, 'criterion')
-        opt.criterion = 'prediction';
+        opt.criterion = 'max-tradeoff';
     end
 
     if ~isfield(opt, 'threshold_method')
-        opt.threshold_method = 'hybrid';
+        opt.threshold_method = 'global';
     end
 
     if ~isfield(opt, 'basis_ordering')
@@ -96,6 +97,14 @@ function opt = set_default_options(opt, nunits)
 
     if ~isfield(opt, 'cmap')
         opt.cmap = [];  % Will use default cmapsign4 in visualization
+    end
+
+    if ~isfield(opt, 'alpha')
+        opt.alpha = [];  % disabled; interpolates between prediction peak and variance target
+    end
+
+    if ~isfield(opt, 'split_half_metric')
+        opt.split_half_metric = 'correlation';  % 'correlation' or 'mse' (split-half panel)
     end
 
     % Auto-detect: if allowable_thresholds is a single value, force threshold_method to 'global'

@@ -14,7 +14,7 @@ def compute_signal_noise_diagnostics(threshold_method, unit_signal_vars, unit_no
     Inputs:
     -------------------------------------------------------------------------
 
-    <threshold_method> - string, 'global', 'hybrid', or 'unit'
+    <threshold_method> - string, 'global' or 'hybrid'
 
     <unit_signal_vars> - list of length nunits, each element contains [ndims]
       weighted signal variances for that unit
@@ -22,7 +22,7 @@ def compute_signal_noise_diagnostics(threshold_method, unit_signal_vars, unit_no
     <unit_noise_vars> - list of length nunits, each element contains [ndims]
       weighted noise variances for that unit
 
-    <best_threshold> - scalar (for global) or [nunits] (for hybrid/unit),
+    <best_threshold> - scalar (for global) or [nunits] (for hybrid),
       number of dimensions retained per unit
 
     <nunits> - scalar, number of units

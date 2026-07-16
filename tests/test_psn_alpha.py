@@ -1,9 +1,11 @@
 """Tests for the alpha interpolation parameter in PSN.
 
 Tests that the alpha parameter correctly interpolates between the prediction
-peak (alpha=0) and variance retention threshold (alpha=1) in signal variance
-space. Covers:
-- Boundary equivalence (alpha=0 == prediction, alpha=1 == variance)
+peak (alpha=0) and the trial-average / do-nothing point (alpha=1, retain all
+signal variance) in signal variance space. alpha does NOT use
+variance_threshold. Covers:
+- Boundary behavior (alpha=0 == prediction, alpha=1 == do-nothing / all dims)
+- alpha is invariant to variance_threshold
 - Monotonicity of thresholds with increasing alpha
 - All threshold methods (global, hybrid, unit)
 - Multiple basis types (signal, difference)
@@ -12,14 +14,14 @@ space. Covers:
 - Visualization runs without error
 """
 
+import matplotlib
 import numpy as np
 import pytest
-import matplotlib
+
 matplotlib.use('Agg')
 
 from psn import psn
 from psn.utilities.threshold.select_threshold_analytic import select_threshold_analytic
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -61,7 +63,7 @@ class TestSelectThresholdAlpha:
     """Test alpha logic in select_threshold_analytic directly."""
 
     def _make_data(self):
-        """Signal that decays; noise that increases — creates a prediction/variance gap."""
+        """Signal that decays; noise that increases - creates a prediction/variance gap."""
         signal = np.array([20, 15, 8, 3, 1.5, 0.8, 0.4, 0.2, 0.1, 0.05])
         noise = np.array([1, 1, 1, 5, 8, 10, 12, 14, 16, 18])
         return signal, noise
@@ -78,16 +80,27 @@ class TestSelectThresholdAlpha:
         assert k_pred == k_a0
         np.testing.assert_array_equal(obj_pred, obj_a0)
 
-    def test_alpha1_matches_variance(self):
+    def test_alpha1_is_do_nothing(self):
+        """alpha=1 retains all signal variance (the do-nothing / trial-average point)."""
         signal, noise = self._make_data()
         ntrials = 2
-        k_var, _ = select_threshold_analytic(
-            signal, noise, None, ntrials,
-            {'criterion': 'variance', 'variance_threshold': 0.99})
         k_a1, _ = select_threshold_analytic(
             signal, noise, None, ntrials,
             {'criterion': 'prediction', 'variance_threshold': 0.99, 'alpha': 1})
-        assert k_var == k_a1
+        assert k_a1 == len(signal)
+
+    def test_alpha_ignores_variance_threshold(self):
+        """alpha no longer uses variance_threshold: same alpha -> same k regardless of vt."""
+        signal, noise = self._make_data()
+        ntrials = 2
+        for a in [0.3, 0.7, 1.0]:
+            k_lo, _ = select_threshold_analytic(
+                signal, noise, None, ntrials,
+                {'criterion': 'prediction', 'variance_threshold': 0.5, 'alpha': a})
+            k_hi, _ = select_threshold_analytic(
+                signal, noise, None, ntrials,
+                {'criterion': 'prediction', 'variance_threshold': 0.99, 'alpha': a})
+            assert k_lo == k_hi, f'alpha={a} should ignore variance_threshold ({k_lo} != {k_hi})'
 
     def test_monotonicity(self):
         signal, noise = self._make_data()
@@ -115,7 +128,7 @@ class TestSelectThresholdAlpha:
 
     def test_spred_geq_svar_uses_kpred(self):
         """When prediction peak already exceeds variance target, alpha has no effect."""
-        # High signal, low noise — prediction keeps everything already
+        # High signal, low noise - prediction keeps everything already
         signal = np.array([10, 8, 5, 3, 2])
         noise = np.array([0.1, 0.1, 0.1, 0.1, 0.1])
         ntrials = 10
@@ -152,12 +165,11 @@ class TestAlphaGlobal:
         r_a0 = psn(lowrank_data, {**self.OPT_BASE, 'alpha': 0})
         assert r_pred['best_threshold'] == r_a0['best_threshold']
 
-    def test_alpha1_matches_variance(self, lowrank_data):
-        r_var = psn(lowrank_data, {**self.OPT_BASE, 'criterion': 'variance',
-                                    'variance_threshold': 0.99})
-        r_a1 = psn(lowrank_data, {**self.OPT_BASE, 'alpha': 1,
-                                   'variance_threshold': 0.99})
-        assert r_var['best_threshold'] == r_a1['best_threshold']
+    def test_alpha1_is_do_nothing(self, lowrank_data):
+        """alpha=1 keeps every dimension (the trial-average / do-nothing point)."""
+        r_a1 = psn(lowrank_data, {**self.OPT_BASE, 'alpha': 1, 'variance_threshold': 0.99})
+        ndims = r_a1['fullbasis'].shape[1]
+        assert r_a1['best_threshold'] == ndims
 
     def test_monotonicity(self, lowrank_data):
         ks = []
@@ -195,14 +207,15 @@ class TestAlphaHybrid:
         r_a0 = psn(lowrank_data, {**self.OPT_BASE, 'alpha': 0})
         np.testing.assert_array_equal(r_pred['best_threshold'], r_a0['best_threshold'])
 
-    def test_alpha1_geq_variance(self, lowrank_data):
-        """alpha=1 thresholds should be >= variance thresholds (max with prediction peak)."""
-        r_var = psn(lowrank_data, {**self.OPT_BASE, 'criterion': 'variance',
-                                    'variance_threshold': 0.99})
-        r_a1 = psn(lowrank_data, {**self.OPT_BASE, 'alpha': 1,
-                                   'variance_threshold': 0.99})
-        # alpha=1 uses max(k_var, k_pred), so it's >= pure variance threshold
-        assert np.all(r_a1['best_threshold'] >= r_var['best_threshold'])
+    def test_alpha1_is_do_nothing(self, lowrank_data):
+        """alpha=1 is the do-nothing endpoint: each unit keeps (essentially) all
+        dims and never fewer than any smaller alpha. (A unit may keep ndims-1 when
+        its projection on the last basis dim carries ~zero signal variance.)"""
+        r_a1 = psn(lowrank_data, {**self.OPT_BASE, 'alpha': 1, 'variance_threshold': 0.99})
+        r_half = psn(lowrank_data, {**self.OPT_BASE, 'alpha': 0.5, 'variance_threshold': 0.99})
+        ndims = r_a1['fullbasis'].shape[1]
+        assert np.all(r_a1['best_threshold'] >= r_half['best_threshold'])  # maximal endpoint
+        assert np.mean(r_a1['best_threshold']) >= ndims - 1                # essentially all dims
 
     def test_monotonicity_mean(self, lowrank_data):
         means = []
@@ -216,21 +229,6 @@ class TestAlphaHybrid:
         r = psn(lowrank_data, {**self.OPT_BASE, 'alpha': 0.3})
         assert 'unit_objectives' in r
         assert len(r['unit_objectives']) == lowrank_data.shape[0]
-
-
-class TestAlphaUnit:
-    """Test alpha with threshold_method='unit'."""
-
-    OPT_BASE = {'threshold_method': 'unit', 'wantfig': False, 'wantverbose': False}
-
-    def test_alpha0_matches_prediction(self, small_data):
-        r_pred = psn(small_data, {**self.OPT_BASE, 'criterion': 'prediction'})
-        r_a0 = psn(small_data, {**self.OPT_BASE, 'alpha': 0})
-        np.testing.assert_array_equal(r_pred['best_threshold'], r_a0['best_threshold'])
-
-    def test_runs_without_error(self, small_data):
-        r = psn(small_data, {**self.OPT_BASE, 'alpha': 0.5})
-        assert r['denoiseddata'].shape == small_data.shape[:2]
 
 
 # ---------------------------------------------------------------------------
@@ -268,27 +266,26 @@ class TestAlphaBasisTypes:
 
 
 # ---------------------------------------------------------------------------
-# Composability with variance_threshold
+# alpha is invariant to variance_threshold
 # ---------------------------------------------------------------------------
 
-class TestAlphaVarianceThreshold:
-    """Test that alpha composes with different variance_threshold values."""
+class TestAlphaIgnoresVarianceThreshold:
+    """alpha's right endpoint is fixed at the full signal variance, so changing
+    variance_threshold must not change the alpha result."""
 
     OPT_BASE = {'threshold_method': 'global', 'wantfig': False, 'wantverbose': False}
 
-    def test_lower_vt_yields_fewer_dims(self, lowrank_data):
-        r_high = psn(lowrank_data, {**self.OPT_BASE, 'alpha': 1, 'variance_threshold': 0.99})
-        r_low = psn(lowrank_data, {**self.OPT_BASE, 'alpha': 1, 'variance_threshold': 0.5})
-        assert r_low['best_threshold'] <= r_high['best_threshold']
+    def test_alpha_invariant_to_vt(self, lowrank_data):
+        for a in [0.3, 0.5, 1.0]:
+            r_high = psn(lowrank_data, {**self.OPT_BASE, 'alpha': a, 'variance_threshold': 0.99})
+            r_low = psn(lowrank_data, {**self.OPT_BASE, 'alpha': a, 'variance_threshold': 0.5})
+            assert r_low['best_threshold'] == r_high['best_threshold'], \
+                f'alpha={a} should be invariant to variance_threshold'
 
-    def test_alpha1_vt050_geq_variance(self, lowrank_data):
-        """alpha=1 with low vt: prediction peak may exceed variance target,
-        so alpha=1 threshold >= variance threshold (clamped by k_pred)."""
-        r_var = psn(lowrank_data, {**self.OPT_BASE, 'criterion': 'variance',
-                                    'variance_threshold': 0.5})
-        r_a1 = psn(lowrank_data, {**self.OPT_BASE, 'alpha': 1,
-                                   'variance_threshold': 0.5})
-        assert r_a1['best_threshold'] >= r_var['best_threshold']
+    def test_alpha1_is_do_nothing_regardless_of_vt(self, lowrank_data):
+        r_a1 = psn(lowrank_data, {**self.OPT_BASE, 'alpha': 1, 'variance_threshold': 0.5})
+        ndims = r_a1['fullbasis'].shape[1]
+        assert r_a1['best_threshold'] == ndims
 
 
 # ---------------------------------------------------------------------------

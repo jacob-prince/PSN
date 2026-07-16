@@ -194,19 +194,22 @@ def plot_data_diagnostic(data, ground_truth, params):
     ax6.set_xlabel('Condition')
     ax6.set_ylabel('Unit')
 
-    # Plot 7: Signal eigenvectors
+    # Plot 7: Signal eigenvectors. Use a data-driven symmetric clim - a fixed
+    # +/-0.3 washes out at large nvox, where eigenvector entries scale ~1/sqrt(nvox).
+    sig_evec_max = np.percentile(np.abs(U_signal), 99) or 1.0
     ax7 = fig.add_subplot(gs[2, 0])
     im7 = ax7.imshow(U_signal, aspect='auto', cmap='RdBu_r',
-                   vmin=-0.3, vmax=0.3)
+                   vmin=-sig_evec_max, vmax=sig_evec_max)
     plt.colorbar(im7, ax=ax7, label='Weight')
     ax7.set_title('Signal Eigenvectors')
     ax7.set_xlabel('Dimension')
     ax7.set_ylabel('Unit')
 
     # Plot 8: Noise eigenvectors (top k)
+    noise_evec_max = np.percentile(np.abs(U_noise), 99) or 1.0
     ax8 = fig.add_subplot(gs[2, 1])
     im8 = ax8.imshow(U_noise, aspect='auto', cmap='RdBu_r',
-                   vmin=-0.3, vmax=0.3)
+                   vmin=-noise_evec_max, vmax=noise_evec_max)
     plt.colorbar(im8, ax=ax8, label='Weight')
     ax8.set_title('Noise Eigenvectors')
     ax8.set_xlabel('Dimension')

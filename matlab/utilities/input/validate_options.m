@@ -16,9 +16,10 @@ function validate_options(opt, nunits)
 % Validation checks:
 % -------------------------------------------------------------------------
 %
-% - basis: must be 'signal', 'difference', 'noise', 'pca', 'random', or numeric matrix
-% - criterion: must be 'prediction', 'variance', or 'variance_eigenvalues'
-% - threshold_method: must be 'global', 'hybrid', or 'unit'
+% - basis: must be 'signal', 'difference', 'noise', 'pca', 'random', 'wiener',
+%   'compare', or numeric matrix
+% - criterion: must be 'prediction', 'max-tradeoff', 'variance', 'variance_eigenvalues', or 'wiener'
+% - threshold_method: must be 'global' or 'hybrid'
 % - basis_ordering: must be 'eigenvalues', 'signalvariance', or 'prediction'
 % - variance_threshold: must be in [0,1]
 % - allowable_thresholds: must be numeric vector with non-negative values
@@ -26,7 +27,7 @@ function validate_options(opt, nunits)
 % - Compatibility: 'variance_eigenvalues' requires named basis (not custom/random)
 %   and only works with 'global' threshold_method
 
-    valid_basis_strings = {'signal', 'difference', 'noise', 'pca', 'random'};
+    valid_basis_strings = {'signal', 'difference', 'noise', 'pca', 'random', 'wiener', 'compare'};
     if ischar(opt.basis) || isstring(opt.basis)
         if ~ismember(opt.basis, valid_basis_strings)
             error('basis must be one of: %s, or a matrix', strjoin(valid_basis_strings, ', '));
@@ -35,12 +36,12 @@ function validate_options(opt, nunits)
         error('basis must be a string or numeric matrix');
     end
 
-    valid_criteria = {'prediction', 'variance', 'variance_eigenvalues'};
+    valid_criteria = {'prediction', 'max-tradeoff', 'variance', 'variance_eigenvalues', 'wiener'};
     if ~ismember(opt.criterion, valid_criteria)
         error('criterion must be one of: %s', strjoin(valid_criteria, ', '));
     end
 
-    valid_methods = {'global', 'hybrid', 'unit'};
+    valid_methods = {'global', 'hybrid'};
     if ~ismember(opt.threshold_method, valid_methods)
         error('threshold_method must be one of: %s', strjoin(valid_methods, ', '));
     end
@@ -50,16 +51,29 @@ function validate_options(opt, nunits)
         error('basis_ordering must be one of: %s', strjoin(valid_orderings, ', '));
     end
 
-    if opt.variance_threshold < 0 || opt.variance_threshold > 1
-        error('variance_threshold must be between 0 and 1');
+    if isfield(opt, 'split_half_metric')
+        valid_metrics = {'correlation', 'mse'};
+        if ~ismember(opt.split_half_metric, valid_metrics)
+            error('split_half_metric must be one of: %s', strjoin(valid_metrics, ', '));
+        end
+    end
+
+    if ~isfinite(opt.variance_threshold) || opt.variance_threshold < 0 || opt.variance_threshold > 1
+        error('variance_threshold must be a finite value between 0 and 1');
     end
 
     if ~isempty(opt.allowable_thresholds)
         if ~isnumeric(opt.allowable_thresholds) || ~isvector(opt.allowable_thresholds)
             error('allowable_thresholds must be a numeric vector');
         end
+        if ~all(isfinite(opt.allowable_thresholds))
+            error('allowable_thresholds must contain finite values');
+        end
         if any(opt.allowable_thresholds < 0)
             error('allowable_thresholds must contain only non-negative values');
+        end
+        if ~all(opt.allowable_thresholds == floor(opt.allowable_thresholds))
+            error('allowable_thresholds must contain integer dimension counts');
         end
         % Note: Upper bound checked later against actual basis dimensions (ndims), not nunits
     end
@@ -78,8 +92,15 @@ function validate_options(opt, nunits)
         if isnumeric(opt.basis) || strcmp(opt.basis, 'random')
             error('criterion ''variance_eigenvalues'' not compatible with custom basis or ''random'' basis');
         end
-        if ismember(opt.threshold_method, {'hybrid', 'unit'})
+        if ~strcmp(opt.threshold_method, 'global')
             error('criterion ''variance_eigenvalues'' only compatible with threshold_method ''global''');
+        end
+    end
+
+    % alpha: scalar in [0,1] or empty (disabled). Does not apply to criterion='wiener'.
+    if isfield(opt, 'alpha') && ~isempty(opt.alpha)
+        if ~isnumeric(opt.alpha) || ~isscalar(opt.alpha) || ~isfinite(opt.alpha) || opt.alpha < 0 || opt.alpha > 1
+            error('alpha must be a finite scalar in [0, 1] or empty');
         end
     end
 end

@@ -1,17 +1,47 @@
 # PSN: Partitioning Signal and Noise
 
-**PSN** is a library for denoising neural data by adaptively partitioning signal and noise.
+**PSN** denoises multi-trial neural data by estimating signal and noise covariances
+([GSN](https://github.com/cvnlab/GSN)), projecting into an optimal basis, and selecting
+how many dimensions to retain.
 
-> **Note:** As of May 2026, PSN is under active development. The API and algorithm are subject to change.
+> **Note:** PSN is under active development. The API and functionality are subject to change.
 
-## What is PSN?
+| Clean (ground truth) | Single noisy trial | PSN denoised |
+|:---:|:---:|:---:|
+| ![clean](examples/sunset_clean.jpg) | ![noisy](examples/sunset_noisy.jpg) | ![denoised](examples/sunset_denoised.jpg) |
 
-PSN (Partitioning Signal and Noise) is a method for denoising multi-trial neural data by:
-1. Projecting data into a low-dimensional basis (e.g., eigenvectors of signal covariance)
-2. Adaptively selecting how many dimensions to retain per unit
-3. Reconstructing denoised estimates that optimize signal recovery while minimizing noise
+---
 
-PSN builds on [Generative Modeling of Signal and Noise (GSN)](https://github.com/cvnlab/GSN).
+## Installation
+
+### Python
+
+```bash
+git clone https://github.com/jacob-prince/PSN.git
+cd PSN
+pip install -e .
+```
+
+### MATLAB
+
+```bash
+git clone --recurse-submodules https://github.com/jacob-prince/PSN.git
+```
+
+If you've already cloned without submodules:
+```bash
+cd PSN && git submodule update --init --recursive
+```
+
+---
+
+## Data Format
+
+Both Python and MATLAB expect `(n_units, n_conditions, n_trials)` with `n_trials >= 2`.
+
+**NaN handling**: PSN supports uneven trials across conditions. Missing trials can be
+indicated with NaNs. Each condition must have at least one trial with valid data across
+all units.
 
 ---
 
@@ -19,286 +49,195 @@ PSN builds on [Generative Modeling of Signal and Noise (GSN)](https://github.com
 
 ### Python
 
-#### Installation
-
-Optionally create a conda environment:
-```bash
-conda create -n psn python=3.9
-conda activate psn
-```
-
-Clone and install:
-```bash
-git clone https://github.com/jacob-prince/PSN.git
-cd PSN
-pip install -e .
-```
-
-#### Basic Usage
-
-PSN exposes a single functional entry point, `psn(data, opt)`, where `data` has shape
-`(n_units, n_conditions, n_trials)`. The simulation utility `generate_data` is included
-for quickly producing realistic synthetic data to experiment with.
-
 ```python
 import numpy as np
 from psn import psn, generate_data
 
-# Generate synthetic data with known signal and noise structure
-train_data, test_data, gt = generate_data(
+# Synthetic train and test sets: (n_units, n_conditions, n_trials)
+train_data, test_data, ground_truth = generate_data(
     nvox=50, ncond=200, ntrial=5, random_seed=42
 )
-# train_data shape: (50, 200, 5) -> (n_units, n_conditions, n_trials)
 
-# Apply PSN denoising with default settings ('standard' preset)
-results = psn(train_data)
+results = psn(train_data)                  # recommended default: balanced denoising
+results = psn(train_data, 'conservative')  # remove noise cautiously, keep more of the signal
+results = psn(train_data, 'aggressive')    # remove noise more strongly (best with plenty of data)
+results = psn(train_data, 'compare')       # auto-pick whichever setting best reproduces the data
+results = psn(train_data, 'wiener')        # optimal linear filter, no cutoff (minimizes error)
 
-# Access denoised data
-print(f"Denoised shape: {results['denoiseddata'].shape}")  # (50, 200)
-print(f"Retained {results['best_threshold']} dimensions")
-```
+denoised = results['denoiseddata']         # (n_units, n_conditions)
 
-#### Using Presets
-
-By default, PSN uses the `'standard'` preset. You can optionally specify a different mode:
-
-```python
-# Standard (default): balances signal retention and out-of-sample generalization
-# Uses: basis='signal', criterion='prediction', threshold_method='hybrid'
-results = psn(train_data, 'standard')
-
-# Conservative: prioritizes retaining signal
-# Uses: basis='signal', criterion='variance', threshold_method='global'
-results = psn(train_data, 'conservative')
-
-# Aggressive: maximizes out-of-sample generalization with unit-specific adaptation
-# Uses: basis='difference', criterion='prediction', threshold_method='unit'
-results = psn(train_data, 'aggressive')
-```
-
-#### Custom Configuration
-
-```python
-opt = {
-    'basis': 'signal',                # 'signal', 'difference', 'pca', 'wiener', or custom matrix
-    'criterion': 'prediction',        # 'prediction', 'variance', or 'variance_eigenvalues'
-    'threshold_method': 'hybrid',     # 'global', 'hybrid', or 'unit'
-    'basis_ordering': 'eigenvalues',  # 'eigenvalues' or 'signalvariance'
-    'variance_threshold': 0.95,       # Used when criterion='variance'
-    'wantverbose': True,
-    'wantfig': True,                  # Display diagnostic figures
-}
-results = psn(train_data, opt)
-```
-
-#### Interpolating Between Prediction and Variance Targets
-
-The `alpha` parameter smoothly interpolates between the prediction-optimal threshold
-and a variance-retention target, letting you trade off generalization vs. signal
-preservation without committing to either extreme:
-
-```python
-opt = {
-    'alpha': 0.3,                 # 0 = prediction peak, 1 = variance retention target
-    'variance_threshold': 0.95,   # Defines the variance target
-}
-results = psn(train_data, opt)
-```
-
-#### Caching GSN Output Across Hyperparameter Sweeps
-
-GSN covariance estimation is the expensive step. To sweep over PSN hyperparameters
-(`alpha`, `basis`, `criterion`, ...) on the same data without re-running GSN each time,
-pass the previously computed `gsn_result` back in:
-
-```python
-# First call computes GSN
-results = psn(train_data, {'criterion': 'prediction'})
-
-# Subsequent calls reuse the cached covariances
-for alpha in [0.0, 0.25, 0.5, 0.75, 1.0]:
-    out = psn(train_data, {
-        'alpha': alpha,
-        'gsn_result': results['gsn_result'],
-    })
-```
-
-#### Wiener Denoising
-
-For full-rank matrix Wiener filtering (no basis truncation):
-
-```python
-results = psn(train_data, {'basis': 'wiener'})
-```
-
-To apply Wiener shrinkage on top of a global truncation:
-
-```python
-opt = {
-    'basis': 'signal',
-    'threshold_method': 'global',
-    'denoiser_type': 'wiener',
-}
-results = psn(train_data, opt)
-```
-
-#### Applying the Denoiser to Held-Out Data
-
-The learned denoising matrix can be applied to new trial-averaged data from the same units:
-
-```python
-results = psn(train_data)
-denoiser = results['denoiser']
+# Apply the fitted denoiser to held-out test data
+denoiser   = results['denoiser']           # (n_units, n_units)
 unit_means = results['unit_means'][:, None]
-
-# Apply to held-out test data (n_units, n_conditions)
-test_avg = np.nanmean(test_data, axis=2)
+test_avg   = np.nanmean(test_data, axis=2)                       # (n_units, n_conditions)
 denoised_test = denoiser.T @ (test_avg - unit_means) + unit_means
 ```
 
-#### Output Structure
-
-`psn` returns a dictionary. The most commonly used fields:
-
-```python
-results['denoiseddata']      # (n_units, n_conditions) - Denoised estimates
-results['residuals']         # (n_units, n_conditions, n_trials) - data - denoiseddata
-results['denoiser']          # (n_units, n_units) - Denoising matrix
-results['unit_means']        # (n_units,) - Per-unit means used for centering
-results['best_threshold']    # Number of dimensions retained (scalar or per-unit array)
-results['fullbasis']         # (n_units, n_dims) - Basis vectors after global ordering
-results['signalvar']         # Signal variance per dimension
-results['noisevar']          # Noise variance per dimension
-results['svnv_before']       # (n_units, 2) - Signal/noise variance before denoising
-results['svnv_after']        # (n_units, 2) - Signal/noise variance after denoising
-results['gsn_result']        # GSN output dict (cSb, cNb, ...) for reuse / caching
-```
-
----
-
 ### MATLAB
 
-#### Installation
-
-Clone with submodules to include the GSN dependency:
-```bash
-git clone --recurse-submodules https://github.com/jacob-prince/PSN.git
-```
-
-If you've already cloned without submodules:
-```bash
-cd PSN
-git submodule update --init --recursive
-```
-
-#### Basic Usage
-
-Open MATLAB and navigate to the PSN directory:
-
 ```matlab
 cd('path/to/PSN/matlab')
+data = randn(50, 100, 5);                 % [n_units x n_conditions x n_trials]
 
-% Generate test data (50 units, 100 conditions, 5 trials)
-data = randn(50, 100, 5);
-
-% Apply PSN with default settings
-results = psn(data);
-fprintf('Denoised data shape: [%d x %d]\n', size(results.denoiseddata));
+results = psn(data);                       % recommended default: balanced denoising
+results = psn(data, 'conservative');       % remove noise cautiously, keep more of the signal
+results = psn(data, 'aggressive');         % remove noise more strongly (best with plenty of data)
+results = psn(data, 'compare');            % auto-pick whichever setting best reproduces the data
+results = psn(data, 'wiener');             % optimal linear filter, no cutoff (minimizes error)
 ```
 
-#### Using Presets
-
-```matlab
-% Conservative: prioritizes retaining signal
-results = psn(data, 'conservative');
-
-% Standard: balances signal retention and generalization (default)
-results = psn(data, 'standard');
-
-% Aggressive: maximizes out-of-sample generalization
-results = psn(data, 'aggressive');
-```
-
-#### Custom Configuration
-
-```matlab
-opt = struct();
-opt.basis = 'signal';              % 'signal', 'difference', 'pca', or custom matrix
-opt.criterion = 'prediction';      % 'prediction', 'variance', 'variance_eigenvalues'
-opt.threshold_method = 'hybrid';   % 'global', 'hybrid', 'unit'
-opt.variance_threshold = 0.95;     % Used when criterion='variance'
-opt.wantverbose = true;
-opt.wantfig = true;                % Display diagnostic figures
-
-results = psn(data, opt);
-```
-
-#### Test Installation
-
-Verify GSN dependency and PSN functionality:
-```matlab
-cd('path/to/PSN/matlab')
-
-% Test GSN dependency
-test_gsn_dependency
-```
-
-#### Troubleshooting
-
-- **"performgsn not found"**: Run `git submodule update --init --recursive` to fetch the GSN dependency
-- **Path issues**: Ensure MATLAB's working directory is `PSN/matlab`
-- See `matlab/README.md` for detailed MATLAB-specific documentation
+> The MATLAB and Python implementations are feature-for-feature equivalent for the
+> denoising algorithm. Python-only conveniences: GPU acceleration (`device`), the
+> scikit-learn `PSN` estimator, and the keyword / `opt=` argument forms.
+> See [matlab/README.md](matlab/README.md) for detailed MATLAB documentation.
 
 ---
 
-## Key Parameters
+## Image Denoising Example
+
+`generate_data` can simulate noisy multi-trial measurements from an image.
+PSN denoises the trial-averaged data, recovering the clean image:
+
+```python
+import numpy as np
+from PIL import Image
+from psn import psn, generate_data
+
+# Load an image and simulate noisy multi-trial measurements
+img = np.array(Image.open('examples/sunset.jpg').resize((1000, 1000))) / 255.0
+H, W, C = img.shape
+train_data, _, gt = generate_data(
+    true_signal=img, ntrial=3, noise_multiplier=100.0, random_seed=42
+)
+# train_data shape: (1000, 3000, 3) -> (n_units, n_conditions, n_trials)
+
+# Denoise with PSN
+results = psn(train_data, 'wiener')
+
+# Reconstruct images
+clean    = np.clip(gt['signal'].T.reshape(H, W, C), 0, 1)
+noisy    = np.clip(train_data[:, :, 0].reshape(H, W, C), 0, 1)
+denoised = np.clip(results['denoiseddata'].reshape(H, W, C), 0, 1)
+```
+
+---
+
+## Configuration
+
+### Presets
+
+Most users only need one of these named presets. They differ in how aggressively
+they strip noise, i.e. how much of the data they keep versus discard.
+
+| Preset | What it does | When to use it |
+|--------|--------------|----------------|
+| *(default)* / `'standard'` | Balanced denoising: a good tradeoff between removing noise and preserving signal. | Start here. |
+| `'conservative'` | Removes noise cautiously, keeping more of the original signal. | When discarding real signal is costlier than leaving in some noise. |
+| `'aggressive'` | Removes noise more strongly; can recover more but is less stable on small datasets. | When you have plenty of trials/conditions. |
+| `'compare'` | Tries two strategies and automatically keeps whichever best reproduces held-out trials. | When you're unsure which setting fits your data. |
+| `'wiener'` | The optimal linear filter (minimizes mean-squared error); uses the full data with no dimension cutoff. It shrinks each direction toward zero, trading some bias for lower variance. | When you want the theoretically optimal estimate. |
+
+### Advanced parameters
+
+The presets above are the recommended interface. If you want to build a custom
+combination, pass options as a dict, via `opt=`, or as keyword arguments, and a
+preset can be combined with any of these (keyword options win):
+
+```python
+psn(train_data, {'basis': 'signal', 'device': 'cuda'})   # positional dict
+psn(train_data, opt={'basis': 'signal'})                  # opt= keyword
+psn(train_data, basis='signal', device='cuda')            # keywords
+psn(train_data, 'aggressive', device='cuda')              # preset + keyword override
+```
+
+In MATLAB, pass an options struct: `psn(data, opt)`.
+
+The two central knobs are **basis** (which directions in the data to denoise
+along) and **criterion** (how many of those directions to keep). The presets set
+both for you.
 
 | Parameter | Options | Description |
 |-----------|---------|-------------|
-| **basis** | `'signal'`, `'difference'`, `'pca'`, `'wiener'`, custom matrix | Basis for dimensionality reduction |
-| **criterion** | `'prediction'`, `'variance'`, `'variance_eigenvalues'` | How to determine dimensionality threshold |
-| **threshold_method** | `'global'`, `'hybrid'`, `'unit'` | How to apply thresholds across units |
-| **basis_ordering** | `'eigenvalues'`, `'signalvariance'` | Initial global order of basis vectors |
-| **alpha** | `0.0` to `1.0` (or `None`) | Interpolates between prediction peak (0) and variance target (1) |
-| **variance_threshold** | `0.0` to `1.0` (default: `0.99`) | Target variance fraction (for `criterion='variance'` or with `alpha`) |
-| **denoiser_type** | `'truncation'`, `'wiener'` | Hard truncation or Wiener shrinkage (Wiener requires `threshold_method='global'`) |
-| **gsn_result** | dict | Reuse precomputed GSN covariances to skip estimation |
+| **basis** | `'signal'` (default), `'difference'`, `'pca'`, `'noise'`, `'random'`, `'compare'`, custom matrix | Which set of directions to denoise along. `'signal'` favours directions carrying the most signal; `'difference'` uses the directions of the signal-minus-noise covariance difference (hence the name), which denoises more aggressively. |
+| **criterion** | `'max-tradeoff'` (default), `'prediction'`, `'variance'`, `'variance_eigenvalues'`, `'wiener'` | How many directions to keep. `'max-tradeoff'` balances signal kept vs. noise removed; `'variance'` keeps a target fraction of signal; `'wiener'` keeps all with optimal weighting. |
+| **threshold_method** | `'global'` (default), `'hybrid'` | Use one cutoff for all units, or a per-unit cutoff on a shared ordering. |
+| **alpha** | `0.0`–`1.0` (or `None`) | A single dial from most aggressive (0) to no denoising (1). Overrides `criterion` when set. |
+| **variance_threshold** | `0.0`–`1.0` (default `0.99`) | Fraction of signal to keep when `criterion` is `'variance'`/`'variance_eigenvalues'`. |
+| **allowable_thresholds** | vector (or `None`) | Restrict the cutoff to these values; a single value forces exactly that many dimensions. |
+| **basis_ordering** | `'eigenvalues'` (default), `'signalvariance'` | Order in which directions are considered for keeping. |
+| **unit_groups** | `[n_units]` integer labels | Units sharing a label share a cutoff (`'hybrid'` only). |
+| **gsn_result** | dict / struct | Reuse precomputed GSN covariances to skip re-estimation. |
+| **device** *(Python only)* | `'cpu'` (default), `'cuda'`, `'mps'` | Run on GPU via torch (only when explicitly set). |
 
 ---
 
-## Data Format
+## Advanced Usage
 
-Both Python and MATLAB expect data in the shape:
-- **Python**: `(n_units, n_conditions, n_trials)`
-- **MATLAB**: `[n_units x n_conditions x n_trials]`
+#### Caching GSN Across Hyperparameter Sweeps
 
-**NaN handling**: PSN supports uneven trials across conditions. Missing trials can be indicated with NaNs. Each condition must have at least one trial with valid data across all units.
+GSN covariance estimation is the expensive step. Pass the cached result back in to
+avoid re-running it:
+
+```python
+results = psn(train_data)
+for alpha in [0.0, 0.25, 0.5, 0.75, 1.0]:
+    out = psn(train_data, alpha=alpha, gsn_result=results['gsn_result'])
+```
+
+#### GPU Acceleration (Python only)
+
+Set `device='cuda'` or `device='mps'` to run the heavy linear algebra on GPU via torch.
+Pass data as a numpy array; PSN handles the transfer. GPU pays off mainly at large
+`n_units` (~10k+).
+
+```python
+results = psn(train_data, device='cuda')
+```
+
+#### scikit-learn Estimator (Python only)
+
+```python
+from psn import PSN
+model = PSN()
+denoised = model.fit_transform(train_data)
+```
+
+See [SKLEARN_API.md](SKLEARN_API.md) for the full estimator API.
 
 ---
 
-## Documentation
+## Output Structure
 
-- **MATLAB API**: See [matlab/README.md](matlab/README.md) for detailed MATLAB documentation
-- **Examples**: Explore `examples/` for Python demos and `matlab/tests/` for MATLAB examples
+`psn` returns a dictionary (Python) or struct (MATLAB):
+
+```python
+results['denoiseddata']      # (n_units, n_conditions) - denoised estimates
+results['residuals']         # (n_units, n_conditions, n_trials) - data minus denoised
+results['denoiser']          # (n_units, n_units) - denoising matrix
+results['unit_means']        # (n_units,) - per-unit means used for centering
+results['best_threshold']    # dims retained (scalar, or per-unit array for 'hybrid')
+results['fullbasis']         # (n_units, n_dims) - basis vectors
+results['signalvar']         # signal variance per dimension
+results['noisevar']          # noise variance per dimension
+results['objective']         # cumulative objective curve
+results['svnv_before']       # (n_units, 2) - signal/noise variance before denoising
+results['svnv_after']        # (n_units, 2) - signal/noise variance after denoising
+results['gsn_result']        # GSN output (cSb, cNb, ...) for caching
+results['recovery_tradeoff'] # diagnostic data behind the recovery figure
+```
 
 ---
 
 ## Citation
 
-If you use PSN in your research, please cite:
-
 ```
 [Citation information will be added upon publication]
 ```
 
----
-
 ## License
 
-PSN is released under the MIT License. See [LICENSE](LICENSE) for details.
-
----
+MIT. See [LICENSE](LICENSE).
 
 ## Contributing
 
-PSN is under active development. Feedback, bug reports, and contributions are welcome! Please open an issue or pull request on GitHub.
+Feedback, bug reports, and contributions are welcome; please open an issue or pull request on GitHub.

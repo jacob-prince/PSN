@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "psn"
-version = "0.1.0"
+version = "0.2.0"
 description = "Partitioning Signal and Noise"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -13,13 +13,16 @@ authors = [
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "Intended Audience :: Science/Research", 
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 requires-python = ">=3.8"
 dependencies = [
@@ -27,7 +30,11 @@ dependencies = [
     "scipy>=1.7.0", 
     "matplotlib>=3.3.0",
     "scikit-learn",
-    "GSN @ git+https://github.com/cvnlab/GSN.git"
+    # GSN v1.2.0, pinned to its immutable commit SHA rather than the movable tag
+    # (tag refs can be force-updated; the SHA cannot). Bump both this and the
+    # comment when upgrading. There is no cvnlab GSN release on PyPI (the `gsn`
+    # name there is an unrelated project), so a Git dependency is required.
+    "GSN @ git+https://github.com/cvnlab/GSN.git@234c82aa17d34d37e3af275d8e9dbeb313a559c8"
 ]
 
 [project.urls]

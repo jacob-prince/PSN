@@ -2,9 +2,27 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
-import scipy.stats as stats
 from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.gridspec import GridSpec
+from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
+
+
+def _subsample_for_imshow(M, max_side=2048):
+    """Strided-subsample a (possibly huge) 2D array for display.
+
+    For an (N, N) matrix at N=25000, imshow holds a 5 GB array and resamples it
+    internally (slow), and a 99th-percentile clim over it sorts ~N^2 elements.
+    Subsampling to <= max_side per axis FIRST makes both cheap. Strided slicing
+    is a free view (no full read) and keeps the ACTUAL values, so a clim
+    computed from the result matches the original. Returns (M_sub, extent) where
+    extent maps the drawn image back onto the original 0..N axes - pass it to
+    imshow(..., extent=extent) so the axis labels are unchanged.
+    """
+    M = np.asarray(M)
+    h, w = M.shape[:2]
+    sh = max(1, int(np.ceil(h / max_side)))
+    sw = max(1, int(np.ceil(w / max_side)))
+    M_sub = M[::sh, ::sw] if (sh > 1 or sw > 1) else M
+    return M_sub, [0, w, h, 0]
 
 
 def cmapsign4(n=256):
@@ -78,6 +96,466 @@ def redblue(n=256):
     return cmap
 
 
+def _draw_axis_break(ax, x0):
+    """Draw a little '//' break mark on the bottom spine at data-x ``x0``, to
+    signal that the x-axis scale changes there (e.g. ordinary log -> mirror-log
+    at the head/tail junction, or linear -> inverse-log). Convention: whenever
+    the flow of the x ticks is rescaled, mark the transition."""
+    try:
+        xa = ax.transAxes.inverted().transform(ax.transData.transform((x0, 0)))[0]
+    except Exception:
+        return
+    if not (0.0 < xa < 1.0):
+        return
+    d = 0.014
+    kw = dict(transform=ax.transAxes, color='k', clip_on=False, lw=1.0, zorder=10)
+    for off in (-0.6 * d, 0.6 * d):
+        ax.plot((xa - d + off, xa + d + off), (-d, d), **kw)
+
+
+def _set_headtail_log_xscale(ax, ndims, tail=10, zero_at=None, rotation=0):
+    """Apply a 'head-tail log' x-scale to a dimension axis.
+
+    Ordinary log spacing for dimensions 1..ndims-tail, then the final ``tail``
+    dimensions are spaced as a MIRROR IMAGE (inverse log) of the first ``tail``
+    - so the leading AND the trailing dimensions stay legible. On a plain log
+    axis the last dimensions are crushed against the right edge; here they fan
+    back out, mirroring the head.
+
+    Also sets integer ticks (head nice-values + junction + a few mirrored tail
+    dims) and the x-limits. ``zero_at`` (e.g. 0.5) is the placeholder position
+    where a K=0 point is drawn; when given it gets a '0' tick. Falls back to a
+    plain log scale when there aren't enough dimensions to carve out a tail.
+    """
+    ndims = int(round(float(ndims)))
+    left = (zero_at * 0.8) if zero_at else 0.8
+    if ndims <= 2 * tail + 1:
+        ax.set_xscale('log')
+        ax.set_xlim([left, ndims + 0.5])
+        if rotation:
+            ax.tick_params(axis='x', rotation=rotation)
+        return
+
+    N = float(ndims)
+    j = N - tail                       # head/tail junction dimension
+    logj = np.log10(j)
+    logt = np.log10(tail + 1.0)
+
+    def fwd(x):
+        x = np.asarray(x, dtype=float)
+        head = np.log10(np.clip(x, 1e-9, None))
+        # tail: log10(j) + log10(tail+1) - log10(N - x + 1), mirroring the head
+        tailv = logj + logt - np.log10(np.clip(N - x + 1.0, 1e-3, None))
+        return np.where(x <= j, head, tailv)
+
+    def inv(y):
+        y = np.asarray(y, dtype=float)
+        head = 10.0 ** y
+        tailx = N + 1.0 - j * (tail + 1.0) / (10.0 ** y)
+        return np.where(y <= logj, head, tailx)
+
+    ax.set_xscale('function', functions=(fwd, inv))
+    ax.set_xlim([left, N + 0.5])
+
+    tick_vals, tick_labels = [], []
+    if zero_at:
+        tick_vals.append(zero_at)
+        tick_labels.append('0')
+    # Head: nice values, but leave a margin before the junction so their labels
+    # don't collide with it (they bunch up in transformed space near j).
+    for tk in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000,
+               10000, 20000, 50000):
+        if 1 <= tk < j and (logj - np.log10(tk)) > 0.18:
+            tick_vals.append(tk)
+            tick_labels.append(str(tk))
+    jj = int(round(j))
+    tick_vals.append(jj)
+    tick_labels.append(str(jj))
+    # Tail: just the endpoint N (multi-digit labels crowd the narrow tail, so
+    # only the junction + N are shown).
+    if N - 0 > jj:
+        tick_vals.append(int(round(N)))
+        tick_labels.append(str(int(round(N))))
+    seen, tv, tl = set(), [], []
+    for v, lab in zip(tick_vals, tick_labels):
+        if v not in seen:
+            seen.add(v)
+            tv.append(v)
+            tl.append(lab)
+    ax.set_xticks(tv)
+    ax.set_xticklabels(tl, fontsize=6, rotation=rotation,
+                       ha='right' if rotation else 'center')
+    ax.minorticks_off()
+    _draw_axis_break(ax, j)        # mark the log -> mirror-log junction
+
+
+def _set_tail_invlog_xscale(ax, split=0.9, expand=0.4, K=99):
+    """Inverse-log x-axis for a fraction in [0, 1].
+
+    Linear on [0, split]; the [split, 1] tail is expanded (inverse-log, mirror
+    of an ordinary log) so the data crowding near 1.0 - where the tradeoff
+    curves and the chosen / Wiener / trial-avg points pile up - fans out and
+    becomes legible. Same spirit as the head-tail dimension axis.
+
+    split: where the linear region ends and the inverse-log tail begins.
+    expand: transformed-space width given to the [split, 1] tail (vs its 1-split
+            linear width) - larger = more magnification of the approach to 1.
+    """
+    a = float(split)
+    W = float(expand)
+    lk = np.log10(1.0 + K)
+    aW = a + W
+    # Slope of the (very steep) inverse-log right at x=1, used to extend the
+    # transform linearly for x just past 1 - so the right xlim can sit a small
+    # margin beyond x=1 and the markers there (trial-avg / chosen) aren't clipped.
+    slope = W * K / ((1.0 - a) * np.log(10.0) * lk)
+
+    def fwd(x):
+        x = np.asarray(x, dtype=float)
+        d = np.clip((1.0 - x) / (1.0 - a), 0.0, 1.0)     # 1 at split, 0 at x=1
+        tail = a + W * (1.0 - np.log10(1.0 + K * d) / lk)
+        over = aW + slope * (x - 1.0)                    # linear past x=1
+        return np.where(x <= a, x, np.where(x <= 1.0, tail, over))
+
+    def inv(T):
+        T = np.asarray(T, dtype=float)
+        val = np.power(1.0 + K, 1.0 - (T - a) / W)
+        tail = 1.0 - (val - 1.0) / K * (1.0 - a)
+        over = 1.0 + (T - aW) / slope
+        return np.where(T <= a, T, np.where(T <= aW, tail, over))
+
+    ax.set_xscale('function', functions=(fwd, inv))
+    # Right edge a small transformed-space margin past x=1 so the x=1 markers
+    # have clearance from the box.
+    right = float(inv(np.array([aW + 0.06]))[0])
+    ax.set_xlim(-0.01, right)
+    ticks = [0.0, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1.0]
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([f'{t:g}' for t in ticks], fontsize=7,
+                       rotation=45, ha='right')
+    ax.minorticks_off()
+    _draw_axis_break(ax, a)        # mark the linear -> inverse-log split
+
+
+def _legend(ax, *args, **kwargs):
+    """ax.legend(...) but placed BEHIND the plotted data (low zorder) so it never
+    obscures curves/markers where they overlap it. This is the default for every
+    legend in the diagnostic figure."""
+    leg = ax.legend(*args, **kwargs)
+    if leg is not None:
+        leg.set_zorder(0.5)        # below data lines (2) and markers (>=3)
+    return leg
+
+
+def _plot_recovery_tradeoff(ax, rec):
+    """Draw the recovery / bias-variance tradeoff panel from PRECOMPUTED data
+    (results['recovery_tradeoff'], built in psn() by compute_recovery_tradeoff).
+    Pure rendering - no heavy compute here; whichever curves/points the policy
+    produced are drawn, the rest are simply absent."""
+    ax.set_title('Recovery vs. signal retained\n(solid = analytic recovery, dashed = split-half r)')
+    if not rec:
+        ax.text(0.5, 0.5, 'no recovery data', ha='center', va='center',
+                transform=ax.transAxes)
+        return
+    # Two y-axes: LEFT = analytic recovery (the quantity used to pick the threshold,
+    # solid); RIGHT = empirical split-half reliability (validation, dashed).
+    ax_r = ax.twinx()
+    yL, yR = [], []                    # left (analytic) / right (split-half) y-values
+    # Color convention: analytic-recovery color (left axis) vs split-half color (right
+    # axis); markers reuse them. Shape: star = PSN chosen, square = trial-average.
+    analytic_endpoint = analytic_endpoint_x = None   # analytic recovery at full retention
+    prim_asf = prim_ar = None                        # primary basis analytic curve (for the chord)
+
+    # Faint per-unit split-half traces + markers -> right axis.
+    ut = rec.get('unit_traces')
+    if ut is not None:
+        xs_u = np.asarray(ut['sv_frac'])
+        u_curves = np.asarray(ut['split_half_r'])          # (n_sub, nKs)
+        yR.append(u_curves.ravel())
+        h_units = None
+        for row in u_curves:
+            line, = ax_r.plot(xs_u, row, lw=0.5, color=[0.5, 0.5, 0.5], alpha=0.3, zorder=1)
+            if h_units is None:
+                h_units = line
+        if h_units is not None:
+            h_units.set_label('units')
+        mk = ut.get('markers') or {}
+        mx = np.asarray(mk.get('sv_frac', []))
+        my = np.asarray(mk.get('split_half_r', []))
+        if my.size:
+            yR.append(my)
+        grp = mk.get('group')
+        if mx.size:
+            if grp is not None:
+                groups = np.asarray(grp)
+                uniq = np.unique(groups)
+                gcolors = plt.cm.hsv(np.linspace(0, 0.9, len(uniq)))
+                g2c = {g: gcolors[i] for i, g in enumerate(uniq)}
+                cols = [g2c[g] for g in groups]
+                ax_r.scatter(mx, my, s=18, c=cols, alpha=0.65, zorder=4)
+            else:
+                ax_r.scatter(mx, my, s=18, color=[1, 0.3, 0.3], alpha=0.65, zorder=4)
+
+    # Per-basis colors as (analytic solid, split-half dashed). The analytic (solid)
+    # keeps the basis identity color (blue = signal, green = difference) so it
+    # matches the fig6 objective trace. The signal split-half (dashed) is GOLD to
+    # match the gold "TAvg vs Denoised" dots in the split-half reliability panel
+    # (fig14); the difference split-half is purple so the two dashed curves stay
+    # distinguishable in compare mode.
+    GOLD = (1.0, 0.84, 0.0)
+    BASIS_COLORS = {'signal_basis': ('#1f77b4', GOLD),           # blue  / gold
+                    'difference_basis': ('#2ca02c', '#9467bd')}  # green / purple
+    present = [k for k in ('signal_basis', 'difference_basis')
+               if rec.get(k) is not None and (rec[k].get('analytic_recovery') is not None
+                                              or rec[k].get('split_half_r') is not None)]
+    multi = len(present) > 1
+    # Marker/primary color follows the basis the operating point was CHOSEN on, so
+    # the analytic markers (peak/chosen/trial-avg) match that trace and the fig6
+    # objective (in compare mode this is the chosen, not merely the first, basis).
+    _cb = (rec.get('chosen') or {}).get('basis')
+    _prim = (f'{_cb}_basis' if _cb in ('signal', 'difference')
+             and rec.get(f'{_cb}_basis') is not None
+             else (present[0] if present else 'signal_basis'))
+    mc_analytic, mc_splithalf = BASIS_COLORS[_prim]
+
+    # analytic recovery SOLID (left axis), split-half r DASHED (right axis).
+    for key, name in (('signal_basis', 'signal'), ('difference_basis', 'difference')):
+        b = rec.get(key)
+        if b is None:
+            continue
+        c_analytic, c_splithalf = BASIS_COLORS[key]
+        a_lbl = f'{name}: analytic recovery' if multi else 'analytic recovery'
+        s_lbl = f'{name}: split-half r' if multi else 'split-half r'
+        if b.get('analytic_recovery') is not None and b.get('analytic_sv_frac') is not None:
+            ax.plot(b['analytic_sv_frac'], b['analytic_recovery'], '-', color=c_analytic, lw=2,
+                    label=a_lbl)
+            yL.append(np.asarray(b['analytic_recovery']).ravel())
+            if analytic_endpoint is None:
+                _ar = np.asarray(b['analytic_recovery']).ravel()
+                _asf = np.asarray(b['analytic_sv_frac']).ravel()
+                if _ar.size:
+                    analytic_endpoint, analytic_endpoint_x = float(_ar[-1]), float(_asf[-1])
+                    prim_ar, prim_asf = _ar, _asf
+        if b.get('split_half_r') is not None and b.get('sv_frac') is not None:
+            ax_r.plot(b['sv_frac'], b['split_half_r'], '--', color=c_splithalf, lw=1.6, alpha=0.85,
+                      label=s_lbl)
+            yR.append(np.asarray(b['split_half_r']).ravel())
+
+    # Max-tradeoff geometry: the chord from the prediction peak to the do-nothing
+    # (trial-average) point, and the shaded gap between that chord and the analytic
+    # recovery curve on the descending limb, where max-tradeoff picks the farthest point.
+    if prim_ar is not None and prim_ar.size >= 3:
+        kpk = int(np.argmax(prim_ar))
+        # Peak of the analytic recovery curve (prediction peak): triangle.
+        ax.scatter([prim_asf[kpk]], [prim_ar[kpk]], marker='^', s=130, color=mc_analytic,
+                   edgecolor='k', linewidth=0.8, zorder=6, label='prediction peak (analytic)')
+        yL.append(np.asarray([prim_ar[kpk]]))
+        if kpk < prim_ar.size - 1 and prim_asf[-1] != prim_asf[kpk]:
+            xs = prim_asf[kpk:]
+            yc = prim_ar[kpk:]
+            ychord = prim_ar[kpk] + (prim_ar[-1] - prim_ar[kpk]) * \
+                (xs - prim_asf[kpk]) / (prim_asf[-1] - prim_asf[kpk])
+            ax.fill_between(xs, ychord, yc, color='0.5', alpha=0.15, zorder=0)
+            ax.plot(xs, ychord, ls=':', color='0.45', lw=1.0, zorder=1)
+
+    # trial-average (do-nothing): split-half-colored box on the split-half (right)
+    # axis + analytic-colored box on the analytic (left) curve. Wiener stays right.
+    ta = rec.get('trial_average')
+    if ta is not None and ta.get('split_half_r') is not None:
+        ax_r.scatter([ta['sv_frac']], [ta['split_half_r']], marker='s', s=70, color=mc_splithalf,
+                     edgecolor='k', linewidth=0.6, zorder=5, label='trial-avg (split-half)')
+        yR.append(np.asarray([ta['split_half_r']]))
+    # Analytic trial-avg box lives at the curve's full-retention endpoint, so it
+    # is drawn from the analytic curve alone - independent of any split-half data
+    # (present even when skip_split_half drops the split-half trial-avg marker).
+    if analytic_endpoint is not None:
+        ax.scatter([analytic_endpoint_x], [analytic_endpoint], marker='s', s=70, color=mc_analytic,
+                   edgecolor='k', linewidth=0.6, zorder=5, label='trial-avg (analytic)')
+        yL.append(np.asarray([analytic_endpoint]))
+    w = rec.get('wiener')
+    if w is not None:
+        ax_r.scatter([w['sv_frac']], [w['split_half_r']], marker='D', s=70, color='limegreen',
+                     edgecolor='k', linewidth=0.6, zorder=5, label='Wiener')
+        yR.append(np.asarray([w['split_half_r']]))
+
+    # Chosen operating point: analytic-colored star on the analytic (left) trajectory,
+    # split-half-colored star on the split-half (right) trajectory.
+    ch = rec.get('chosen')
+    if ch is not None:
+        if ch.get('split_half_r') is not None:
+            ax_r.scatter([ch['sv_frac']], [ch['split_half_r']], marker='*', s=320, color=mc_splithalf,
+                         edgecolor='k', linewidth=0.9, zorder=6, label='PSN chosen (split-half)')
+            yR.append(np.asarray([ch['split_half_r']]))
+        if ch.get('recovery') is not None:
+            ax.scatter([ch['sv_frac']], [ch['recovery']], marker='*', s=320, color=mc_analytic,
+                       edgecolor='k', linewidth=0.9, zorder=6, label='PSN chosen (analytic)')
+            yL.append(np.asarray([ch['recovery']]))
+
+    ax.set_xlabel('frac. signal var. retained')
+    ax.set_ylabel('analytic recovery  (cumsum signal - noise/t)')
+    ax_r.set_ylabel('split-half r  (TAvg vs Denoised)')
+
+    # Y-limits per axis: set the top to top_mult x the peak-to-bottom range so the
+    # data peak lands at 1/top_mult of the axis height, keeping the top clear for the
+    # top-left legend (and, in max-tradeoff mode, the upper-right inset too). 3x in
+    # max-tradeoff mode (needs room for the inset), 2x otherwise (legend only). When
+    # values go negative (e.g. the do-nothing tail of the analytic-recovery curve on
+    # noisy data) the lower limit follows the data instead of clipping at 0.
+    is_mt = rec.get('criterion') == 'max-tradeoff'
+    top_mult = 3.0 if is_mt else 2.0
+
+    def _lim(yvals):
+        v = np.concatenate(yvals) if yvals else None
+        if v is None:
+            return None
+        v = v[np.isfinite(v)]
+        if not v.size:
+            return None
+        vmax = max(float(np.max(v)), 1e-3)
+        vmin = float(np.min(v))
+        if vmin >= 0:
+            return (0.0, top_mult * vmax)
+        span = vmax - vmin
+        bottom = vmin - 0.05 * span
+        return (bottom, bottom + top_mult * (vmax - bottom))
+    lL, lR = _lim(yL), _lim(yR)
+    if lL:
+        ax.set_ylim(*lL)
+    if lR:
+        ax_r.set_ylim(*lR)
+
+    # Inverse-log x so the [0.9, 1] region (where curves and points crowd) fans out.
+    _set_tail_invlog_xscale(ax)
+    ax.grid(alpha=0.25)
+    # Combined legend from both axes, ordered so the analytic (gold) entries form
+    # one block and the split-half (gray) entries another, with gold box/star adjacent,
+    # gray box/star adjacent.
+    h1, l1 = ax.get_legend_handles_labels()
+    h2, l2 = ax_r.get_legend_handles_labels()
+    def _rank(lbl):
+        L = lbl.lower()
+        if 'prediction peak' in L:
+            return 0.5 if 'analytic' in L else 9
+        if 'chosen' in L:
+            return 2 if 'analytic' in L else 14
+        if 'trial-avg' in L:
+            return 1 if 'analytic' in L else 13
+        if 'tradeoff' in L:
+            return 3
+        if 'analytic recovery' in L:
+            return 0
+        if 'split-half r' in L:
+            return 10
+        if L == 'units':
+            return 11
+        if 'wiener' in L:
+            return 12
+        return 99
+    pairs = sorted(zip(h1 + h2, l1 + l2), key=lambda hl: _rank(hl[1]))
+    # Upper-left, two columns so the legend runs along the top and stays compact (the
+    # ylim rule keeps the data in the lower half/third, so the upper area is clear).
+    _legend(ax, [h for h, _ in pairs], [l for _, l in pairs],
+            fontsize=6.5, ncol=2, columnspacing=1.0,
+            handletextpad=0.5, loc='upper left', framealpha=0.85)
+
+    # Inset (upper-right): linear-axis zoom of the max-tradeoff selection geometry.
+    _draw_max_tradeoff_inset(ax, rec)
+
+
+def _draw_max_tradeoff_inset(ax, rec):
+    """Lower-left inset that zooms, on LINEAR axes, into the descending limb where
+    the max-tradeoff criterion picks the operating point. Coordinates are
+    normalized so the recovery peak sits at (0,1) and the trial-average
+    (do-nothing) at (1,0); the peak->trial-average chord is then the anti-diagonal
+    u+v=1, and max-tradeoff selects the curve point of greatest perpendicular
+    distance from it (argmax of the shaded gap). argmax perpendicular distance is
+    affine-invariant, so this clean square view marks the SAME operating point
+    psn() chose while drawing a true right angle. Only rendered in max-tradeoff
+    mode."""
+    if rec.get('criterion') != 'max-tradeoff':
+        return
+    ch = rec.get('chosen')
+    if not ch or ch.get('recovery') is None or ch.get('sv_frac') is None:
+        return
+    # Basis the operating point was chosen on (fallback: first present).
+    key = f"{ch.get('basis')}_basis" if ch.get('basis') in ('signal', 'difference') else None
+    if key is None or rec.get(key) is None:
+        key = next((k for k in ('signal_basis', 'difference_basis')
+                    if rec.get(k) is not None), None)
+    if key is None:
+        return
+    b = rec[key]
+    if b.get('analytic_sv_frac') is None or b.get('analytic_recovery') is None:
+        return
+    asf = np.asarray(b['analytic_sv_frac'], float)
+    ar = np.asarray(b['analytic_recovery'], float)
+    if asf.size < 3 or ar.size < 3:
+        return
+    kpk = int(np.argmax(ar))
+    xpk, rpk, xend, rend = asf[kpk], ar[kpk], asf[-1], ar[-1]
+    if kpk >= ar.size - 1 or xend == xpk or (rpk - rend) <= 1e-12 \
+            or not np.isfinite(ch['recovery']):
+        return
+
+    # Normalized descending limb: u in [0,1] (0=peak, 1=trial-avg), v in [0,1] (1=peak).
+    u = (asf[kpk:] - xpk) / (xend - xpk)
+    v = (ar[kpk:] - rend) / (rpk - rend)
+    u_ch = (ch['sv_frac'] - xpk) / (xend - xpk)
+    v_ch = (ch['recovery'] - rend) / (rpk - rend)
+    tt = (u_ch + v_ch - 1) / 2.0                      # foot of perpendicular on u+v=1
+    foot = (u_ch - tt, v_ch - tt)
+
+    mc = '#2ca02c' if key == 'difference_basis' else '#1f77b4'   # matches the panel trace
+    perpc = '#d81a1a'
+
+    # Top-right corner, pushed up and right into the whitespace the top headroom
+    # opens up, with just enough gap above so the title does not hit the top frame.
+    axi = ax.inset_axes([0.655, 0.52, 0.335, 0.335])
+    axi.set_facecolor('white')
+    axi.fill_between(u, v, 1 - u, color='0.5', alpha=0.12, lw=0)          # gap curve<->chord
+    axi.plot([0, 1], [1, 0], '--', color='0.35', lw=1.0)                 # chord
+    axi.plot(u, v, '-', color=mc, lw=1.6)                                # recovery curve
+    axi.scatter([0], [1], marker='^', s=45, color=mc, edgecolor='k',
+                linewidth=0.6, zorder=5)                                 # peak
+    axi.scatter([1], [0], marker='s', s=40, color=mc, edgecolor='k',
+                linewidth=0.6, zorder=5)                                 # trial-avg
+    axi.plot([u_ch, foot[0]], [v_ch, foot[1]], '-', color=perpc, lw=1.4,
+             zorder=6)                                                   # perpendicular
+    axi.scatter([foot[0]], [foot[1]], s=18, facecolor='white',
+                edgecolor=perpc, linewidth=1.0, zorder=6)                # foot
+    axi.scatter([u_ch], [v_ch], marker='*', s=150, color=mc, edgecolor='k',
+                linewidth=0.6, zorder=7)                                 # chosen
+
+    axi.set_aspect('equal', adjustable='box')      # equal units -> the right angle reads true
+    axi.set_xlim(-0.06, 1.10)
+    axi.set_ylim(-0.06, 1.10)
+    # Tick labels in the ACTUAL units: both axes are linear (affine) maps of them,
+    # u -> frac. signal var. retained, v -> analytic recovery, so labelling the
+    # fixed tick positions with the real values is exact.
+    xt = np.array([0.0, 0.5, 1.0])
+    axi.set_xticks(xt)
+    axi.set_yticks(xt)
+    axi.set_xticklabels(_fmt_ticks(xpk + xt * (xend - xpk)))
+    axi.set_yticklabels(_fmt_ticks(rend + xt * (rpk - rend)))
+    axi.tick_params(labelsize=6, length=2)
+    axi.set_title('max-tradeoff (zoom)', fontsize=7, pad=2)
+    axi.set_xlabel('frac. signal retained', fontsize=6.5, labelpad=1)
+    axi.set_ylabel('analytic recovery', fontsize=6.5, labelpad=1)
+
+
+def _fmt_ticks(vals):
+    """Format tick values with the fewest decimals that keeps them all distinct
+    (the descending limb can crowd near frac=1, so a fixed precision would collapse
+    adjacent labels)."""
+    vals = [float(v) for v in vals]
+    for d in range(1, 9):
+        s = [f'{v:.{d}f}' for v in vals]
+        if len(set(s)) == len(s):
+            return s
+    return [f'{v:.8f}' for v in vals]
+
+
+
 def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap=None,
                             split_half_metric='correlation'):
     """
@@ -101,15 +579,12 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         Default: cmapsign4()
     split_half_metric : str, optional
         Metric for the split-half reliability plot.
-        'correlation' (default) — Pearson r per unit.
-        'mse' — mean squared error per unit.
+        'correlation' (default) - Pearson r per unit.
+        'mse' - mean squared error per unit.
     """
     # Set default colormap for data plots
     if cmap is None:
         cmap = cmapsign4()
-
-    # Set random seed for reproducibility
-    np.random.seed(42)
 
     # Increase font sizes globally for this figure
     plt.rcParams.update({
@@ -124,14 +599,19 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # Create a large figure with custom grid layout
     # Top row: 5 subplots (cSb, cNb, basis dims (half), eigenvalues (half), sig/noise var)
     # Rows 2-4: standard 4x4 grid
-    fig = plt.figure(figsize=(24, 15))
+    fig = plt.figure(figsize=(27, 15))
 
     # Create GridSpec: 4 rows, 8 columns (to allow half-width subplots)
     # Increase spacing to prevent overlap
     # Use width_ratios to make first 2 columns slightly narrower (for objective plot with twin y-axis)
-    gs = GridSpec(4, 8, figure=fig, hspace=0.45, wspace=0.6,
-                  left=0.05, right=0.95, top=0.93, bottom=0.05,
+    gs = GridSpec(4, 8, figure=fig, hspace=0.5, wspace=0.42,
+                  left=0.04, right=0.985, top=0.95, bottom=0.045,
                   width_ratios=[0.9, 0.9, 1, 1, 1, 1, 1, 1])
+
+    # Feature 1: row 0 gets a 6th panel at the far right (recovery tradeoff),
+    # keeping the original relative widths of the first five panels.
+    gs_row0 = GridSpecFromSubplotSpec(1, 6, subplot_spec=gs[0, :],
+                                      width_ratios=[2, 2, 1, 1, 2, 2], wspace=0.45)
 
     # Extract data dimensions
     nunits, nconds, ntrials = data.shape
@@ -143,16 +623,16 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # Unit subsampling
     subsample_units = nunits > 500
     if subsample_units:
-        np.random.seed(42)  # For reproducibility
-        subsample_idx = np.sort(np.random.choice(nunits, n_subsample, replace=False))
+        rng_units = np.random.RandomState(42)  # local RNG; leave global state untouched
+        subsample_idx = np.sort(rng_units.choice(nunits, n_subsample, replace=False))
     else:
         subsample_idx = np.arange(nunits)
 
     # Condition subsampling (for trace plots)
     subsample_conds = nconds > 500
     if subsample_conds:
-        np.random.seed(43)  # Different seed for conditions
-        subsample_cond_idx = np.sort(np.random.choice(nconds, n_subsample, replace=False))
+        rng_conds = np.random.RandomState(43)  # local RNG; leave global state untouched
+        subsample_cond_idx = np.sort(rng_conds.choice(nconds, n_subsample, replace=False))
     else:
         subsample_cond_idx = np.arange(nconds)
 
@@ -214,7 +694,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
 
     # Create title (order: Basis, Criterion, Method to match API)
     if basis_desc == 'wiener':
-        # Full-rank Wiener bypasses criterion/threshold — show simplified title
+        # Full-rank Wiener bypasses criterion/threshold - show simplified title
         data_str = (f'{nunits} units × {nconds} conditions × {ntrials} max trials (avg {ntrials_avg:.1f})'
                     if has_nans else f'{nunits} units × {nconds} conditions × {ntrials} trials')
         title_text = f'Data: {data_str}  |  Full-Rank Matrix Wiener Filter'
@@ -241,8 +721,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         else:
             threshold_info.append(f"Forced threshold: {int(allowable)}")
     if opt.get('alpha') is not None:
-        vt = opt.get('variance_threshold', 0.99)
-        threshold_info.append(f"Variance target: {vt}")
+        threshold_info.append("Alpha target: peak→trial-average")
     elif criterion in ['variance', 'variance_eigenvalues']:
         vt = opt.get('variance_threshold', 0.99)
         threshold_info.append(f"Variance threshold: {vt}")
@@ -264,7 +743,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # =========================================================================
     # Plot 1: Basis source matrix (signal covariance or basis-specific)
     # =========================================================================
-    ax1 = fig.add_subplot(gs[0, 0:2])  # First 2 columns of row 0
+    ax1 = fig.add_subplot(gs_row0[0, 0])  # Row 0 panel 1
     if 'gsn_result' in results and 'cSb' in results['gsn_result']:
         cSb = results['gsn_result']['cSb']
         cNb = results['gsn_result']['cNb']
@@ -289,6 +768,9 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
             plot_matrix_1 = cSb
             plot_title = 'Signal Covariance (cSb)'
 
+        # Subsample huge matrices before imshow / percentile (cheap at large N).
+        plot_matrix_1, _ext1 = _subsample_for_imshow(plot_matrix_1)
+
         # Compute symmetric colorbar limits around 0 (use 99th percentile for better contrast)
         if has_nans:
             data_absmax = np.nanpercentile(np.abs(plot_matrix_1), 99)
@@ -300,11 +782,13 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         else:
             clim_1 = [-1, 1]
 
-        im1 = ax1.imshow(plot_matrix_1, vmin=clim_1[0], vmax=clim_1[1], cmap=redblue(), aspect='equal')
-        plt.colorbar(im1, ax=ax1)
+        im1 = ax1.imshow(plot_matrix_1, vmin=clim_1[0], vmax=clim_1[1], cmap=redblue(), aspect='equal', extent=_ext1)
+        plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.02)
         ax1.set_title(plot_title)
         ax1.set_xlabel('Units')
         ax1.set_ylabel('Units')
+        ax1.locator_params(axis='both', nbins=4)   # fewer, non-overlapping ticks
+        ax1.tick_params(labelsize=8)
     else:
         ax1.text(0.5, 0.5, 'Covariance\nNot Available',
                 ha='center', va='center', transform=ax1.transAxes)
@@ -312,9 +796,12 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # =========================================================================
     # Plot 2: Noise Covariance (cNb)
     # =========================================================================
-    ax2 = fig.add_subplot(gs[0, 2:4])  # Columns 2-3 of row 0
+    ax2 = fig.add_subplot(gs_row0[0, 1])  # Row 0 panel 2
     if 'gsn_result' in results and 'cNb' in results['gsn_result']:
         cNb = results['gsn_result']['cNb']
+
+        # Subsample huge matrices before imshow / percentile (cheap at large N).
+        cNb, _ext2 = _subsample_for_imshow(cNb)
 
         # Compute symmetric colorbar limits around 0 (use 99th percentile for better contrast)
         if has_nans:
@@ -327,11 +814,13 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         else:
             clim_cNb = [-1, 1]
 
-        im2 = ax2.imshow(cNb, vmin=clim_cNb[0], vmax=clim_cNb[1], cmap=redblue(), aspect='equal')
-        plt.colorbar(im2, ax=ax2)
+        im2 = ax2.imshow(cNb, vmin=clim_cNb[0], vmax=clim_cNb[1], cmap=redblue(), aspect='equal', extent=_ext2)
+        plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.02)
         ax2.set_title('Noise Covariance (cNb)')
         ax2.set_xlabel('Units')
         ax2.set_ylabel('Units')
+        ax2.locator_params(axis='both', nbins=4)   # fewer, non-overlapping ticks
+        ax2.tick_params(labelsize=8)
     else:
         ax2.text(0.5, 0.5, 'Noise Covariance\nNot Available',
                 ha='center', va='center', transform=ax2.transAxes)
@@ -339,7 +828,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # =========================================================================
     # Plot 3: Top 5 PCs as vertical line plots (half width)
     # =========================================================================
-    ax3 = fig.add_subplot(gs[0, 4:5])  # Column 4 of row 0 (half width)
+    ax3 = fig.add_subplot(gs_row0[0, 2])  # Row 0 panel 3 (half width)
     if 'fullbasis' in results:
         num_pcs = min(5, results['fullbasis'].shape[1])
 
@@ -372,8 +861,11 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         # Add eigenvalue labels under PC indices
         if 'basis_eigenvalues' in results and results['basis_eigenvalues'] is not None and len(results['basis_eigenvalues']) >= num_pcs:
             evals = results['basis_eigenvalues']
-            tick_labels = [f'{pc}\nλ={evals[pc]:.2f}' for pc in range(num_pcs)]
-            ax3.set_xticklabels(tick_labels, fontsize=7)
+            def _lam(v):  # compact eigenvalue label so 5 fit in a half-panel
+                av = abs(v)
+                return f'{v:.0f}' if av >= 100 else (f'{v:.1f}' if av >= 1 else f'{v:.2f}')
+            tick_labels = [f'{pc}\nλ={_lam(evals[pc])}' for pc in range(num_pcs)]
+            ax3.set_xticklabels(tick_labels, fontsize=6)
         ax3.grid(True)
     else:
         ax3.text(0.5, 0.5, 'Basis\nNot Available',
@@ -382,7 +874,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # =========================================================================
     # Plot 4: Global dimension ranking (eigenvalues or signal variance) - half width
     # =========================================================================
-    ax4 = fig.add_subplot(gs[0, 5:6])  # Column 5 of row 0 (half width)
+    ax4 = fig.add_subplot(gs_row0[0, 3])  # Row 0 panel 4 (half width)
 
     # Determine if we should use log scale for x-axis (for large datasets)
     use_logscale = nunits > 50
@@ -429,11 +921,10 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
             ax4.set_title('$\\Sigma_S$ Eigenvalues (signal basis)')
         else:
             ax4.set_title('Basis Eigenvalues')
-        ax4.legend(loc='best', fontsize=7)
+        _legend(ax4, loc='best', fontsize=7)
         ax4.grid(True)
         if use_logscale:
-            ax4.set_xscale('log')
-            ax4.set_xlim([0.8, len(evals) + 1])
+            _set_headtail_log_xscale(ax4, len(evals), rotation=45)
         else:
             ax4.set_xlim([-0.5, len(evals) - 0.5])
 
@@ -474,11 +965,10 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         ax4.set_xlabel('Dimension')
         ax4.set_ylabel('Variance')
         ax4.set_title('Ordering Criterion')
-        ax4.legend(loc='best', fontsize=7)
+        _legend(ax4, loc='best', fontsize=7)
         ax4.grid(True)
         if use_logscale:
-            ax4.set_xscale('log')
-            ax4.set_xlim([0.8, len(signal_vars) + 1])
+            _set_headtail_log_xscale(ax4, len(signal_vars), rotation=45)
         else:
             ax4.set_xlim([-0.5, len(signal_vars) - 0.5])
 
@@ -518,8 +1008,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         ax4.set_title('Signal Variance')
         ax4.grid(True)
         if use_logscale:
-            ax4.set_xscale('log')
-            ax4.set_xlim([0.8, len(signal_vars) + 1])
+            _set_headtail_log_xscale(ax4, len(signal_vars), rotation=45)
         else:
             ax4.set_xlim([-0.5, len(signal_vars) - 0.5])
     else:
@@ -529,7 +1018,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     # =========================================================================
     # Plot 5: Signal vs Noise variance
     # =========================================================================
-    ax5 = fig.add_subplot(gs[0, 6:8])  # Columns 6-7 of row 0
+    ax5 = fig.add_subplot(gs_row0[0, 4])  # Row 0 panel 5
     if 'signalvar' in results and 'noisevar' in results:
         if not isinstance(results['signalvar'], (list, tuple)):
             # Global or averaged
@@ -553,7 +1042,20 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
 
             # Right y-axis for NCSNR
             ax5_right = ax5_left.twinx()
-            ncsnr_trace = np.sqrt(sv) / np.sqrt(nv + np.finfo(float).eps)
+            # Rectify negative signal variance to 0 (cSb need not be strictly PSD).
+            # NCSNR is undefined where the projected noise variance underflows to
+            # ~0: a signal-basis direction can land in a null direction of cNb, so
+            # noisevar = u'·cNb·u ≈ 0 while signalvar is appreciable. Dividing by the
+            # bare +eps floor (sqrt(eps) ≈ 1.5e-8) then explodes the trace to ~1e7.
+            # Floor relative to the data and mask those dims so the line shows a gap
+            # instead of a spurious spike.
+            nv_arr = np.asarray(nv, dtype=float)
+            noise_floor = max(np.finfo(float).eps, 1e-8 * np.nanmax(nv_arr))
+            ncsnr_trace = np.where(
+                nv_arr >= noise_floor,
+                np.sqrt(np.maximum(sv, 0)) / np.sqrt(np.maximum(nv_arr, noise_floor)),
+                np.nan,
+            )
             line3 = ax5_right.plot(x_vals, ncsnr_trace, '-', linewidth=1.5, color='magenta', label='NCSNR')
 
             ax5_right.set_ylabel('NCSNR', color='magenta')
@@ -582,12 +1084,11 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
             if line_thresh is not None:
                 lines = lines + [line_thresh]
             labels = [l.get_label() for l in lines]
-            ax5_left.legend(lines, labels, loc='best', fontsize=7)
+            _legend(ax5_left, lines, labels, loc='best', fontsize=7)
             ax5_left.grid(True)
 
             if use_logscale:
-                ax5_left.set_xscale('log')
-                ax5_left.set_xlim([0.8, len(sv) * 1.1])  # Push x-axis limit beyond final dimension
+                _set_headtail_log_xscale(ax5_left, len(sv), rotation=45)
             else:
                 ax5_left.set_xlim([-0.5, len(sv) * 1.02])  # Push x-axis limit beyond final dimension
         else:
@@ -598,15 +1099,34 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                 ha='center', va='center', transform=ax5.transAxes)
 
     # =========================================================================
-    # Plot 6: Objective function (or Wiener weights if denoiser_type='wiener')
+    # Plot 5b (NEW, Feature 1): recovery / bias-variance tradeoff (first panel of
+    # row 1, next to the three data matrices).
     # =========================================================================
-    ax6 = fig.add_subplot(gs[1, 0:2])  # Row 1, columns 0-1
+    ax_rec = fig.add_subplot(gs[1, 0:2])  # Row 1, columns 0-1
+    # The data is precomputed in psn() (results['recovery_tradeoff']), regardless
+    # of wantfig - the figure just renders it.
+    if results.get('recovery_tradeoff') is not None:
+        _plot_recovery_tradeoff(ax_rec, results['recovery_tradeoff'])
+    else:
+        ax_rec.set_title('Recovery vs. signal retained')
+        ax_rec.text(0.5, 0.5, 'no GSN covariances', ha='center', va='center',
+                    transform=ax_rec.transAxes)
+
+    # =========================================================================
+    # Plot 6: Objective function (cumulative signal - noise/t).
+    # Moved to the far right of row 0 (swapped with the recovery-tradeoff panel).
+    # =========================================================================
+    ax6 = fig.add_subplot(gs_row0[0, 5])  # Row 0, panel 6 (far right)
+
+    # Objective curve color, matched to the recovery panel: blue for the signal
+    # basis, green for the difference basis (default green otherwise).
+    _obj_basis = (results.get('threshold_selection') or {}).get('basis')
+    if _obj_basis is None and isinstance(opt.get('basis'), str):
+        _obj_basis = opt.get('basis')
+    obj_color = {'signal': '#1f77b4', 'difference': '#2ca02c'}.get(_obj_basis, [0.3, 0.7, 0.3])
 
     # Check if Wiener mode (includes all Wiener-family denoisers)
-    denoiser_type = opt.get('denoiser_type', 'truncation')
-    is_wiener = (denoiser_type == 'wiener')
-
-    if is_wiener and 'wiener_weights' in results:
+    if 'wiener_weights' in results:
         # Wiener mode: show Wiener weights and cumulative objective on dual y-axes
         wiener_weights = results['wiener_weights']
         n_weights = len(wiener_weights)
@@ -642,31 +1162,35 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                 x_obj = np.concatenate([[zero_placeholder], np.arange(1, len(obj))])
             else:
                 x_obj = np.arange(len(obj))
-            line_obj, = ax6_right.plot(x_obj, obj, linewidth=2, color=[0.3, 0.7, 0.3],
-                                        label='Cumsum SignalVar - NoiseVar/nt')
-            ax6_right.set_ylabel('Cumulative SignalVar - NoiseVar/ntrials', color=[0.3, 0.7, 0.3])
-            ax6_right.tick_params(axis='y', labelcolor=[0.3, 0.7, 0.3])
+            line_obj, = ax6_right.plot(x_obj, obj, linewidth=2, color=obj_color,
+                                        label='analytic recovery')
+            ax6_right.set_ylabel('analytic recovery  (cumsum signal - noise/t)', color=obj_color)
+            ax6_right.tick_params(axis='y', labelcolor=obj_color)
 
-            # Star at max of global cumsum objective
-            max_idx = np.argmax(obj)
-            h_star, = ax6_right.plot(x_obj[max_idx], obj[max_idx], '*', markersize=14,
-                                      color=[0.3, 0.7, 0.3], markeredgecolor='black',
-                                      markeredgewidth=0.8, zorder=10,
-                                      label=f'Max objective (K={max_idx})')
+            # Peak of analytic recovery (triangle) + do-nothing box at full retention.
+            max_idx = int(np.argmax(obj))
+            ndims = len(obj) - 1
+            h_peak, = ax6_right.plot(x_obj[max_idx], obj[max_idx], '^', markersize=11,
+                                     color=obj_color, markeredgecolor='black',
+                                     markeredgewidth=0.8, zorder=10,
+                                     label=f'prediction peak (K={max_idx})')
+            h_box, = ax6_right.plot(x_obj[ndims], obj[ndims], 's', markersize=10,
+                                    color=obj_color, markeredgecolor='black',
+                                    markeredgewidth=0.8, zorder=10,
+                                    label=f'trial-avg / do-nothing (K={ndims})')
 
             # Combined legend
-            lines = [line_weights, line_obj, h_star]
+            lines = [line_weights, line_obj, h_peak, h_box]
             labels = [l.get_label() for l in lines]
-            ax6.legend(lines, labels, loc='best', fontsize=8)
+            _legend(ax6, lines, labels, loc='best', fontsize=8)
 
         ax6.set_xlabel('Dimension')
-        ax6.set_title(f'Wiener Weights & Objective (eff. dims = {effective_dims:.1f})')
+        ax6.set_title(f'Wiener weights & analytic recovery (eff. dims = {effective_dims:.1f})')
         ax6.grid(True, alpha=0.3)
 
         # Use log scale for x-axis if many dimensions
         if use_logscale:
-            ax6.set_xscale('log')
-            ax6.set_xlim([0.8, n_weights * 1.1])
+            _set_headtail_log_xscale(ax6, n_weights, zero_at=zero_placeholder)
         else:
             ax6.set_xlim([-0.5, n_weights - 0.5])
 
@@ -739,7 +1263,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                             ax6_left.scatter(x_thresh, y_thresh, s=20, color=[1, 0.3, 0.3],
                                        alpha=0.6, zorder=5)
 
-            ax6_left.set_ylabel('Unit-Specific Objective\n(SignalVar - NoiseVar/ntrials)', color=[0.4, 0.4, 0.4])
+            ax6_left.set_ylabel('unit analytic recovery\n(cumsum signal - noise/t)', color=[0.4, 0.4, 0.4])
             ax6_left.tick_params(axis='y', labelcolor=[0.4, 0.4, 0.4])
 
             # Right axis: population sum (green) - FULL population
@@ -748,139 +1272,110 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
                 x_obj = np.concatenate([[zero_placeholder], np.arange(1, len(obj))])
             else:
                 x_obj = np.arange(len(obj))
-            h_sum, = ax6_right.plot(x_obj, obj, linewidth=2, color=[0.3, 0.7, 0.3])
-            ax6_right.set_ylabel('Population Objective', color=[0.3, 0.7, 0.3])
-            ax6_right.tick_params(axis='y', labelcolor=[0.3, 0.7, 0.3])
+            h_sum, = ax6_right.plot(x_obj, obj, linewidth=2, color=obj_color)
+            ax6_right.set_ylabel('analytic recovery (population)', color=obj_color)
+            ax6_right.tick_params(axis='y', labelcolor=obj_color)
 
-            # Star at max of global cumsum objective (= prediction peak)
-            max_idx = np.argmax(obj)
-            h_star, = ax6_right.plot(x_obj[max_idx], obj[max_idx], '*', markersize=14,
-                                      color=[0.3, 0.7, 0.3], markeredgecolor='black',
-                                      markeredgewidth=0.8, zorder=10)
+            # Peak of population analytic recovery (triangle) + do-nothing box at
+            # full retention. Per-unit chosen thresholds are the scatter dots above.
+            max_idx = int(np.argmax(obj))
+            ndims = len(obj) - 1
+            h_peak, = ax6_right.plot(x_obj[max_idx], obj[max_idx], '^', markersize=11,
+                                     color=obj_color, markeredgecolor='black',
+                                     markeredgewidth=0.8, zorder=10)
+            h_box, = ax6_right.plot(x_obj[ndims], obj[ndims], 's', markersize=10,
+                                    color=obj_color, markeredgecolor='black',
+                                    markeredgewidth=0.8, zorder=10)
 
             alpha_info = results.get('alpha_info')
-            legend_handles = [h_units, h_sum, h_star]
-            legend_labels = ['Units', 'Population (=Global)', f'Prediction peak (K={max_idx})']
+            legend_handles = [h_units, h_sum, h_peak, h_box]
+            legend_labels = ['units', 'analytic recovery (population)',
+                             f'prediction peak (K={max_idx})',
+                             f'trial-avg / do-nothing (K={ndims})']
 
-            # Alpha-specific: add variance target diamond on right axis
+            # Alpha-specific: shade the interpolation range (prediction peak -> chosen).
             if alpha_info is not None:
-                k_var = alpha_info['k_var']
-                if k_var >= 0 and k_var < len(obj):
-                    if use_logscale:
-                        x_var = zero_placeholder if k_var == 0 else k_var
-                    else:
-                        x_var = k_var
-                    h_diamond, = ax6_right.plot(x_var, obj[k_var], 'D', markersize=8,
-                                                color=[0.2, 0.4, 0.9], markeredgecolor='black',
-                                                markeredgewidth=0.8, zorder=10)
-                    legend_handles.append(h_diamond)
-                    legend_labels.append(f'Variance target (K={k_var})')
-                # Shaded interpolation range
                 k_pred = alpha_info['k_pred']
+                k_var = alpha_info['k_var']
                 x_lo = (zero_placeholder if k_pred == 0 else k_pred) if use_logscale else k_pred
                 x_hi = (zero_placeholder if k_var == 0 else k_var) if use_logscale else k_var
                 if x_lo != x_hi:
                     ax6.axvspan(x_lo, x_hi, alpha=0.08, color='blue')
 
-            ax6_left.legend(legend_handles, legend_labels, loc='best', fontsize=7)
+            _legend(ax6_left, legend_handles, legend_labels, loc='best', fontsize=7)
 
             if alpha_info is not None:
-                ax6.set_title(f'Objective Function (alpha={alpha_info["alpha"]}){subsample_suffix_units}')
+                ax6.set_title(f'Analytic recovery vs. dimensions (alpha={alpha_info["alpha"]}){subsample_suffix_units}')
             else:
-                ax6.set_title(f'Objective Function (unit-specific){subsample_suffix_units}')
+                ax6.set_title(f'Analytic recovery vs. dimensions (unit-specific){subsample_suffix_units}')
         else:
             # Global mode: single curve
             if use_logscale:
                 x_obj = np.concatenate([[zero_placeholder], np.arange(1, len(obj))])
             else:
                 x_obj = np.arange(len(obj))
-            ax6.plot(x_obj, obj, linewidth=1.5, color=[0.3, 0.7, 0.3])
+            ax6.plot(x_obj, obj, linewidth=1.5, color=obj_color)
 
             alpha_info = results.get('alpha_info')
+            ndims = len(obj) - 1
 
-            # Mark chosen threshold (not maximum - threshold may be constrained)
+            def _xpos(idx):
+                # Map a dimension index to its x position (log placeholder at 0).
+                if use_logscale:
+                    return zero_placeholder if idx == 0 else idx
+                return idx
+
+            # Peak of the analytic recovery curve (prediction peak): triangle.
+            max_idx = int(np.argmax(obj))
+            ax6.plot(_xpos(max_idx), obj[max_idx], '^', markersize=11,
+                     color=obj_color, markeredgecolor='black',
+                     markeredgewidth=0.8, zorder=10,
+                     label=f'prediction peak (K={max_idx})')
+
+            # Chosen threshold (may be constrained, so not necessarily the peak): star.
             if 'best_threshold' in results and np.isscalar(results['best_threshold']):
                 k = int(results['best_threshold'])
                 if k >= 0 and k < len(obj):
-                    if use_logscale:
-                        x_marker = zero_placeholder if k == 0 else k
-                    else:
-                        x_marker = k
-                    if alpha_info is not None:
-                        ax6.plot(x_marker, obj[k], 'ro', markersize=8, linewidth=2,
-                                 label=f'Alpha threshold (K={k})')
-                    else:
-                        ax6.plot(x_marker, obj[k], 'ro', markersize=8, linewidth=2)
+                    ax6.plot(_xpos(k), obj[k], '*', markersize=16,
+                             color=obj_color, markeredgecolor='black',
+                             markeredgewidth=0.9, zorder=11,
+                             label=f'PSN chosen (K={k})')
 
-            # Star at max of global cumsum objective (= prediction peak)
-            max_idx = np.argmax(obj)
-            if use_logscale:
-                x_star = zero_placeholder if max_idx == 0 else max_idx
-            else:
-                x_star = max_idx
-            if alpha_info is not None:
-                ax6.plot(x_star, obj[max_idx], '*', markersize=14,
-                         color=[0.3, 0.7, 0.3], markeredgecolor='black',
-                         markeredgewidth=0.8, zorder=10,
-                         label=f'Prediction peak (K={max_idx})')
-            else:
-                ax6.plot(x_star, obj[max_idx], '*', markersize=14,
-                         color=[0.3, 0.7, 0.3], markeredgecolor='black',
-                         markeredgewidth=0.8, zorder=10)
+            # Trial-average / do-nothing (keep every dimension): box at full retention.
+            ax6.plot(_xpos(ndims), obj[ndims], 's', markersize=10,
+                     color=obj_color, markeredgecolor='black',
+                     markeredgewidth=0.8, zorder=10,
+                     label=f'trial-avg / do-nothing (K={ndims})')
 
-            # Alpha-specific markers: variance target diamond + shaded range
+            # Alpha-specific: shade the interpolation range (prediction peak -> chosen).
             if alpha_info is not None:
-                k_var = alpha_info['k_var']
-                if k_var >= 0 and k_var < len(obj):
-                    if use_logscale:
-                        x_var = zero_placeholder if k_var == 0 else k_var
-                    else:
-                        x_var = k_var
-                    ax6.plot(x_var, obj[k_var], 'D', markersize=8,
-                             color=[0.2, 0.4, 0.9], markeredgecolor='black',
-                             markeredgewidth=0.8, zorder=10,
-                             label=f'Variance target (K={k_var})')
-                # Shaded interpolation range
                 k_pred = alpha_info['k_pred']
-                x_lo = (zero_placeholder if k_pred == 0 else k_pred) if use_logscale else k_pred
-                x_hi = (zero_placeholder if k_var == 0 else k_var) if use_logscale else k_var
+                k_var = alpha_info['k_var']
+                x_lo, x_hi = _xpos(k_pred), _xpos(k_var)
                 if x_lo != x_hi:
                     ax6.axvspan(x_lo, x_hi, alpha=0.08, color='blue')
-                ax6.legend(loc='best', fontsize=7)
+
+            _legend(ax6, loc='best', fontsize=7)
 
             if alpha_info is not None:
-                ax6.set_title(f'Objective Function (alpha={alpha_info["alpha"]})')
+                ax6.set_title(f'Analytic recovery vs. dimensions (alpha={alpha_info["alpha"]})')
             else:
-                ax6.set_title('Objective Function')
+                ax6.set_title('Analytic recovery vs. dimensions')
 
         ax6.set_xlabel('Number of Dimensions')
 
         # Set ylabel based on criterion (only for global mode - unit-specific mode already set ylabels)
         if not ('unit_objectives' in results and results['unit_objectives']):
             if criterion == 'variance':
-                ax6.set_ylabel('Cumulative SignalVar')
+                ax6.set_ylabel('cumulative signal variance')
             else:
-                ax6.set_ylabel('Cumulative SignalVar - NoiseVar/ntrials')
+                ax6.set_ylabel('analytic recovery  (cumsum signal - noise/t)')
 
         ax6.grid(True)
 
         # Apply log scale and fix tick labels if needed
         if use_logscale:
-            ax6.set_xscale('log')
-            # Set xlim to start at zero_placeholder (so "0" point is visible)
-            n_dims = len(obj) - 1  # max dimension
-            ax6.set_xlim([zero_placeholder * 0.8, n_dims * 1.1])
-            # Set custom ticks to show "0" at the zero_placeholder position
-            tick_vals = [zero_placeholder]
-            tick_labels = ['0']
-            # Add powers of 10 and intermediate values
-            log_ticks = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
-            for lt in log_ticks:
-                if lt <= n_dims:
-                    tick_vals.append(lt)
-                    tick_labels.append(str(lt))
-            ax6.set_xticks(tick_vals)
-            ax6.set_xticklabels(tick_labels)
+            _set_headtail_log_xscale(ax6, len(obj) - 1, zero_at=zero_placeholder)
     elif basis_desc == 'wiener' and 'signalvar' in results and 'noisevar' in results:
         # Full-rank Wiener: show implied per-dimension weights and cumulative objective
         signal_proj = results['signalvar']
@@ -918,15 +1413,15 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
             x_obj = np.concatenate([[zero_placeholder], np.arange(1, len(cumsum_obj))])
         else:
             x_obj = np.arange(len(cumsum_obj))
-        line_obj, = ax6_right.plot(x_obj, cumsum_obj, linewidth=2, color=[0.3, 0.7, 0.3],
+        line_obj, = ax6_right.plot(x_obj, cumsum_obj, linewidth=2, color=obj_color,
                                     label='Cumsum($s_k - n_k/t$)')
-        ax6_right.set_ylabel('Cumulative $s_k - n_k/t$', color=[0.3, 0.7, 0.3])
-        ax6_right.tick_params(axis='y', labelcolor=[0.3, 0.7, 0.3])
+        ax6_right.set_ylabel('Cumulative $s_k - n_k/t$', color=obj_color)
+        ax6_right.tick_params(axis='y', labelcolor=obj_color)
 
         # Star at max of global cumsum objective
         max_idx = np.argmax(cumsum_obj)
         h_star, = ax6_right.plot(x_obj[max_idx], cumsum_obj[max_idx], '*', markersize=14,
-                                  color=[0.3, 0.7, 0.3], markeredgecolor='black',
+                                  color=obj_color, markeredgecolor='black',
                                   markeredgewidth=0.8, zorder=10,
                                   label=f'Max objective (K={max_idx})')
 
@@ -938,15 +1433,14 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         # Legend
         lines = [line_weights, line_obj, h_star]
         labels = [l.get_label() for l in lines]
-        ax6.legend(lines, labels, loc='best', fontsize=8)
+        _legend(ax6, lines, labels, loc='best', fontsize=8)
 
         ax6.set_xlabel('Dimension (cSb eigenbasis)')
         ax6.set_title(f'Implied Wiener Weights in Signal Basis (eff. dims = {effective_dims:.1f})')
         ax6.grid(True, alpha=0.3)
 
         if use_logscale:
-            ax6.set_xscale('log')
-            ax6.set_xlim([0.8, n_dims * 1.1])
+            _set_headtail_log_xscale(ax6, n_dims, zero_at=zero_placeholder)
         else:
             ax6.set_xlim([-0.5, n_dims - 0.5])
 
@@ -971,31 +1465,42 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     else:
         clim_shared = [shared_mean - 1, shared_mean + 1]
 
-    # Plot 7: Raw trial-averaged data
-    ax7 = fig.add_subplot(gs[1, 2:4])  # Row 1, columns 2-3
-    im7 = ax7.imshow(trial_avg, vmin=clim_shared[0], vmax=clim_shared[1], cmap=cmap, aspect='auto', interpolation='none')
-    plt.colorbar(im7, ax=ax7)
+    # Plots 7-9 (the three Units x Conditions imshows) live in their own tight
+    # sub-grid so they pack together, while the gap from the objective panel
+    # (its right twin-axis) stays generous via the main GridSpec wspace.
+    _gs_imrow = GridSpecFromSubplotSpec(1, 3, subplot_spec=gs[1, 2:8], wspace=0.12)
+
+    # Plot 7: Raw trial-averaged data (subsample the units axis at large N)
+    ax7 = fig.add_subplot(_gs_imrow[0, 0])
+    _ta_s, _ext_ta = _subsample_for_imshow(trial_avg)
+    im7 = ax7.imshow(_ta_s, vmin=clim_shared[0], vmax=clim_shared[1], cmap=cmap, aspect='auto', interpolation='none', extent=_ext_ta)
+    plt.colorbar(im7, ax=ax7, fraction=0.046, pad=0.02)
     title_7 = 'Input Data (trial-averaged, with NaNs)' if has_nans else 'Input Data (trial-averaged)'
     ax7.set_title(title_7)
     ax7.set_xlabel('Conditions')
-    ax7.set_ylabel('Units')
+    # No 'Units' ylabel word here: the y-ticks already show the unit scale, and
+    # the word collides with Plot 6's right (twin) y-axis label.
+    ax7.tick_params(axis='y', labelsize=8)
 
     # Plot 8: Denoised data
-    ax8 = fig.add_subplot(gs[1, 4:6])  # Row 1, columns 4-5
-    im8 = ax8.imshow(denoised, vmin=clim_shared[0], vmax=clim_shared[1], cmap=cmap, aspect='auto', interpolation='none')
-    plt.colorbar(im8, ax=ax8)
+    ax8 = fig.add_subplot(_gs_imrow[0, 1])
+    _dn_s, _ext_dn = _subsample_for_imshow(denoised)
+    im8 = ax8.imshow(_dn_s, vmin=clim_shared[0], vmax=clim_shared[1], cmap=cmap, aspect='auto', interpolation='none', extent=_ext_dn)
+    plt.colorbar(im8, ax=ax8, fraction=0.046, pad=0.02)
     ax8.set_title('PSN Denoised Data')
     ax8.set_xlabel('Conditions')
-    ax8.set_ylabel('Units')
+    ax8.set_yticklabels([])   # shares the 'Units' axis with Plot 7; drop redundant
+                              # y labels so Plot 7's colorbar ticks don't collide.
 
     # Plot 9: Noise (residual)
-    ax9 = fig.add_subplot(gs[1, 6:8])  # Row 1, columns 6-7
-    im9 = ax9.imshow(noise, vmin=clim_shared[0], vmax=clim_shared[1], cmap=cmap, aspect='auto', interpolation='none')
-    plt.colorbar(im9, ax=ax9)
+    ax9 = fig.add_subplot(_gs_imrow[0, 2])
+    _no_s, _ext_no = _subsample_for_imshow(noise)
+    im9 = ax9.imshow(_no_s, vmin=clim_shared[0], vmax=clim_shared[1], cmap=cmap, aspect='auto', interpolation='none', extent=_ext_no)
+    plt.colorbar(im9, ax=ax9, fraction=0.046, pad=0.02)
     title_9 = 'Residual (Noise, with NaNs)' if has_nans else 'Residual (Noise)'
     ax9.set_title(title_9)
     ax9.set_xlabel('Conditions')
-    ax9.set_ylabel('Units')
+    ax9.set_yticklabels([])
 
     # =========================================================================
     # Plot 10: Denoiser matrix
@@ -1008,11 +1513,21 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     else:
         plot_matrix_10 = denoiser
         title_10 = 'Denoiser Matrix'
+    # Subsample huge matrices before imshow / percentile (cheap at large N).
+    plot_matrix_10, _ext10 = _subsample_for_imshow(plot_matrix_10)
     # Compute symmetric colorbar limits around 0 (use 99th percentile for better contrast)
     data_absmax = np.nanpercentile(np.abs(plot_matrix_10), 99) if has_nans else np.percentile(np.abs(plot_matrix_10), 99)
     clim_10 = [-data_absmax, data_absmax] if data_absmax > 0 else [-1, 1]
-    im10 = ax10.imshow(plot_matrix_10, vmin=clim_10[0], vmax=clim_10[1], cmap=redblue(), aspect='equal', interpolation='none')
-    plt.colorbar(im10, ax=ax10)
+    im10 = ax10.imshow(plot_matrix_10, vmin=clim_10[0], vmax=clim_10[1], cmap=redblue(), aspect='equal', interpolation='none', extent=_ext10)
+    ax10.set_anchor('C')   # center the square matrix in its wide cell (below the
+                           # objective panel) instead of letting it drift right.
+    # Glue the colorbar to the right edge of the (square, aspect='equal') matrix.
+    # A plain colorbar(ax=ax10) positions itself from ax10's full wide-cell bbox,
+    # so it drifts to the right edge of the cell and collides with the next panel's
+    # y-label. inset_axes uses ax10's axes-fraction coords, which track the drawn
+    # square, keeping the colorbar snug against the matrix.
+    cax10 = ax10.inset_axes([1.03, 0.0, 0.04, 1.0])
+    plt.colorbar(im10, cax=cax10)
     ax10.set_title(title_10)
     ax10.set_xlabel('Units')
     ax10.set_ylabel('Units')
@@ -1088,7 +1603,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
 
     # Apply denoiser via denoiser.T @ x (correct for all modes:
     # symmetric global denoisers have denoiser.T == denoiser,
-    # and non-symmetric denoisers like hybrid/unit/wiener need the transpose)
+    # and non-symmetric denoisers like hybrid/wiener need the transpose)
     dn_A = denoiser.T @ (tavg_A - unit_means[:, np.newaxis]) + unit_means[:, np.newaxis]
     dn_B = denoiser.T @ (tavg_B - unit_means[:, np.newaxis]) + unit_means[:, np.newaxis]
 
@@ -1156,8 +1671,8 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     x_positions = np.array([1, 2, 3])
     labels = ['TAvg vs TAvg', 'TAvg vs Denoised', 'Denoised vs Denoised']
 
-    # Add jitter for subsampled units
-    x_jitter_sub = (np.random.rand(n_sub) - 0.5) * 0.16
+    # Add jitter for subsampled units (local RNG; leave global state untouched)
+    x_jitter_sub = (np.random.RandomState(42).rand(n_sub) - 0.5) * 0.16
 
     # Connecting lines (subsampled)
     for ii in range(n_sub):
@@ -1174,28 +1689,30 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
     ax13.scatter(x_positions[2] + x_jitter_sub, metric_dn_sub, s=15, color=[0.5, 0.8, 0.3],
                 alpha=0.4, zorder=2)
 
-    # Means (FULL population)
-    mean_tavg = np.nanmean(metric_tavg)
-    mean_cross = np.nanmean(metric_cross)
-    mean_dn = np.nanmean(metric_dn)
+    # Medians (FULL population). Use the median (not the mean) so these central
+    # markers match the recovery-tradeoff panel (fig7), which reports the median
+    # per-unit split-half reliability for its trial-average / chosen / Wiener dots.
+    med_tavg = np.nanmedian(metric_tavg)
+    med_cross = np.nanmedian(metric_cross)
+    med_dn = np.nanmedian(metric_dn)
 
-    ax13.scatter(x_positions[0], mean_tavg, s=100, color='blue',
+    ax13.scatter(x_positions[0], med_tavg, s=100, color='blue',
                 edgecolors='white', linewidths=2, zorder=3)
-    ax13.scatter(x_positions[1], mean_cross, s=100, color=[1, 0.84, 0],
+    ax13.scatter(x_positions[1], med_cross, s=100, color=[1, 0.84, 0],
                 edgecolors='white', linewidths=2, zorder=3)
-    ax13.scatter(x_positions[2], mean_dn, s=100, color=[0.2, 0.6, 0.2],
+    ax13.scatter(x_positions[2], med_dn, s=100, color=[0.2, 0.6, 0.2],
                 edgecolors='white', linewidths=2, zorder=3)
 
-    # Labels (FULL population means)
+    # Labels (FULL population medians)
     all_vals_sub = np.concatenate([metric_tavg_sub, metric_cross_sub, metric_dn_sub])
     valid_vals = all_vals_sub[~np.isnan(all_vals_sub)]
     y_range_metric = (np.max(valid_vals) - np.min(valid_vals)) if len(valid_vals) > 0 else 1
     y_offset = y_range_metric * 0.06
-    ax13.text(x_positions[0], mean_tavg + y_offset, f'{mean_tavg:.3f}',
+    ax13.text(x_positions[0], med_tavg + y_offset, f'{med_tavg:.3f}',
              ha='center', va='bottom', fontsize=10, fontweight='bold')
-    ax13.text(x_positions[1], mean_cross + y_offset, f'{mean_cross:.3f}',
+    ax13.text(x_positions[1], med_cross + y_offset, f'{med_cross:.3f}',
              ha='center', va='bottom', fontsize=10, fontweight='bold')
-    ax13.text(x_positions[2], mean_dn + y_offset, f'{mean_dn:.3f}',
+    ax13.text(x_positions[2], med_dn + y_offset, f'{med_dn:.3f}',
              ha='center', va='bottom', fontsize=10, fontweight='bold')
 
     ax13.set_xticks(x_positions)
@@ -1238,9 +1755,14 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         sv_after = results['svnv_after'][:, 0]
         nv_after = results['svnv_after'][:, 1]
 
-        # Compute noise-corrected SNR (ncsnr)
-        ncsnr_before = np.sqrt(sv_before) / np.sqrt(nv_before + np.finfo(float).eps)
-        ncsnr_after = np.sqrt(sv_after) / np.sqrt(nv_after + np.finfo(float).eps)
+        # Compute noise-ceiling SNR (NCSNR). Rectify negative signal variance to 0.
+        # Floor the denominator relative to the data (mirrors the per-dimension NCSNR
+        # guard) so a unit whose noise variance underflows to ~0 cannot blow the ratio
+        # up to ~1e7. Kept finite (no NaN) because the means/limits below consume these.
+        nfloor_before = max(np.finfo(float).eps, 1e-8 * np.nanmax(nv_before))
+        nfloor_after = max(np.finfo(float).eps, 1e-8 * np.nanmax(nv_after))
+        ncsnr_before = np.sqrt(np.maximum(sv_before, 0)) / np.sqrt(np.maximum(nv_before, nfloor_before))
+        ncsnr_after = np.sqrt(np.maximum(sv_after, 0)) / np.sqrt(np.maximum(nv_after, nfloor_after))
 
         # Compute noise ceiling percentage (use ntrials_avg for NaN data)
         noiseceiling_before = 100 * (ncsnr_before**2 / (ncsnr_before**2 + 1/ntrials_avg))
@@ -1260,7 +1782,7 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         # Define x positions
         x_before = 1
         x_after = 2
-        x_jitter_diag = (np.random.rand(n_sub) - 0.5) * 0.1
+        x_jitter_diag = (np.random.RandomState(43).rand(n_sub) - 0.5) * 0.1
 
         # Plot 14: Signal Variance
         ax14 = fig.add_subplot(gs[3, 0:2])  # Row 3, columns 0-1
@@ -1410,13 +1932,19 @@ def plot_diagnostic_figures(data, results, test_data=None, figurepath=None, cmap
         ax17.scatter(x_after, mean_nc_after, s=120, color=[0.6, 0.1, 0.1],
                     edgecolors='white', linewidths=2, zorder=3)
 
-        # Fixed y_offset for noise ceiling (percentage scale 0-100)
+        # Fixed y_offset for noise ceiling (percentage scale 0-100). Place the
+        # label below the point when above it would collide with the title.
         y_offset_nc = 100 * 0.08
 
-        ax17.text(x_before, mean_nc_before + y_offset_nc, f'{mean_nc_before:.3f}',
-                 ha='center', va='bottom', fontsize=10, fontweight='bold')
-        ax17.text(x_after, mean_nc_after + y_offset_nc, f'{mean_nc_after:.3f}',
-                 ha='center', va='bottom', fontsize=10, fontweight='bold')
+        def _nc_label(x, m):
+            if m + y_offset_nc > 98:
+                ax17.text(x, m - y_offset_nc, f'{m:.3f}', ha='center', va='top',
+                          fontsize=10, fontweight='bold')
+            else:
+                ax17.text(x, m + y_offset_nc, f'{m:.3f}', ha='center', va='bottom',
+                          fontsize=10, fontweight='bold')
+        _nc_label(x_before, mean_nc_before)
+        _nc_label(x_after, mean_nc_after)
 
         ax17.set_xlim([0.5, 2.5])
         ax17.set_ylim([-5, 100])  # Add negative padding to make yline at 0 visible

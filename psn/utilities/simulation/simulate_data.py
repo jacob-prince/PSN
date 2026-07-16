@@ -8,139 +8,140 @@ structures for both signal and noise components. The data generation process all
 - Separate train and test datasets with matched properties
 """
 
-import warnings
-
-import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.gridspec import GridSpec
 
-from .adjust_alignment_gradient_descent import adjust_alignment_gradient_descent as _adjust_alignment_gradient_descent
 from ..plotting.plot_data_diagnostic import plot_data_diagnostic
-
-
-def _random_orthonormal_columns(rng: np.random.RandomState, nvox: int, r: int) -> np.ndarray:
-    """Return an (nvox, r) matrix with orthonormal columns."""
-    if r <= 0:
-        raise ValueError("r must be positive")
-    A = rng.randn(nvox, r)
-    Q, _ = np.linalg.qr(A, mode="reduced")
-    return Q
-
-
-def _align_noise_basis_lowrank(
-    U_signal: np.ndarray,
-    U_noise_init: np.ndarray,
-    alpha: float,
-    k: int,
-    rng: np.random.RandomState,
-) -> np.ndarray:
-    """Low-rank alignment of top-k noise PCs to signal PCs.
-
-    Produces an orthonormal (nvox, rN) matrix whose first k columns satisfy
-    dot(U_noise[:,i], U_signal[:,i]) == alpha (approximately, but very close).
-
-    This is a scalable alternative to _adjust_alignment_gradient_descent, which
-    requires full (nvox, nvox) matrices.
-    """
-    if k <= 0:
-        return U_noise_init
-
-    if not (0.0 <= alpha <= 1.0):
-        warnings.warn("align_alpha must be in [0,1]; will be clamped.")
-        alpha = float(max(0.0, min(1.0, alpha)))
-
-    nvox = U_signal.shape[0]
-    rS = U_signal.shape[1]
-    rN = U_noise_init.shape[1]
-    k_eff = int(min(k, rS, rN, nvox // 2))
-    if k_eff <= 0:
-        return U_noise_init
-
-    Usk = U_signal[:, :k_eff]
-
-    # Construct V: k_eff orthonormal vectors orthogonal to span(Usk)
-    A = rng.randn(nvox, k_eff)
-    A = A - Usk @ (Usk.T @ A)
-    V, _ = np.linalg.qr(A, mode="reduced")
-
-    # Aligned block; columns remain orthonormal because Usk ⟂ V
-    aligned = alpha * Usk + np.sqrt(max(0.0, 1.0 - alpha**2)) * V
-
-    # Fill remaining noise directions from the initial noise basis, projected to the complement
-    B = np.concatenate([Usk, V], axis=1)  # (nvox, 2k)
-    rest = U_noise_init[:, k_eff:]
-    if rest.size == 0:
-        return aligned
-
-    rest = rest - B @ (B.T @ rest)
-    rest, _ = np.linalg.qr(rest, mode="reduced")
-
-    U_noise = np.concatenate([aligned, rest], axis=1)
-    return U_noise
+from .adjust_alignment_gradient_descent import (
+    adjust_alignment_gradient_descent as _adjust_alignment_gradient_descent,
+)
+from .helpers import (
+    _align_noise_basis_lowrank,
+    _coerce_true_signal,
+    _random_orthonormal_columns,
+    _visualize_heterogeneous_populations,
+)
 
 
 def generate_data(nvox=50, ncond=200, ntrial=5, signal_decay=2.0, noise_decay=1.25,
                  noise_multiplier=3.0, align_alpha=0.5, align_k=10, random_seed=42,
                  want_fig=False, signal_cov=None, true_signal=None, noise_cov=None, cluster_units=False, verbose=True,
                  *, fast: bool = False, rank_signal: int = 50, rank_noise: int = 200,
-                 isotropic_noise: float = 0.0, return_cov: bool | None = None,
+                 isotropic_noise: float = 0.0, return_cov=None,
                  max_nvox_for_cov: int = 2000):
-    """
-    Generate synthetic neural data with controlled signal and noise properties.
-    
-    Args:
-        nvox (int, optional):    Number of voxels/units. If true_signal is provided, this will be inferred from true_signal.shape[1]
-        ncond (int, optional):   Number of conditions. If true_signal is provided, this will be inferred from true_signal.shape[0]
-        ntrial (int):  Number of trials per condition
-        signal_decay (float): Rate of eigenvalue decay for signal covariance
-        noise_decay (float):  Rate of eigenvalue decay for noise covariance
-        noise_multiplier (float): Scaling factor for noise variance
-        align_alpha (float): Alignment between signal & noise PCs (1=aligned, 0=orthogonal)
-        align_k (int): Number of top PCs to align
-        random_seed (int, optional): Random seed for reproducibility
-        want_fig (bool): Whether to display a diagnostic figure of the generated data
-        signal_cov (ndarray, optional): User-provided signal covariance matrix (nvox, nvox)
-                                        If provided, overrides signal_decay parameter
-        true_signal (ndarray, optional): User-provided ground truth signal (ncond, nvox) or (height, width, channels)
-                                        If provided, overrides signal_cov and signal_decay.
-                                        For 3D arrays (like images), spatial dimensions are flattened: nvox = width * channels
-                                        Note: When provided, signal_cov will be calculated
-                                        as the sample covariance of this signal.
-        noise_cov (ndarray, optional): User-provided noise covariance matrix (nvox, nvox)
-                                       If provided, overrides noise_decay parameter
-        cluster_units (bool): Whether to reorder units based on hierarchical clustering
-                            of the signal covariance matrix. This is purely cosmetic
-                            for visualization and does not affect data properties.
-    
+    """Generate synthetic neural data with controlled signal and noise structure.
+
+    Builds a ground-truth signal (from a power-law spectrum, a supplied
+    covariance, or an image) and adds trial noise with its own spectrum and a
+    tunable alignment to the signal, returning matched train and test datasets.
+
+    -------------------------------------------------------------------------
+    Inputs:
+    -------------------------------------------------------------------------
+
+    <nvox> - int. Number of units/voxels. Inferred from true_signal when given.
+        Default: 50.
+
+    <ncond> - int. Number of conditions. Inferred from true_signal when given.
+        Default: 200.
+
+    <ntrial> - int. Number of trials per condition. Default: 5.
+
+    <signal_decay> - float. Power-law decay of the signal eigenvalues
+        (eig_i ~ 1/i^signal_decay). Ignored if signal_cov/true_signal given.
+        Default: 2.0.
+
+    <noise_decay> - float. Power-law decay of the noise eigenvalues. Ignored if
+        noise_cov given. Default: 1.25.
+
+    <noise_multiplier> - float. Overall noise scaling (higher = noisier).
+        Default: 3.0.
+
+    <align_alpha> - float in [0,1]. Alignment of the top noise PCs to the signal
+        PCs (1 = aligned, 0 = orthogonal). Ignored if noise_cov given.
+        Default: 0.5.
+
+    <align_k> - int. Number of top PCs to align; 0 disables alignment.
+        Default: 10.
+
+    <random_seed> - int or None. RNG seed for reproducibility (None = fresh
+        state). Default: 42.
+
+    <want_fig> - bool. Render a diagnostic figure of the generated data. Not
+        supported in fast mode. Default: False.
+
+    <signal_cov> - [nvox x nvox] or None. Supplied signal covariance; overrides
+        signal_decay. Default: None.
+
+    <true_signal> - array, str, Path, or None. Supplied ground-truth signal;
+        overrides signal_cov and signal_decay. May be a 2D (ncond, nvox) array,
+        an image-shaped (H,W)/(H,W,C) array, or an image filepath (loaded and
+        normalized to [0,1]; a bare name like 'pliny' resolves in the bundled
+        images/ dir). For image-derived inputs the spatial dims are flattened to
+        2D and the SMALLER dim is used as nvox, to keep the O(nvox^3) work cheap.
+        Default: None.
+
+    <noise_cov> - [nvox x nvox] or None. Supplied noise covariance; overrides
+        noise_decay and disables alignment. Default: None.
+
+    <cluster_units> - bool. Reorder units by hierarchical clustering of the
+        signal covariance (cosmetic; original order kept in
+        ground_truth['unit_order']). Default: False.
+
+    <verbose> - bool. Print progress during generation. Default: True.
+
+    Keyword-only (fast / large-N path):
+
+    <fast> - bool. Use the scalable low-rank simulation: no full (nvox, nvox)
+        covariances or bases; samples from low-rank power-law factors instead.
+        Incompatible with want_fig and signal_cov/noise_cov. Default: False.
+
+    <rank_signal>, <rank_noise> - int. Ranks of the low-rank signal/noise factors
+        in fast mode. Defaults: 50, 200.
+
+    <isotropic_noise> - float. Fast mode only: std of an added isotropic (white)
+        noise floor (adds isotropic_noise^2 * I to the noise covariance).
+        Default: 0.0.
+
+    <return_cov> - bool or None. Fast mode: materialize ground_truth signal_cov/
+        noise_cov when True and nvox <= max_nvox_for_cov. Default: None.
+
+    <max_nvox_for_cov> - int. Upper nvox bound for materializing covariances in
+        fast mode. Default: 2000.
+
+    -------------------------------------------------------------------------
     Returns:
-        (train_data, test_data, ground_truth)
-         - train_data: (nvox, ncond, ntrial)
-         - test_data:  (nvox, ncond, ntrial)
-         - ground_truth: dict w/ keys:
-             'signal'     -> (ncond, nvox)
-             'signal_cov' -> (nvox, nvox)
-             'noise_cov'  -> (nvox, nvox)
-             'U_signal'   -> Original eigenvectors for signal
-             'U_noise'    -> Original eigenvectors for noise
-             'signal_eigs'
-             'noise_eigs'
-             'unit_order' -> Original indices of units after clustering (if cluster_units=True)
+    -------------------------------------------------------------------------
 
-                Fast mode notes
-                ---------------
-                If fast=True, this function avoids constructing full (nvox, nvox) covariance matrices
-                and avoids full (nvox, nvox) orthonormal bases. It instead uses low-rank factors with
-                power-law spectral decay and samples via those factors.
+    <train_data> - [nvox x ncond x ntrial]. Training set (independent noise).
 
-                In fast mode:
-                - ground_truth['U_signal'] and ['U_noise'] are (nvox, rank_*) not (nvox, nvox)
-                - ground_truth['signal_cov'] and ['noise_cov'] may be None unless return_cov=True
-                    and nvox <= max_nvox_for_cov
+    <test_data> - [nvox x ncond x ntrial]. Test set (matched signal, independent
+        noise).
+
+    <ground_truth> - dict with keys:
+        'signal'     -> [ncond x nvox] ground-truth signal
+        'signal_cov' -> [nvox x nvox] signal covariance (None in fast mode unless
+                        return_cov and nvox <= max_nvox_for_cov)
+        'noise_cov'  -> [nvox x nvox] noise covariance (same caveat)
+        'U_signal'   -> signal eigenvectors ([nvox x nvox], or [nvox x rank_signal]
+                        in fast mode)
+        'U_noise'    -> noise eigenvectors (likewise [nvox x rank_noise] in fast)
+        'signal_eigs', 'noise_eigs' -> eigenvalue spectra
+        'unit_order' -> original unit indices after clustering (if cluster_units)
     """
     if random_seed is not None:
         rng = np.random.RandomState(random_seed)
     else:
         rng = np.random.RandomState()
+
+    # Normalize true_signal up front so every downstream path (fast and
+    # non-fast) sees a 2D (ncond, nvox) array. This is where a filepath to
+    # an image gets loaded and image-shaped arrays get flattened. The signal
+    # is authoritative for the data dimensions, so derive ncond/nvox from it
+    # (overriding the defaults) - this is what makes `generate_data(
+    # true_signal='picture.jpg')` work without restating its shape.
+    if true_signal is not None:
+        true_signal = _coerce_true_signal(true_signal)
+        ncond, nvox = true_signal.shape
 
     # Fast path: scalable low-rank spectral-decay simulation
     if fast:
@@ -177,13 +178,13 @@ def generate_data(nvox=50, ncond=200, ntrial=5, signal_decay=2.0, noise_decay=1.
             try:
                 from sklearn.utils.extmath import randomized_svd
 
-                Uc, Sc, Vt = randomized_svd(true_signal_full, n_components=rS, random_state=random_seed)
+                _, Sc, Vt = randomized_svd(true_signal_full, n_components=rS, random_state=random_seed)
                 # Covariance eigenvalues: (Sc^2)/(ncond-1); eigenvectors are columns of V
                 U_signal = Vt.T
                 signal_eigs = (Sc**2) / max(1, (ncond - 1))
             except Exception:
                 # Fallback: exact SVD on (ncond, nvox) with full_matrices=False
-                Uc, Sc, Vt = np.linalg.svd(true_signal_full, full_matrices=False)
+                _, Sc, Vt = np.linalg.svd(true_signal_full, full_matrices=False)
                 U_signal = Vt[:rS, :].T
                 signal_eigs = (Sc[:rS] ** 2) / max(1, (ncond - 1))
 
@@ -333,7 +334,7 @@ def generate_data(nvox=50, ncond=200, ntrial=5, signal_decay=2.0, noise_decay=1.
             # Cap align_k to not exceed available dimensions
             effective_k = min(align_k, nvox)
             U_noise = _adjust_alignment_gradient_descent(
-                U_signal, U_noise, align_alpha, effective_k, verbose=verbose
+                U_signal, U_noise, align_alpha, effective_k, verbose=verbose, rng=rng
             )
 
         # Create diagonal eigenvalues for noise
@@ -356,7 +357,7 @@ def generate_data(nvox=50, ncond=200, ntrial=5, signal_decay=2.0, noise_decay=1.
         # Re-align noise after recalculating U_signal (only if noise_cov was not user-provided)
         if align_k > 0 and not user_provided_noise_cov:
             U_noise = _adjust_alignment_gradient_descent(
-                U_signal, U_noise, align_alpha, align_k, verbose=verbose
+                U_signal, U_noise, align_alpha, align_k, verbose=verbose, rng=rng
             )
             # Rebuild noise covariance matrix with the realigned eigenvectors
             noise_cov = U_noise @ np.diag(noise_eigs) @ U_noise.T
@@ -523,7 +524,7 @@ def generate_heterogeneous_populations(
     
     if verbose:
         print(f"\n{'='*80}")
-        print(f"GENERATING HETEROGENEOUS POPULATION DATA")
+        print("GENERATING HETEROGENEOUS POPULATION DATA")
         print(f"{'='*80}")
         print(f"  Populations: {n_populations}")
         print(f"  Units per population: {units_per_pop}")
@@ -647,143 +648,3 @@ def generate_heterogeneous_populations(
         )
     
     return train_data, test_data, ground_truth
-
-
-def _visualize_heterogeneous_populations(train_data, true_signal, ground_truth, 
-                                         signal_cov, noise_cov, ntrial):
-    """Visualize heterogeneous population data structure."""
-    
-    population_labels = ground_truth['population_labels']
-    n_populations = ground_truth['n_populations']
-    units_per_pop = ground_truth['units_per_pop']
-    nvox = len(population_labels)
-    ncond = true_signal.shape[0]
-    
-    fig = plt.figure(figsize=(20, 12))
-    gs = GridSpec(3, 4, figure=fig, hspace=0.3, wspace=0.3)
-    
-    # Population colors
-    colors = plt.cm.tab10(np.linspace(0, 1, n_populations))
-    
-    # Plot 1: Ground truth signal with population boundaries
-    ax1 = fig.add_subplot(gs[0, 0])
-    im1 = ax1.imshow(true_signal.T, aspect='auto', cmap='RdBu_r', interpolation='none')
-    plt.colorbar(im1, ax=ax1)
-    ax1.set_title('Ground Truth Signal\n(with population structure)')
-    ax1.set_xlabel('Condition')
-    ax1.set_ylabel('Unit')
-    
-    # Add population boundaries
-    for pop_idx in range(1, n_populations):
-        ax1.axhline(pop_idx * units_per_pop - 0.5, color='yellow', linewidth=3, linestyle='--')
-    
-    # Plot 2: Signal covariance (should show block structure)
-    ax2 = fig.add_subplot(gs[0, 1])
-    im2 = ax2.imshow(signal_cov, aspect='equal', cmap='RdBu_r', interpolation='none')
-    plt.colorbar(im2, ax=ax2)
-    ax2.set_title('Signal Covariance\n(block structure)')
-    ax2.set_xlabel('Unit')
-    ax2.set_ylabel('Unit')
-    
-    # Add population boundaries
-    for pop_idx in range(1, n_populations):
-        ax2.axhline(pop_idx * units_per_pop - 0.5, color='yellow', linewidth=2)
-        ax2.axvline(pop_idx * units_per_pop - 0.5, color='yellow', linewidth=2)
-    
-    # Plot 3: Noise covariance
-    ax3 = fig.add_subplot(gs[0, 2])
-    im3 = ax3.imshow(noise_cov, aspect='equal', cmap='RdBu_r', interpolation='none')
-    plt.colorbar(im3, ax=ax3)
-    ax3.set_title('Noise Covariance\n(global structure)')
-    ax3.set_xlabel('Unit')
-    ax3.set_ylabel('Unit')
-    
-    # Plot 4: Population labels
-    ax4 = fig.add_subplot(gs[0, 3])
-    ax4.barh(np.arange(nvox), np.ones(nvox), color=[colors[pop] for pop in population_labels])
-    ax4.set_yticks(np.arange(0, nvox, max(1, nvox // 10)))
-    ax4.set_xlabel('Population')
-    ax4.set_ylabel('Unit')
-    ax4.set_title(f'Population Labels\n({n_populations} populations)')
-    ax4.set_xlim([0, 1.5])
-    
-    # Plot 5-7: Per-population signal patterns
-    for pop_idx in range(min(3, n_populations)):
-        ax = fig.add_subplot(gs[1, pop_idx])
-        pop_start = pop_idx * units_per_pop
-        pop_end = pop_start + units_per_pop
-        pop_signal = true_signal[:, pop_start:pop_end].T
-        
-        im = ax.imshow(pop_signal, aspect='auto', cmap='RdBu_r', interpolation='none')
-        plt.colorbar(im, ax=ax)
-        ax.set_title(f'Population {pop_idx + 1} Signal\n({units_per_pop} units)', color=colors[pop_idx])
-        ax.set_xlabel('Condition')
-        ax.set_ylabel('Unit (within pop)')
-    
-    # Plot 8: Trial-averaged data
-    ax8 = fig.add_subplot(gs[1, 3])
-    trial_avg = np.mean(train_data, axis=2)
-    im8 = ax8.imshow(trial_avg, aspect='auto', cmap='RdBu_r', interpolation='none')
-    plt.colorbar(im8, ax=ax8)
-    ax8.set_title(f'Trial-Averaged Data\n({ntrial} trials)')
-    ax8.set_xlabel('Condition')
-    ax8.set_ylabel('Unit')
-    
-    # Add population boundaries
-    for pop_idx in range(1, n_populations):
-        ax8.axhline(pop_idx * units_per_pop - 0.5, color='yellow', linewidth=2, linestyle='--')
-    
-    # Plot 9: Cross-population basis alignment
-    ax9 = fig.add_subplot(gs[2, 0:2])
-    if n_populations >= 2:
-        # Show alignment between first two populations
-        U1 = ground_truth['population_bases'][0]
-        U2 = ground_truth['population_bases'][1]
-        alignment = np.abs(U1.T @ U2)
-        
-        im9 = ax9.imshow(alignment, aspect='equal', cmap='viridis', vmin=0, vmax=1)
-        plt.colorbar(im9, ax=ax9)
-        ax9.set_title('Cross-Population Basis Alignment\n(Pop 1 vs Pop 2)')
-        ax9.set_xlabel('Population 2 basis dimension')
-        ax9.set_ylabel('Population 1 basis dimension')
-    
-    # Plot 10: Signal variance per population
-    ax10 = fig.add_subplot(gs[2, 2])
-    pop_variances = []
-    for pop_idx in range(n_populations):
-        pop_start = pop_idx * units_per_pop
-        pop_end = pop_start + units_per_pop
-        pop_var = np.var(true_signal[:, pop_start:pop_end])
-        pop_variances.append(pop_var)
-    
-    ax10.bar(range(n_populations), pop_variances, color=colors[:n_populations])
-    ax10.set_xlabel('Population')
-    ax10.set_ylabel('Signal Variance')
-    ax10.set_title('Signal Variance per Population')
-    ax10.set_xticks(range(n_populations))
-    
-    # Plot 11: Explanation text
-    ax11 = fig.add_subplot(gs[2, 3])
-    ax11.axis('off')
-    explanation = (
-        f"HETEROGENEOUS POPULATIONS\n\n"
-        f"• {n_populations} distinct subpopulations\n"
-        f"• {units_per_pop} units per population\n"
-        f"• Orthogonality: {ground_truth['population_orthogonality']:.2f}\n\n"
-        f"Each population has different\n"
-        f"optimal basis orderings.\n\n"
-        f"Global approaches will be\n"
-        f"suboptimal because they\n"
-        f"average across conflicting\n"
-        f"preferences."
-    )
-    ax11.text(0.1, 0.5, explanation, fontsize=11, verticalalignment='center',
-             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-    
-    plt.suptitle('Heterogeneous Population Data Structure', fontsize=16, fontweight='bold')
-    plt.tight_layout()
-    plt.show()
-    
-    return fig
-
-

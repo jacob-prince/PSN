@@ -9,14 +9,15 @@ the GSN estimation while producing identical results. Covers:
 - Reuse across configs: same gsn_result works with different hyperparameters
 """
 
+import time
+
+import matplotlib
 import numpy as np
 import pytest
-import time
-import matplotlib
+
 matplotlib.use('Agg')
 
 from psn import psn
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -135,11 +136,50 @@ class TestValidation:
 
     def test_wrong_size(self, sim_data):
         wrong = {'cSb': np.eye(10), 'cNb': np.eye(10)}
-        with pytest.raises(ValueError, match="does not match data"):
+        with pytest.raises(ValueError, match="matching the data's unit count"):
             psn(sim_data, {
                 'wantfig': False, 'wantverbose': False,
                 'gsn_result': wrong
             })
+
+    def _corrupt(self, sim_data, mutate):
+        """Return a valid gsn_result with one field mutated in place."""
+        gr = psn(sim_data, {'wantfig': False, 'wantverbose': False})['gsn_result']
+        bad = {'cSb': gr['cSb'].copy(), 'cNb': gr['cNb'].copy()}
+        mutate(bad)
+        return bad
+
+    def test_non_finite_covariance_raises(self, sim_data):
+        """A NaN/Inf anywhere in a cached covariance is rejected."""
+        def _nan(b):
+            b['cSb'][0, 0] = np.nan
+        with pytest.raises(ValueError, match="non-finite"):
+            psn(sim_data, {'wantfig': False, 'wantverbose': False,
+                           'gsn_result': self._corrupt(sim_data, _nan)})
+
+    def test_asymmetric_covariance_raises(self, sim_data):
+        """A non-symmetric cached covariance is rejected."""
+        def _asym(b):
+            b['cSb'][0, 1] += 5.0
+        with pytest.raises(ValueError, match="not symmetric"):
+            psn(sim_data, {'wantfig': False, 'wantverbose': False,
+                           'gsn_result': self._corrupt(sim_data, _asym)})
+
+    def test_negative_diagonal_raises(self, sim_data):
+        """A negative variance on the diagonal is rejected (PSD-ish check)."""
+        def _neg(b):
+            b['cNb'][2, 2] = -1.0
+        with pytest.raises(ValueError, match="negative diagonal"):
+            psn(sim_data, {'wantfig': False, 'wantverbose': False,
+                           'gsn_result': self._corrupt(sim_data, _neg)})
+
+    def test_mismatched_cNb_shape_raises(self, sim_data):
+        """cNb must be the same [nunits x nunits] shape as cSb, not just cSb."""
+        def _shrink(b):
+            b['cNb'] = np.eye(b['cSb'].shape[0] - 1)
+        with pytest.raises(ValueError, match="matching the data's unit count"):
+            psn(sim_data, {'wantfig': False, 'wantverbose': False,
+                           'gsn_result': self._corrupt(sim_data, _shrink)})
 
 
 # ---------------------------------------------------------------------------
@@ -204,20 +244,6 @@ class TestCompatibility:
         np.testing.assert_array_equal(
             cached['denoiseddata'], fresh['denoiseddata'])
 
-    def test_wiener_denoiser_type(self, sim_data, base_result):
-        """Cached gsn_result works with denoiser_type='wiener'."""
-        fresh = psn(sim_data, {
-            'denoiser_type': 'wiener', 'threshold_method': 'global',
-            'wantfig': False, 'wantverbose': False,
-        })
-        cached = psn(sim_data, {
-            'denoiser_type': 'wiener', 'threshold_method': 'global',
-            'wantfig': False, 'wantverbose': False,
-            'gsn_result': base_result['gsn_result'],
-        })
-        np.testing.assert_array_equal(
-            cached['denoiseddata'], fresh['denoiseddata'])
-
 
 # ---------------------------------------------------------------------------
 # Verbose output
@@ -231,10 +257,10 @@ class TestVerbose:
             'gsn_result': base_result['gsn_result'],
         })
         captured = capsys.readouterr()
-        assert 'Using provided GSN result' in captured.out
-        assert 'Running GSN' not in captured.out
+        assert 'reusing provided gsn_result' in captured.out
+        assert 'estimating covariances via GSN' not in captured.out
 
     def test_verbose_fresh_message(self, sim_data, capsys):
         psn(sim_data, {'wantfig': False, 'wantverbose': True})
         captured = capsys.readouterr()
-        assert 'Running GSN' in captured.out
+        assert 'estimating covariances via GSN' in captured.out

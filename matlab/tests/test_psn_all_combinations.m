@@ -119,7 +119,7 @@ function test_combinations = generate_test_combinations()
 
     % Define option values to test
     basis_values = {'pca', 'signal', 'noise', 'difference', 'random',};
-    threshold_methods = {'global', 'hybrid', 'unit'};
+    threshold_methods = {'global', 'hybrid'};
     criteria = {'prediction', 'variance'};
 
     % Test all combinations of basis, threshold_method, and criterion
@@ -237,10 +237,10 @@ function test_combinations = generate_test_combinations()
         test_combinations{end+1} = struct('opts', opts, 'description', desc);
     end
 
-    % Test unit_groups with unit and hybrid methods
+    % Test unit_groups with the hybrid method
     fprintf('  Adding unit_groups tests...\n');
     unit_groups = [ones(10,1); 2*ones(10,1); 3*ones(10,1)];
-    for method = {'hybrid', 'unit'}
+    for method = {'hybrid'}
         for criterion = {'prediction', 'variance'}
             opts = struct();
             opts.basis = 'signal';
@@ -287,7 +287,7 @@ function test_combinations = generate_test_combinations()
     % Single unit group (all units in one group)
     opts = struct();
     opts.basis = 'signal';
-    opts.threshold_method = 'unit';
+    opts.threshold_method = 'hybrid';
     opts.criterion = 'prediction';
     opts.unit_groups = ones(30, 1);
     opts.wantfig = false;
@@ -606,7 +606,7 @@ function test_different_shapes()
     test_opts = {
         struct('basis', 'signal', 'threshold_method', 'global', 'criterion', 'prediction'),
         struct('basis', 'noise', 'threshold_method', 'hybrid', 'criterion', 'variance', 'variance_threshold', 0.9),
-        struct('basis', 'pca', 'threshold_method', 'unit', 'criterion', 'prediction'),
+        struct('basis', 'pca', 'threshold_method', 'hybrid', 'criterion', 'prediction'),
     };
 
     n_total = length(shapes) * length(test_opts);
@@ -758,9 +758,8 @@ function test_nan_handling()
     test_opts = {
         struct('basis', 'signal', 'threshold_method', 'global', 'criterion', 'prediction'),
         struct('basis', 'signal', 'threshold_method', 'hybrid', 'criterion', 'prediction'),
-        struct('basis', 'signal', 'threshold_method', 'unit', 'criterion', 'prediction'),
         struct('basis', 'difference', 'threshold_method', 'global', 'criterion', 'prediction'),
-        struct('basis', 'difference', 'threshold_method', 'unit', 'criterion', 'variance', 'variance_threshold', 0.9),
+        struct('basis', 'difference', 'threshold_method', 'hybrid', 'criterion', 'variance', 'variance_threshold', 0.9),
         struct('basis', 'pca', 'threshold_method', 'global', 'criterion', 'prediction'),
         struct('basis', 'noise', 'threshold_method', 'hybrid', 'criterion', 'variance', 'variance_threshold', 0.95),
     };

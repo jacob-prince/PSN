@@ -3,10 +3,13 @@
 import numpy as np
 
 from .eigh_descending_sym import eigh_descending_sym as _eigh_descending_sym
-from .normalize_orthonormalize_basis import normalize_orthonormalize_basis as _normalize_orthonormalize_basis
+from .normalize_orthonormalize_basis import (
+    normalize_orthonormalize_basis as _normalize_orthonormalize_basis,
+)
 
 
-def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_avg, has_nans):
+def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_avg, has_nans,
+                    custom_basis_eigenvalues=None, device='cpu'):
     """CONSTRUCT_BASIS  Create the orthonormal basis for denoising
 
     [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, ...)
@@ -58,7 +61,7 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
     if isinstance(basis_spec, str):
         if basis_spec == 'signal':
             # Eigenvectors of signal covariance (GSN returns symmetric)
-            basis_eigenvalues, basis = _eigh_descending_sym(cSb)
+            basis_eigenvalues, basis = _eigh_descending_sym(cSb, device=device)
 
         elif basis_spec == 'difference':
             # Eigenvectors of signal - scaled noise
@@ -67,11 +70,11 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
             A = cSb - cNb / ntrials_avg
             # Symmetrize derived matrix to handle numerical errors
             A = (A + A.T) / 2
-            basis_eigenvalues, basis = _eigh_descending_sym(A)  # already symmetrized above
+            basis_eigenvalues, basis = _eigh_descending_sym(A, device=device)  # already symmetrized above
 
         elif basis_spec == 'noise':
             # Eigenvectors of noise covariance (GSN returns symmetric)
-            basis_eigenvalues, basis = _eigh_descending_sym(cNb)
+            basis_eigenvalues, basis = _eigh_descending_sym(cNb, device=device)
 
         elif basis_spec == 'pca':
             # Standard PCA on trial-averaged data
@@ -81,23 +84,25 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
             # Use pre-computed trial_avg to avoid redundant computation
             trial_avg_demeaned = trial_avg - unit_means[:, np.newaxis]
             cov_matrix = np.cov(trial_avg_demeaned, ddof=1)  # numpy cov returns symmetric matrix
-            basis_eigenvalues, basis = _eigh_descending_sym(cov_matrix)  # no symmetrization needed
+            basis_eigenvalues, basis = _eigh_descending_sym(cov_matrix, device=device)  # no symmetrization needed
             # Note: PCA eigenvalues ARE used for ordering (default behavior), but should
             # NOT be used with criterion='variance_eigenvalues' as they don't represent
             # GSN-estimated signal variance.
 
         elif basis_spec == 'random':
-            # Random orthonormal basis (no meaningful eigenvalues)
-            # NOTE: This sets the RNG state for reproducibility
-            np.random.seed(42)
-            basis, _ = np.linalg.qr(np.random.randn(nunits, nunits))
+            # Random orthonormal basis (no meaningful eigenvalues). Use a local
+            # RNG (fixed seed for reproducibility) so the global stream is untouched.
+            rng = np.random.RandomState(42)
+            basis, _ = np.linalg.qr(rng.randn(nunits, nunits))
             basis_eigenvalues = None
 
         else:
             raise ValueError(f'Unknown basis type: {basis_spec}')
 
     else:
-        # User-provided custom basis (no eigenvalues available)
+        # User-provided custom basis. When custom_basis_eigenvalues is given,
+        # downstream uses 'eigenvalues' ordering instead of the signalvariance
+        # fallback (so passing cSb's eigvecs matches basis='signal' end-to-end).
         basis = basis_spec
 
         if basis.shape[0] != nunits:
@@ -110,6 +115,14 @@ def construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_a
             basis = np.real(basis)
 
         basis = _normalize_orthonormalize_basis(basis)
-        basis_eigenvalues = None
+        if custom_basis_eigenvalues is not None:
+            ev = np.asarray(custom_basis_eigenvalues).reshape(-1)
+            if ev.shape[0] != basis.shape[1]:
+                raise ValueError(
+                    f'custom_basis_eigenvalues length ({ev.shape[0]}) must match '
+                    f'basis column count ({basis.shape[1]}).')
+            basis_eigenvalues = ev
+        else:
+            basis_eigenvalues = None
 
     return basis, basis_eigenvalues

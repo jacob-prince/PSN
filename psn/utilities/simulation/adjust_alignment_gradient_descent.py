@@ -9,7 +9,7 @@ def adjust_alignment_gradient_descent(U_signal, U_noise_init, alpha, k,
                                        lr=5e-1, lambda_orth=1.0,
                                        num_steps=10000,
                                        tol_align=1e-6, tol_orth=1e-6,
-                                       verbose=True):
+                                       verbose=True, rng=None):
     """Gradient descent method to align noise basis to signal basis.
 
     Aligns the top-k columns of U_noise to U_signal such that
@@ -38,6 +38,8 @@ def adjust_alignment_gradient_descent(U_signal, U_noise_init, alpha, k,
         Orthogonality error tolerance. Default: 1e-6.
     verbose : bool, optional
         Whether to print convergence info. Default: True.
+    rng : np.random.RandomState, optional
+        Local RNG forwarded to the alpha=1 shortcut path. Default: None.
 
     Returns
     -------
@@ -52,7 +54,7 @@ def adjust_alignment_gradient_descent(U_signal, U_noise_init, alpha, k,
     # Use shortcut alignment for perfect alignment (alpha = 1.0)
     # This avoids convergence issues and ensures exact orthonormality
     if np.isclose(alpha, 1.0, atol=1e-10):
-        return shortcut_alignment(U_signal, U_noise_init, k)
+        return shortcut_alignment(U_signal, U_noise_init, k, rng=rng)
 
     U = U_noise_init.copy()
     nvox = U.shape[0]
@@ -90,7 +92,7 @@ def adjust_alignment_gradient_descent(U_signal, U_noise_init, alpha, k,
 def _qr_preserve_alignment(U, U_signal, k):
     """QR orthonormalization that preserves alignment signs for the first k columns."""
     Q, _ = np.linalg.qr(U)
-    # QR can flip column signs — fix by ensuring dot(Q[:,i], U_signal[:,i])
+    # QR can flip column signs - fix by ensuring dot(Q[:,i], U_signal[:,i])
     # has the same sign as dot(U[:,i], U_signal[:,i]) for the aligned columns
     for i in range(k):
         if np.dot(Q[:, i], U_signal[:, i]) < 0:

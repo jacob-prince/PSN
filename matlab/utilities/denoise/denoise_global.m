@@ -71,20 +71,17 @@ function [denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_
                 [~, objective] = select_threshold_analytic(signal_proj, noise_proj, basis_eigenvalues, ntrials, opt);
             end
         else
-            % Normal optimization with constraint
-            % Threshold selection
+            % Best-among-allowable: choose the best threshold among the allowable
+            % values (no post-hoc snapping to nearest).
             if use_diff_basis && use_prediction && ~isempty(basis_eigenvalues)
                 % FAST PATH: difference basis eigenvalues ARE the net benefit
                 objective = [0; cumsum(basis_eigenvalues(:))];
-                [~, k] = max(objective);
-                k = k - 1;  % Convert index to number of dims
+                k = argmax_allowable(objective, opt.allowable_thresholds);
             else
-                % Standard path (including variance_eigenvalues criterion)
+                % Standard path: select_threshold_analytic honors
+                % allowable_thresholds internally.
                 [k, objective] = select_threshold_analytic(signal_proj, noise_proj, basis_eigenvalues, ntrials, opt);
             end
-
-            % Apply allowable_thresholds constraint
-            k = constrain_to_allowable(k, opt.allowable_thresholds);
         end
     else
         % No constraint: normal optimization

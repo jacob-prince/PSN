@@ -1,17 +1,26 @@
 """Unit-specific denoising utility for PSN."""
 
 import numpy as np
+
+from psn._device import from_device, is_cpu, resolve_device, to_device
+
 from ..threshold.constrain_to_allowable import constrain_to_allowable
+from ..threshold.max_tradeoff import max_tradeoff_threshold
+from ..threshold.select_allowable import (
+    allowable_candidates,
+    argmax_allowable,
+    first_reach_allowable,
+)
 from .compute_unit_weighted_projections import compute_unit_weighted_projections
 
 
-def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, opt, threshold_only):
+def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials, opt):
     """DENOISE_UNITWISE  Unit-specific denoising (non-symmetric denoiser)
 
     [denoiser, best_threshold, objective, ...] = denoise_unitwise(basis, signal_proj,
-    noise_proj, basis_eigenvalues, ntrials, opt, threshold_only) builds a generally
-    non-symmetric denoising matrix with unit-specific thresholds and optionally
-    unit-specific dimension orderings.
+    noise_proj, basis_eigenvalues, ntrials, opt) builds a generally non-symmetric
+    denoising matrix with unit-specific thresholds applied on a shared global
+    dimension ordering (threshold_method='hybrid').
 
     -------------------------------------------------------------------------
     Inputs:
@@ -28,10 +37,6 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
     <ntrials> - scalar, number of trials (or average if NaNs present)
 
     <opt> - dict with PSN options (criterion, allowable_thresholds, unit_groups, etc.)
-
-    <threshold_only> - boolean. If True, use global dimension ordering with
-      unit-specific thresholds (hybrid mode). If False, use unit-specific
-      dimension ordering and thresholds (full unit-specific mode)
 
     -------------------------------------------------------------------------
     Returns:
@@ -55,33 +60,34 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
 
     <unit_noise_vars> - list of length nunits of unit-specific weighted noise variances
 
-    <unit_orderings> - [nunits x ndims] dimension ordering for each unit
-
     -------------------------------------------------------------------------
     Algorithm:
     -------------------------------------------------------------------------
 
     Each unit receives:
       - Weighted signal/noise projections: w = basis[u,:]^2, sig_u = w * signal_proj
-      - Optional unit-specific ranking (if threshold_only=False)
       - Unit-specific threshold selection with optional unit_groups averaging
-      - Denoiser column: Bu @ Bu[u,:].T where Bu = basis[:, dims_for_unit_u]
+      - Denoiser column: Bu @ Bu[u,:].T where Bu = basis[:, :k_u]
 
     The denoiser is generally non-symmetric. Apply as: denoiser.T @ data
     """
 
     nunits, ndims = basis.shape
+    device = resolve_device(opt.get('device', 'cpu'))
 
     denoiser = np.zeros((nunits, nunits))
 
-    # First pass: compute weighted projections and objectives for each unit
-    # If threshold_only=True (hybrid mode), use global ordering
-    # If threshold_only=False (full unit-specific), rank by each unit's signal variance
-    do_unit_ranking = not threshold_only
-    unit_cumsum_curves, unit_signal_vars, unit_noise_vars, unit_orderings = \
-        compute_unit_weighted_projections(basis, signal_proj, noise_proj, ntrials, do_unit_ranking)
+    # First pass: compute weighted projections and objectives for each unit.
+    # Hybrid mode uses the shared global ordering (do_unit_ranking=False).
+    unit_cumsum_curves, unit_signal_vars, unit_noise_vars, _ = \
+        compute_unit_weighted_projections(basis, signal_proj, noise_proj, ntrials,
+                                            False, device=device)
 
-    # Second pass: select thresholds considering unit_groups
+    # Second pass: select thresholds considering unit_groups. When
+    # allowable_thresholds restricts the choice, each group picks the BEST
+    # threshold among the allowable values (best-among-allowable); a single
+    # allowable value forces exactly that many dimensions.
+    allow = opt['allowable_thresholds']
     unique_groups = np.unique(opt['unit_groups'])
     best_threshold = np.zeros(nunits, dtype=int)
 
@@ -90,9 +96,10 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
         group_indices = np.where(group_mask)[0]
 
         if opt.get('alpha') is not None:
-            # Alpha interpolation: blend prediction peak and variance target
+            # Alpha interpolation: blend prediction peak and the trial-average
+            # (do-nothing) point. alpha's right endpoint is the full signal
+            # variance; alpha does NOT use variance_threshold.
             alpha_val = opt['alpha']
-            vt = np.clip(opt['variance_threshold'], 0, 1)
             # Average signal vars and prediction curves across group
             avg_signal = np.mean(np.column_stack([unit_signal_vars[i] for i in group_indices]), axis=1)
             avg_curve = np.mean(np.column_stack([unit_cumsum_curves[i] for i in group_indices]), axis=1)
@@ -101,7 +108,7 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
             sig_cs = np.concatenate([[0], np.cumsum(avg_signal)])
             S_pred = sig_cs[k_pred]
             total = sig_cs[-1]
-            S_var = vt * total
+            S_var = total
             target = S_pred + alpha_val * max(0, S_var - S_pred)
             if total <= 0:
                 k_group = 0
@@ -110,21 +117,41 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
                 k_group = idx[0] if len(idx) > 0 else ndims
                 k_group = max(k_group, k_pred)
                 k_group = min(k_group, ndims)
+                if allow is not None:
+                    # Best-among-allowable: smallest allowable threshold that
+                    # reaches the target without going below the prediction peak;
+                    # else snap the unconstrained pick to the nearest allowable.
+                    C = allowable_candidates(allow, ndims)
+                    elig = C[(C >= k_pred) & (sig_cs[C] >= target)]
+                    k_group = int(elig.min()) if elig.size > 0 else int(constrain_to_allowable(k_group, C))
         elif opt['criterion'] == 'prediction':
             # Average objective curves across units in this group
             # All curves should have the same length (ndims+1)
             avg_curve = np.mean(np.column_stack([unit_cumsum_curves[i] for i in group_indices]), axis=1)
-            k_group = np.argmax(avg_curve)
-            # k_group is already the number of dims (0-indexed argmax)
+            if allow is not None:
+                k_group = argmax_allowable(avg_curve, allow)
+            else:
+                k_group = np.argmax(avg_curve)
+                # k_group is already the number of dims (0-indexed argmax)
+        elif opt['criterion'] == 'max-tradeoff':
+            # Max-tradeoff on this group's averaged recovery curve (per-unit thresholds)
+            avg_signal = np.mean(np.column_stack([unit_signal_vars[i] for i in group_indices]), axis=1)
+            avg_noise = np.mean(np.column_stack([unit_noise_vars[i] for i in group_indices]), axis=1)
+            k_group = max_tradeoff_threshold(avg_signal, avg_noise, ntrials, allowable=allow)
         elif opt['criterion'] == 'variance':
             # Average signal variances across units in this group
             avg_signal = np.mean(np.column_stack([unit_signal_vars[i] for i in group_indices]), axis=1)
             vt = np.clip(opt['variance_threshold'], 0, 1)
-            if vt == 0:
+            # Prepend 0 for consistency with global mode (index 0 = 0 dims)
+            cs = np.concatenate([[0], np.cumsum(avg_signal)])
+            if allow is not None:
+                # Best-among-allowable: smallest allowable threshold whose
+                # cumulative variance reaches the target; else the largest allowable.
+                total = cs[-1]
+                k_group = first_reach_allowable(cs, vt * total, allow)
+            elif vt == 0:
                 k_group = 0
             else:
-                # Prepend 0 for consistency with global mode (index 0 = 0 dims)
-                cs = np.concatenate([[0], np.cumsum(avg_signal)])
                 total = cs[-1]
                 if total <= 0:
                     k_group = 0
@@ -138,31 +165,43 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
         else:
             raise ValueError("criterion 'variance_eigenvalues' not supported for unit-specific modes")
 
-        # Apply allowable_thresholds constraint
-        if opt['allowable_thresholds'] is not None:
-            k_group = constrain_to_allowable(k_group, opt['allowable_thresholds'])
-
         # Assign this threshold to all units in the group
         best_threshold[group_mask] = k_group
 
-    # Third pass: build denoiser columns
-    # Optimize by grouping units with same threshold and ordering
+    # Third pass: build denoiser columns. All units share the global ordering,
+    # so group units by their threshold and build each group with one matmul.
     unique_thresholds = np.unique(best_threshold[best_threshold > 0])
 
-    for k in unique_thresholds:
-        units_with_k = np.where(best_threshold == k)[0]
-
-        if threshold_only:
-            # Hybrid mode: all units share same ordering, vectorize fully
+    if not is_cpu(device) and len(unique_thresholds) > 0:
+        # GPU path: do all threshold-group matmuls on device in one shot,
+        # then bring the (n, n) denoiser back to host. The matmul is the
+        # dominant cost at large nunits - GPU cuts it by 1-2 orders of
+        # magnitude over multi-threaded CPU.
+        import torch
+        tdtype = (torch.float64 if basis.dtype == np.float64
+                  else torch.float32)
+        basis_t = to_device(basis, device, dtype=tdtype)
+        denoiser_t = torch.zeros((nunits, nunits), dtype=tdtype, device=device)
+        for k in unique_thresholds:
+            units_k = np.where(best_threshold == k)[0]
+            units_k_t = torch.as_tensor(units_k, device=device, dtype=torch.long)
+            Bu = basis_t[:, :k]
+            # denoiser[:, units] = Bu @ Bu[units, :].T
+            denoiser_t[:, units_k_t] = Bu @ Bu.index_select(0, units_k_t).T
+        denoiser = from_device(denoiser_t).astype(np.float64, copy=False)
+        del denoiser_t, basis_t
+        if str(device).startswith('cuda'):
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+    else:
+        for k in unique_thresholds:
+            units_with_k = np.where(best_threshold == k)[0]
+            # All units share the same ordering, so vectorize fully:
+            # denoiser[:, units] = Bu @ Bu[units, :].T
             Bu = basis[:, :k]
-            # Vectorized: denoiser[:, units] = Bu @ Bu[units, :].T
             denoiser[:, units_with_k] = Bu @ Bu[units_with_k, :].T
-        else:
-            # Full unit-specific: group by ordering within same threshold
-            for u in units_with_k:
-                sort_idx_u = unit_orderings[u, :]
-                Bu = basis[:, sort_idx_u[:k]]
-                denoiser[:, u] = Bu @ Bu[u, :]
 
     # Population-level totals for visualization
     # Sum across units to get total variance (since unit weights sum to 1,
@@ -181,4 +220,4 @@ def denoise_unitwise(basis, signal_proj, noise_proj, basis_eigenvalues, ntrials,
         objective = np.zeros(1)
 
     return denoiser, best_threshold, objective, signalvar, noisevar, unit_cumsum_curves, \
-           unit_signal_vars, unit_noise_vars, unit_orderings
+           unit_signal_vars, unit_noise_vars

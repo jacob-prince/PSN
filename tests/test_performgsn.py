@@ -19,17 +19,18 @@ Usage:
     pytest test_performgsn.py -v
 """
 
+import os
+import sys
+import warnings
+
 import numpy as np
 import pytest
-import warnings
-import sys
-import os
 
 # Add the gsn module to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from gsn.perform_gsn import perform_gsn
 from gsn.calc_shrunken_covariance import calc_shrunken_covariance
+from gsn.perform_gsn import perform_gsn
 from gsn.rsa_noise_ceiling import rsa_noise_ceiling
 
 
@@ -626,7 +627,7 @@ class TestPerformGSN:
                 # Should get warning about ntrialBC being lopsided
                 if warning_messages:
                     assert any('ntrialBC is lopsided' in msg for msg in warning_messages)
-            except:
+            except Exception:
                 # If it fails due to insufficient data, that's also acceptable
                 pass
                 

@@ -3,7 +3,7 @@
 import numpy as np
 
 
-def shortcut_alignment(U_signal, U_noise, k):
+def shortcut_alignment(U_signal, U_noise, k, rng=None):
     """Directly align the first k noise PCs to the signal PCs.
 
     This method provides exact alignment (alpha=1.0) and maintains
@@ -17,12 +17,17 @@ def shortcut_alignment(U_signal, U_noise, k):
         Orthonormal noise basis.
     k : int
         Number of top PCs to align.
+    rng : np.random.RandomState, optional
+        Local RNG for the degenerate-column fallback. Defaults to a fresh
+        local RandomState so the global NumPy stream is never touched.
 
     Returns
     -------
     U_noise_adj : ndarray, shape (nvox, nvox)
         Orthonormal basis with first k columns aligned to U_signal.
     """
+    if rng is None:
+        rng = np.random.RandomState()
     U_noise_adj = U_noise.copy()
     nvox = U_signal.shape[0]
 
@@ -42,7 +47,7 @@ def shortcut_alignment(U_signal, U_noise, k):
             # Choose a random orthogonal vector if degenerate
             attempts = 0
             while norm < 1e-12 and attempts < nvox:
-                v = np.random.randn(nvox)
+                v = rng.randn(nvox)
                 # Orthogonalize against all previous columns
                 for j in range(i):
                     v -= np.dot(v, U_noise_adj[:, j]) * U_noise_adj[:, j]

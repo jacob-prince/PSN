@@ -4,11 +4,13 @@
 *.png
 */z-old/*
 *.jpg
+!examples/sunset*.jpg
 */debug/*
 *.mat
 *.npy
 *.pkl
 */datasets/*
+benchmarks/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

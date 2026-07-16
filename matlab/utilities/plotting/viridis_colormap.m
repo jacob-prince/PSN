@@ -1,17 +1,20 @@
 function cmap = viridis_colormap()
-% VIRIDIS_COLORMAP Viridis colormap approximation
+% VIRIDIS_COLORMAP  Perceptually-uniform viridis colormap approximation.
 %
-%   cmap = VIRIDIS_COLORMAP() returns a 256x3 colormap matrix that
-%   approximates the matplotlib viridis colormap. This is a perceptually
-%   uniform colormap suitable for sequential data visualization.
+%   cmap = viridis_colormap() returns a colormap approximating matplotlib's
+%   viridis, suitable for sequential data.
 %
-%   Output:
-%       cmap - 256x3 matrix of RGB values in range [0, 1]
+% -------------------------------------------------------------------------
+% Inputs:
+% -------------------------------------------------------------------------
 %
-%   Example:
-%       imagesc(data);
-%       colormap(viridis_colormap());
-%       colorbar;
+% (none)
+%
+% -------------------------------------------------------------------------
+% Returns:
+% -------------------------------------------------------------------------
+%
+% <cmap> - [256 x 3] RGB colormap, values in [0, 1].
 
     n = 256;
 

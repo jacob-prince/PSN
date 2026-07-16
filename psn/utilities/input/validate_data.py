@@ -34,7 +34,9 @@ def validate_data(data):
     <has_nans> - boolean. True if data contains any NaN values
     """
 
-    if not isinstance(data, np.ndarray) or data.ndim != 3:
+    # Numeric ndarray required; a non-numeric array would crash later in np.isnan.
+    if (not isinstance(data, np.ndarray) or data.ndim != 3
+            or not np.issubdtype(data.dtype, np.number)):
         raise ValueError('Data must be a 3D numeric array [nunits x nconds x ntrials]')
 
     nunits, nconds, ntrials = data.shape

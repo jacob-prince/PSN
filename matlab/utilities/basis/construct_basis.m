@@ -1,4 +1,4 @@
-function [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_avg, has_nans)
+function [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, data, trial_avg, unit_means, ntrials_avg, has_nans, custom_basis_eigenvalues)
 % CONSTRUCT_BASIS  Create the orthonormal basis for denoising
 %
 %   [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, ...)
@@ -30,6 +30,10 @@ function [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, data
 % <ntrials_avg> - scalar, average number of valid trials (handles NaN case correctly)
 %
 % <has_nans> - logical, whether data contains NaNs
+%
+% <custom_basis_eigenvalues> (optional) - [D x 1] eigenvalues to attach to a
+%   custom matrix basis (so it can use 'eigenvalues' ordering and skip the eigh).
+%   Ignored for string bases. Default: [] (no eigenvalues for a custom basis).
 %
 % -------------------------------------------------------------------------
 % Returns:
@@ -81,12 +85,10 @@ function [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, data
                 % GSN-estimated signal variance.
 
             case 'random'
-                % Random orthonormal basis (no meaningful eigenvalues)
-                % NOTE: This resets the global RNG state for reproducibility
-                % To avoid affecting other random operations, consider using a separate RandStream
-                rng('default');
-                rng(42);
-                [basis, ~] = qr(randn(nunits));
+                % Random orthonormal basis (no meaningful eigenvalues). Use a
+                % local RandStream so the global rng state is left untouched.
+                s = RandStream('mt19937ar', 'Seed', 42);
+                [basis, ~] = qr(randn(s, nunits));
                 basis_eigenvalues = [];
 
             otherwise
@@ -105,6 +107,19 @@ function [basis, basis_eigenvalues] = construct_basis(cSb, cNb, basis_spec, data
         end
 
         basis = normalize_orthonormalize_basis(basis);
-        basis_eigenvalues = [];
+        % Eigenvalues optional: when the caller already has them (e.g. eigvecs
+        % cached from a prior GSN run via use_cached_eigvecs), pass them through
+        % so downstream uses 'eigenvalues' ordering, making basis=<eigvecs of
+        % cSb> bit-equivalent to basis='signal' end-to-end.
+        if nargin >= 9 && ~isempty(custom_basis_eigenvalues)
+            ev = custom_basis_eigenvalues(:);
+            if numel(ev) ~= size(basis, 2)
+                error('custom_basis_eigenvalues length (%d) must match basis column count (%d)', ...
+                      numel(ev), size(basis, 2));
+            end
+            basis_eigenvalues = ev;
+        else
+            basis_eigenvalues = [];
+        end
     end
 end

@@ -1,14 +1,21 @@
 function f = cmapsign4(n)
-% CMAPSIGN4 Return a cyan-blue-black-red-yellow colormap.
+% CMAPSIGN4  Cyan-blue-black-red-yellow diverging colormap (symmetric about black).
 %
-% f = cmapsign4(n) returns an n x 3 colormap array.
+%   f = cmapsign4(n) returns a colormap symmetric around black (zero), useful
+%   for signed data: cyan-white -> cyan -> blue -> black -> red -> yellow ->
+%   yellow-white.
 %
-% This colormap is symmetric around black (center), going from
-% cyan-white through cyan and blue to black, then from black
-% through red and yellow to yellow-white.
+% -------------------------------------------------------------------------
+% Inputs:
+% -------------------------------------------------------------------------
 %
-% This is useful for visualizing data that has both positive and
-% negative values, with zero mapped to black.
+% <n> (optional) - number of colors. Default: 256.
+%
+% -------------------------------------------------------------------------
+% Returns:
+% -------------------------------------------------------------------------
+%
+% <f> - [n x 3] RGB colormap, values in [0, 1].
 
 if nargin < 1
     n = 256;  % default number of colors

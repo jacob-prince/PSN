@@ -4,13 +4,13 @@ Tests the PSN class implementation including fit, transform, fit_transform,
 plot_diagnostics, pickling, and various edge cases.
 """
 
-import numpy as np
 import pickle
 import tempfile
+
+import numpy as np
 import pytest
 
 from psn import PSN, psn
-
 
 # =============================================================================
 # Fixtures
@@ -54,9 +54,9 @@ class TestBasicFunctionality:
     def test_instantiation_default(self):
         """Test default instantiation."""
         model = PSN()
-        assert model.mode == 'standard'
+        assert model.mode is None          # None == library defaults (= 'standard')
         assert model._is_fitted is False
-        assert 'fitted=False' in repr(model)
+        assert 'PSN(' in repr(model)
 
     def test_instantiation_with_mode(self):
         """Test instantiation with different modes."""
@@ -70,7 +70,7 @@ class TestBasicFunctionality:
         assert model.mode is None
 
     def test_instantiation_with_options(self):
-        """Test instantiation with custom options."""
+        """Test instantiation with custom options stored as explicit params."""
         model = PSN(
             mode='standard',
             basis='difference',
@@ -79,8 +79,9 @@ class TestBasicFunctionality:
             variance_threshold=0.95,
             wantverbose=False
         )
-        assert model.options['basis'] == 'difference'
-        assert model.options['criterion'] == 'variance'
+        assert model.basis == 'difference'
+        assert model.criterion == 'variance'
+        assert model.threshold_method == 'global'
 
     def test_fit_returns_self(self, small_data):
         """Test that fit returns self for chaining."""
@@ -111,7 +112,6 @@ class TestBasicFunctionality:
         assert hasattr(model, 'svnv_after_')
         assert hasattr(model, 'best_threshold_')
         assert hasattr(model, 'fullbasis_')
-        assert hasattr(model, 'unitreorderings_')
 
         # GSN and variance attributes
         assert hasattr(model, 'gsn_result_')
@@ -185,20 +185,18 @@ class TestBasicFunctionality:
 
         assert np.allclose(result1, result2)
 
-    def test_repr_unfitted(self):
-        """Test repr for unfitted model."""
+    def test_repr_shows_nondefault_params(self):
+        """Test sklearn repr shows non-default constructor params."""
         model = PSN(mode='aggressive')
         assert "mode='aggressive'" in repr(model)
-        assert "fitted=False" in repr(model)
 
     def test_repr_fitted(self, small_data):
-        """Test repr for fitted model."""
+        """Test repr (sklearn style) after fit."""
         model = PSN(mode='standard', wantverbose=False, wantfig=False)
         model.fit(small_data)
         r = repr(model)
         assert "mode='standard'" in r
-        assert "fitted=True" in r
-        assert "threshold=" in r
+        assert "PSN(" in r
 
 
 # =============================================================================
@@ -295,7 +293,7 @@ class TestModesAndOptions:
         model.fit(small_data)
         assert model._is_fitted
 
-    @pytest.mark.parametrize("threshold_method", ['global', 'hybrid', 'unit'])
+    @pytest.mark.parametrize("threshold_method", ['global', 'hybrid'])
     def test_different_threshold_methods(self, small_data, threshold_method):
         """Test different threshold methods."""
         model = PSN(
@@ -454,7 +452,7 @@ class TestPickling:
             loaded = pickle.load(f)
 
         assert loaded.mode == 'aggressive'
-        assert loaded.options['basis'] == 'difference'
+        assert loaded.basis == 'difference'
         assert loaded._is_fitted is False
 
     def test_pickle_fitted_model(self, sample_data):
@@ -759,6 +757,133 @@ class TestStress:
             result = model.transform(new_data)
 
             assert result.shape == (sample_data.shape[0], sample_data.shape[1])
+
+
+# =============================================================================
+# Scikit-learn protocol compatibility
+# =============================================================================
+
+class TestSklearnProtocol:
+    """PSN follows the scikit-learn estimator protocol (get/set_params, clone)."""
+
+    def test_get_params_roundtrip(self):
+        model = PSN(mode='aggressive', criterion='prediction', wantverbose=False)
+        params = model.get_params()
+        assert params['mode'] == 'aggressive'
+        assert params['criterion'] == 'prediction'
+        assert params['wantverbose'] is False
+        # Every reported param is accepted back by the constructor.
+        PSN(**params)
+
+    def test_set_params(self):
+        model = PSN(wantverbose=False)
+        out = model.set_params(criterion='variance', threshold_method='global')
+        assert out is model
+        assert model.criterion == 'variance'
+        assert model.threshold_method == 'global'
+
+    def test_clone(self, small_data):
+        from sklearn.base import clone
+        model = PSN(mode='conservative', wantverbose=False, wantfig=False)
+        cloned = clone(model)
+        assert cloned is not model
+        assert cloned.mode == 'conservative'
+        assert cloned._is_fitted is False
+        cloned.fit(small_data)
+        assert cloned._is_fitted is True
+        # Cloning a fitted estimator yields an unfitted one with the same params.
+        assert clone(cloned)._is_fitted is False
+
+    def test_check_is_fitted(self, small_data):
+        from sklearn.exceptions import NotFittedError
+        from sklearn.utils.validation import check_is_fitted
+        model = PSN(wantverbose=False, wantfig=False)
+        with pytest.raises(NotFittedError):
+            check_is_fitted(model)
+        model.fit(small_data)
+        check_is_fitted(model)  # must not raise
+
+    def test_pipeline_single_step(self, small_data):
+        from sklearn.pipeline import Pipeline
+        pipe = Pipeline([('psn', PSN(wantverbose=False, wantfig=False))])
+        out = pipe.fit_transform(small_data)
+        nunits, nconds, _ = small_data.shape
+        assert out.shape == (nunits, nconds)
+
+    def test_clone_set_params_sweep(self, sample_data):
+        from sklearn.base import clone
+        base = PSN(wantverbose=False, wantfig=False)
+        for crit in ('max-tradeoff', 'prediction', 'variance'):
+            est = clone(base).set_params(criterion=crit, threshold_method='global')
+            est.fit(sample_data)
+            assert est.opt_used_['criterion'] == crit
+
+
+# =============================================================================
+# Cross-validation (correct axis) and the limits of sklearn compatibility
+# =============================================================================
+
+class TestCrossValidation:
+    """Pin the ACTUAL guarantees, not sklearn-CV compatibility.
+
+    PSN works as a Pipeline step and can be cross-validated by splitting the
+    CONDITIONS axis by hand, but it has no ``score`` (so GridSearchCV /
+    cross_val_score have nothing to optimise) and its layout (units on axis 0)
+    is incompatible with sklearn's default splitters. These tests lock that in
+    so the docs and reality can't drift back apart.
+    """
+
+    def test_no_score_method(self):
+        """Unsupervised: no target and no score for GridSearchCV to optimise."""
+        assert not hasattr(PSN(), 'score')
+
+    def test_manual_condition_fold_cv(self, sample_data):
+        """The supported CV pattern: split conditions, fit on the train
+        conditions, transform the held-out conditions."""
+        nconds = sample_data.shape[1]
+        n_folds = 5
+        rng = np.random.default_rng(0)
+        folds = np.array_split(rng.permutation(nconds), n_folds)
+        for k in range(n_folds):
+            test_c = folds[k]
+            train_c = np.concatenate([folds[j] for j in range(n_folds) if j != k])
+            model = PSN(wantverbose=False, wantfig=False).fit(sample_data[:, train_c, :])
+            out = model.transform(sample_data[:, test_c, :])
+            assert out.shape == (sample_data.shape[0], len(test_c))
+            assert np.all(np.isfinite(out))
+
+
+# =============================================================================
+# Compare / Wiener modes
+# =============================================================================
+
+class TestCompareAndWienerModes:
+    """The 'compare' and 'wiener' modes are reachable through the class."""
+
+    @pytest.mark.parametrize('mode', ['compare', 'wiener'])
+    def test_mode_fits(self, sample_data, mode):
+        model = PSN(mode=mode, wantverbose=False, wantfig=False)
+        model.fit(sample_data)
+        assert model._is_fitted
+        assert model.denoiseddata_.shape == sample_data.shape[:2]
+
+    def test_compare_records_selection(self, sample_data):
+        model = PSN(mode='compare', wantverbose=False, wantfig=False)
+        model.fit(sample_data)
+        assert model.threshold_selection_ is not None
+        assert model.threshold_selection_['mode'] == 'compare'
+        assert model.threshold_selection_['basis'] in ('signal', 'difference')
+
+    def test_wiener_rejects_conflicting_option(self, small_data):
+        model = PSN(mode='wiener', threshold_method='hybrid',
+                    wantverbose=False, wantfig=False)
+        with pytest.raises(ValueError, match='Wiener'):
+            model.fit(small_data)
+
+    def test_wiener_via_criterion_kwarg(self, sample_data):
+        model = PSN(criterion='wiener', wantverbose=False, wantfig=False)
+        model.fit(sample_data)
+        assert model.opt_used_['criterion'] == 'wiener'
 
 
 if __name__ == '__main__':
