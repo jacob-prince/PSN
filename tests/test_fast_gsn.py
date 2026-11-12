@@ -5,7 +5,7 @@ Verifies that the torch (batched-Cholesky) path returns the same ``cSb`` /
 path is the simple, trusted reference, and the torch path is validated against
 it. Covers all three dispatch branches:
 
-1. NaN / uneven-trials → delegated path (should be bit-identical to numpy).
+1. NaN / uneven-trials → GSN's NaN-aware path, which has its own torch and numpy versions.
 2. torch available, clean data → batched-Cholesky path.
 3. torch absent, clean data → numpy+scipy path (forced via monkey-patch).
 
@@ -225,21 +225,22 @@ class TestNumpyBranchEquivalence:
 # ===========================================================================
 
 class TestUnevenTrialsDelegation:
-    """NaN inputs should pass through to the reference unchanged."""
+    """NaN inputs: the torch and numpy versions of GSN's uneven-trials path agree."""
 
     @pytest.mark.parametrize('shape', SHAPES_SMALL)
     def test_nan_delegation_matches_reference(self, shape):
         data = _gen_with_nans(*shape, frac_missing=0.3, seed=0)
         ref = _ref(data)
         fast = fast_perform_gsn(data)
-        # Delegation path: should be identical (same code, not just equivalent).
-        _assert_equivalent(ref, fast, atol=0, rtol=0, label=f'nan/delegate shape={shape}')
+        # GSN no longer hands NaN data to one shared routine, so the two backends agree
+        # to floating-point rounding (about 1e-15), not bit for bit.
+        _assert_equivalent(ref, fast, label=f'nan/uneven shape={shape}')
 
     def test_heavy_nan_fraction(self):
         data = _gen_with_nans(50, 40, 5, frac_missing=0.5, seed=2)
         ref = _ref(data)
         fast = fast_perform_gsn(data)
-        _assert_equivalent(ref, fast, atol=0, rtol=0, label='nan/heavy')
+        _assert_equivalent(ref, fast, label='nan/heavy')
 
 
 # ===========================================================================
